@@ -1,0 +1,11 @@
+{
+  "extends": ["development"],
+  "browserslist": ["Chrome >= 128"],
+  "hints": {
+    "compat-api/css": "off",
+    "compat-api/html": "off",
+    "highest-available-document-mode": "off",
+    "meta-viewport": "off",
+    "no-inline-styles": "off"
+  }
+}
