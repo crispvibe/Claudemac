@@ -1,0 +1,43 @@
+# Node / Electron
+node_modules/
+out/
+dist/
+release/
+.cache/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.log
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.vs/
+*.suo
+*.user
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+*.tsbuildinfo
+.tmp/
+
+# Electron-builder
+electron-builder.env
+release-builds/

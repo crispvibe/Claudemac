@@ -1,0 +1,1 @@
+# 应用运行时资源目录,会被 electron-builder 通过 asarUnpack 解压

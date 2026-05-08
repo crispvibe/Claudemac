@@ -1,0 +1,5 @@
+# 此目录用于存放 electron-builder 打包资源(图标、安装器图片等)
+# - icon.ico         (Windows 应用图标,256x256 推荐)
+# - installerIcon.ico
+# - uninstallerIcon.ico
+# - installerHeader.bmp (NSIS 头图)
