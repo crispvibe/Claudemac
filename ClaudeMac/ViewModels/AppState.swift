@@ -23,6 +23,7 @@ final class AppState: ObservableObject {
     @Published var cursorColumn = 1
     @Published var errorMessage: String?
     @Published var settings: AppSettings
+    @Published var showSettings: Bool = false
 
     private var scanner: FileTreeScanner
 
@@ -123,12 +124,14 @@ final class AppState: ObservableObject {
                 try scanner.scanChildren(of: root)
             }
         } catch {
-            show(error)
+            rootNodes = []
         }
     }
 
     private func openInitialTextFile() {
-        guard openTabs.isEmpty else { return }
+        guard openTabs.isEmpty, let project = selectedProject else { return }
+        // Silently skip if project access fails (e.g. stale bookmark after packaging)
+        guard let _ = try? withProjectAccess(project, operation: { $0 }) else { return }
         let preferredNames = ["README.md", "README", "readme.md"]
         if let preferred = rootNodes.first(where: { !$0.isDirectory && preferredNames.contains($0.name) }) {
             openFile(preferred)
@@ -295,28 +298,44 @@ final class AppState: ObservableObject {
     }
 
     func deleteCLIHistory(_ session: CLIHistorySession) {
+        cliHistory.removeAll { $0.id == session.id }
+        if selectedCLIHistoryID == session.id {
+            startNewChat()
+        }
+
         guard let storagePath = session.storagePath else { return }
-        do {
-            if session.storageKey == ChatSessionStore.storageKey {
-                try ChatSessionStore.deleteSession(id: session.sessionId)
-            } else {
-                let url = URL(fileURLWithPath: storagePath)
-                if url.lastPathComponent == "history.jsonl" {
-                    try removeHistoryIndexEntries(from: url, matching: session)
-                } else {
-                    try FileManager.default.removeItem(at: url)
-                }
+        let shouldScanExternalHistory = settings.enableClaudeHistoryScan
+        Task { [weak self] in
+            do {
+                let history = try await Task.detached(priority: .utility) { () throws -> [CLIHistorySession] in
+                    try Self.deleteCLIHistoryFiles(session: session, storagePath: storagePath)
+                    return Self.loadCLIHistory(enableClaudeHistoryScan: shouldScanExternalHistory)
+                }.value
+                guard let self else { return }
+                self.cliHistory = history
+            } catch {
+                guard let self else { return }
+                self.show(error)
+                self.refreshCLIHistory()
             }
-            if selectedCLIHistoryID == session.id {
-                startNewChat()
-            }
-            refreshCLIHistory()
-        } catch {
-            show(error)
         }
     }
 
-    private func removeHistoryIndexEntries(from url: URL, matching session: CLIHistorySession) throws {
+    nonisolated private static func deleteCLIHistoryFiles(session: CLIHistorySession, storagePath: String) throws {
+        if session.storageKey == ChatSessionStore.storageKey {
+            try ChatSessionStore.deleteSession(id: session.sessionId)
+            return
+        }
+
+        let url = URL(fileURLWithPath: storagePath)
+        if url.lastPathComponent == "history.jsonl" {
+            try removeHistoryIndexEntries(from: url, matching: session)
+        } else {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    nonisolated private static func removeHistoryIndexEntries(from url: URL, matching session: CLIHistorySession) throws {
         let content = try String(contentsOf: url, encoding: .utf8)
         let keptLines = content.split(separator: "\n", omittingEmptySubsequences: false).filter { line in
             guard !line.isEmpty, let data = String(line).data(using: .utf8),
@@ -326,6 +345,13 @@ final class AppState: ObservableObject {
             return (object["sessionId"] as? String) != session.sessionId && (object["session_id"] as? String) != session.sessionId
         }
         try keptLines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    nonisolated private static func loadCLIHistory(enableClaudeHistoryScan: Bool) -> [CLIHistorySession] {
+        let local = ChatSessionStore.historySessions()
+        guard enableClaudeHistoryScan else { return local }
+        let external = CLIHistoryScanner().scan(projectPath: nil)
+        return (local + external).sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
     }
 
     func copyCommand() {
@@ -374,13 +400,17 @@ final class AppState: ObservableObject {
     }
 
     func refreshCLIHistory() {
-        guard settings.enableClaudeHistoryScan else {
-            cliHistory = ChatSessionStore.historySessions()
-            return
-        }
-        let external = CLIHistoryScanner().scan(projectPath: nil)
         let local = ChatSessionStore.historySessions()
-        cliHistory = (local + external).sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
+        cliHistory = local
+        guard settings.enableClaudeHistoryScan else { return }
+
+        Task { [weak self] in
+            let history = await Task.detached(priority: .utility) {
+                Self.loadCLIHistory(enableClaudeHistoryScan: true)
+            }.value
+            guard let self else { return }
+            self.cliHistory = history
+        }
     }
 
     func saveSettings(
@@ -395,7 +425,9 @@ final class AppState: ObservableObject {
             defaultCLI: defaultCLI,
             showCommandPreview: showCommandPreview,
             ignoredFolders: ignoredFolders,
-            enableClaudeHistoryScan: enableClaudeHistoryScan
+            enableClaudeHistoryScan: enableClaudeHistoryScan,
+            apiBaseURL: settings.apiBaseURL,
+            apiKey: settings.apiKey
         )
         selectedCLI = defaultCLI
         selectedTerminal = defaultTerminal

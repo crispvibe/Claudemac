@@ -4,14 +4,19 @@ import UniformTypeIdentifiers
 
 struct ChatPanelView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var modelService: ChatModelService
     @StateObject private var chatState = ChatPanelState()
     @State private var draftMessage = ""
     @State private var editingMessageID: UUID?
     @State private var selectedModelID = ChatModelCatalog.defaultClaudeModelID
     @State private var permissionMode = ChatPermissionMode.ask
+    @State private var reasoningEffort = ChatReasoningEffort.high
     @State private var activePicker: ChatPicker?
     @State private var showCopiedToast = false
     @State private var attachedPaths: [String] = []
+    @State private var showResumePopover = false
+    @State private var resumeInput = ""
+    @State private var expandedTranscriptMessageIDs: Set<UUID> = []
 
     var body: some View {
         ZStack {
@@ -38,23 +43,39 @@ struct ChatPanelView: View {
                     .transition(.opacity)
             }
         }
-        .background(AppTheme.editorSurface.opacity(0.92))
+        .background {
+            ZStack {
+                VisualEffectView(material: .sidebar, blendingMode: .withinWindow)
+                    .opacity(0.62)
+                AppTheme.panelSurface
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AppTheme.hairline, lineWidth: 1)
+                .stroke(AppTheme.weakHairline, lineWidth: 1)
         )
+        .shadow(color: Color.black.opacity(0.08), radius: 18, y: 8)
         .onAppear {
             normalizeSelectedModel()
-            chatState.loadFromAppState(appState, modelID: selectedModelID, permissionMode: permissionMode)
+            resetReasoningEffortToConfiguredDefault()
+            syncSelectedContextWindow()
+            chatState.loadFromAppState(appState, modelID: selectedModelID, permissionMode: permissionMode, reasoningEffort: reasoningEffort)
         }
         .onChange(of: appState.chatConversationSerial) { _, _ in
             normalizeSelectedModel()
-            chatState.loadFromAppState(appState, modelID: selectedModelID, permissionMode: permissionMode)
+            normalizeReasoningEffort()
+            syncSelectedContextWindow()
+            chatState.loadFromAppState(appState, modelID: selectedModelID, permissionMode: permissionMode, reasoningEffort: reasoningEffort)
         }
         .onChange(of: appState.selectedCLI) { _, _ in
             normalizeSelectedModel()
+            resetReasoningEffortToConfiguredDefault()
+            syncSelectedContextWindow()
             activePicker = nil
+        }
+        .onChange(of: selectedModelID) { _, _ in
+            syncSelectedContextWindow()
         }
     }
 
@@ -74,6 +95,39 @@ struct ChatPanelView: View {
             }
             .buttonStyle(.plain)
 
+            Button {
+                showResumePopover = true
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("恢复历史会话")
+            .popover(isPresented: $showResumePopover, arrowEdge: .bottom) {
+                VStack(spacing: 8) {
+                    Text("恢复会话")
+                        .font(.system(size: 11, weight: .medium))
+                    TextField("Session ID", text: $resumeInput)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                        .frame(width: 200)
+                    Button("恢复") {
+                        let trimmed = resumeInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        appState.selectedMode = .resume
+                        appState.resumeSessionId = trimmed
+                        appState.chatConversationSerial = UUID()
+                        showResumePopover = false
+                        resumeInput = ""
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(resumeInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(12)
+            }
+
             Text(chatState.statusText)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(chatState.status.statusTint)
@@ -84,15 +138,16 @@ struct ChatPanelView: View {
     }
 
     private var transcript: some View {
-        ScrollView {
+        let items = transcriptItems
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
                 if appState.selectedProject == nil {
                     emptyProjectState
-                } else if chatState.messages.isEmpty {
+                } else if items.isEmpty {
                     emptyChatState
                 } else {
-                    ForEach(chatState.messages) { message in
-                        messageRow(message)
+                    ForEach(items) { item in
+                        transcriptItemRow(item)
                     }
                 }
             }
@@ -103,6 +158,40 @@ struct ChatPanelView: View {
         }
         .scrollIndicators(.hidden)
         .background(Color.white.opacity(0.08))
+    }
+
+    private var transcriptItems: [ChatTranscriptItem] {
+        var items: [ChatTranscriptItem] = []
+        var activityMessages: [ChatMessage] = []
+
+        func flushActivity() {
+            guard !activityMessages.isEmpty else { return }
+            let group = ChatActivityGroup(messages: activityMessages)
+            if group.isMeaningful {
+                items.append(.activity(group))
+            }
+            activityMessages.removeAll()
+        }
+
+        for message in chatState.messages where shouldShowInTranscript(message) {
+            if message.kind.isGroupedActivityEvent {
+                activityMessages.append(message)
+            } else {
+                flushActivity()
+                items.append(.message(message))
+            }
+        }
+        flushActivity()
+        return items
+    }
+
+    private func shouldShowInTranscript(_ message: ChatMessage) -> Bool {
+        guard message.kind.isVisibleInTranscript else { return false }
+        guard message.kind.isGroupedActivityEvent else { return true }
+        return message.isStreaming
+            || !message.title.isEmpty
+            || !message.subtitle.isEmpty
+            || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var emptyProjectState: some View {
@@ -122,9 +211,25 @@ struct ChatPanelView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
+            if appState.settings.showCommandPreview {
+                Text(appState.commandPreview)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .textSelection(.enabled)
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func transcriptItemRow(_ item: ChatTranscriptItem) -> some View {
+        switch item {
+        case .message(let message):
+            messageRow(message)
+        case .activity(let group):
+            activityGroupRow(group)
+        }
     }
 
     @ViewBuilder
@@ -134,11 +239,13 @@ struct ChatPanelView: View {
             userMessageRow(message)
         case .assistant:
             assistantMessageRow(message)
+        case .reasoning:
+            reasoningMessageRow(message)
         case .diff:
             fileEditRow(message)
         case .permissionRequest:
             permissionRequestRow(message)
-        case .error, .reasoning, .toolCall, .toolResult, .command, .commandOutput, .system, .result, .rawOutput:
+        case .error, .toolCall, .toolResult, .command, .commandOutput, .system, .result, .rawOutput:
             streamActivityRow(message)
         }
     }
@@ -217,6 +324,134 @@ struct ChatPanelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func activityGroupRow(_ group: ChatActivityGroup) -> some View {
+        let isAutoExpanded = group.isStreaming
+        let isExpanded = isAutoExpanded || expandedTranscriptMessageIDs.contains(group.id)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                toggleTranscriptMessage(group.id)
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 13)
+
+                    Text(group.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 5) {
+                    if let summary = group.summaryText {
+                        Text(summary)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ForEach(group.detailMessages.prefix(8)) { message in
+                        activityDetailRow(message)
+                    }
+                }
+                .padding(.leading, 22)
+            }
+        }
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func activityDetailRow(_ message: ChatMessage) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Image(systemName: message.kind.activityIcon)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 12)
+
+                Text(message.activityTitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            if !message.activityBody.isEmpty {
+                Text(message.activityBody)
+                    .font(.system(size: 10, design: message.kind.isMonospaced ? .monospaced : .default))
+                    .foregroundStyle(.tertiary)
+                    .lineSpacing(2)
+                    .lineLimit(message.kind == .reasoning ? nil : 3)
+                    .textSelection(.enabled)
+                    .padding(.leading, 19)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func reasoningMessageRow(_ message: ChatMessage) -> some View {
+        let isAutoExpanded = chatState.status.isRunning
+        let isExpanded = isAutoExpanded || expandedTranscriptMessageIDs.contains(message.id)
+
+        return VStack(alignment: .leading, spacing: 5) {
+            Button {
+                toggleTranscriptMessage(message.id)
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .frame(width: 12)
+
+                    Text(isAutoExpanded ? "正在思考" : "思考已完成")
+                        .font(.system(size: 11, weight: .medium))
+
+                    Spacer(minLength: 0)
+
+                    Text(isAutoExpanded ? "进行中" : (isExpanded ? "展开" : "已折叠"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.035))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded && !message.text.isEmpty {
+                Text(message.text)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(2)
+                    .textSelection(.enabled)
+                    .padding(.leading, 24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.vertical, 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func toggleTranscriptMessage(_ id: UUID) {
+        guard !chatState.status.isRunning else { return }
+        if expandedTranscriptMessageIDs.contains(id) {
+            expandedTranscriptMessageIDs.remove(id)
+        } else {
+            expandedTranscriptMessageIDs.insert(id)
+        }
+    }
+
     private func fileEditRow(_ message: ChatMessage) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -276,26 +511,37 @@ struct ChatPanelView: View {
                 .padding(.leading, 60)
                 .textSelection(.enabled)
 
-            HStack(spacing: 8) {
-                Spacer().frame(width: 52)
+            if message.status == "waiting" {
+                HStack(spacing: 8) {
+                    Spacer().frame(width: 52)
 
-                Button("拒绝") {
-                    if let requestID = message.requestID {
-                        chatState.respondToPermission(requestID: requestID, allowed: false)
+                    Button("拒绝") {
+                        if let requestID = message.requestID {
+                            chatState.respondToPermission(requestID: requestID, decision: .deny)
+                        }
                     }
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
 
-                Button("允许") {
-                    if let requestID = message.requestID {
-                        chatState.respondToPermission(requestID: requestID, allowed: true)
+                    Button("允许") {
+                        if let requestID = message.requestID {
+                            chatState.respondToPermission(requestID: requestID, decision: .allow)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+
+                    Button("本会话允许") {
+                        if let requestID = message.requestID {
+                            chatState.respondToPermission(requestID: requestID, decision: .allowForSession)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor.opacity(0.85))
                 }
-                .buttonStyle(.plain)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
             }
         }
         .padding(.vertical, 2)
@@ -384,8 +630,9 @@ struct ChatPanelView: View {
             HStack(spacing: 7) {
                 iconOnlyButton(systemImage: "plus", tint: .secondary, action: openFilesForComposer)
 
-                selectorButton(title: appState.selectedCLI.displayName, systemImage: "terminal", tint: .primary, picker: .cli)
-                selectorButton(title: permissionMode.shortTitle, systemImage: permissionMode.systemImage, tint: permissionMode.tint, picker: .permission)
+                selectorButton(title: appState.selectedCLI.displayName, systemImage: "terminal", tint: .primary, picker: .cli, maxTitleWidth: 92)
+                selectorButton(title: permissionMode.shortTitle, systemImage: permissionMode.systemImage, tint: permissionMode.tint, picker: .permission, maxTitleWidth: 46)
+                selectorButton(title: reasoningEffort.title(for: appState.selectedCLI), systemImage: "sparkles", tint: .primary, picker: .reasoning, maxTitleWidth: 48)
 
                 if editingMessageID != nil {
                     Button("取消") {
@@ -399,7 +646,7 @@ struct ChatPanelView: View {
 
                 Spacer(minLength: 8)
 
-                selectorButton(title: selectedModelTitle, systemImage: "chevron.down", tint: .primary, picker: .model)
+                selectorButton(title: selectedModelTitle, systemImage: "cpu", tint: .primary, picker: .model, maxTitleWidth: 142)
                 contextIcon
                 sendButton
             }
@@ -415,18 +662,58 @@ struct ChatPanelView: View {
         .onDrop(of: [UTType.fileURL.identifier, UTType.plainText.identifier], isTargeted: nil, perform: handleDroppedItems)
     }
 
+    @State private var showContextPopover = false
+
+    private var contextUsagePercent: Double {
+        guard chatState.tokensTotal > 0 else { return 0 }
+        return Double(chatState.tokensUsed) / Double(chatState.tokensTotal)
+    }
+
     private var contextIcon: some View {
-        ZStack {
+        let percent = contextUsagePercent
+        return ZStack {
             Circle()
                 .stroke(Color.black.opacity(0.08), lineWidth: 2)
             Circle()
-                .trim(from: 0, to: 0.79)
+                .trim(from: 0, to: percent)
                 .stroke(Color.secondary.opacity(0.78), style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
         .frame(width: 14, height: 14)
         .frame(width: 20, height: 20)
-        .help(attachedPaths.isEmpty ? "上下文 79% · 203k / 258k 标记" : "上下文 79% · 已加入 \(attachedPaths.count) 个路径")
+        .onHover { hovering in
+            showContextPopover = hovering
+        }
+        .popover(isPresented: $showContextPopover, arrowEdge: .top) {
+            let usedPercent = Int(percent * 100)
+            let remainPercent = 100 - usedPercent
+            VStack(alignment: .leading, spacing: 4) {
+                Text("背景信息窗口：")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                Text("\(usedPercent)% 已用（剩余 \(remainPercent)%）")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Text("已用 \(Self.formatTokens(chatState.tokensUsed)) 标记，共 \(Self.formatTokens(chatState.tokensTotal))")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+        }
+    }
+
+    private static func formatTokens(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            let value = Double(count) / 1_000_000.0
+            return value.truncatingRemainder(dividingBy: 1) == 0
+                ? "\(Int(value))m"
+                : String(format: "%.1fm", value)
+        } else {
+            let value = Double(count) / 1000.0
+            return value.truncatingRemainder(dividingBy: 1) == 0
+                ? "\(Int(value))k"
+                : String(format: "%.1fk", value)
+        }
     }
 
     @ViewBuilder
@@ -438,6 +725,9 @@ struct ChatPanelView: View {
         case .permission:
             customPickerPanel(picker)
                 .padding(.leading, 128)
+        case .reasoning:
+            customPickerPanel(picker)
+                .padding(.leading, 188)
         case .model:
             HStack {
                 Spacer(minLength: 0)
@@ -465,10 +755,18 @@ struct ChatPanelView: View {
                         activePicker = nil
                     }
                 }
+            case .reasoning:
+                ForEach(ChatReasoningEffort.options(for: appState.selectedCLI)) { effort in
+                    pickerOption(title: effort.menuTitle(for: appState.selectedCLI), isSelected: reasoningEffort == effort) {
+                        reasoningEffort = effort
+                        activePicker = nil
+                    }
+                }
             case .model:
-                ForEach(ChatModelCatalog.options(for: appState.selectedCLI)) { model in
+                ForEach(modelService.options(for: appState.selectedCLI)) { model in
                     pickerOption(title: model.title, isSelected: selectedModelID == model.id) {
                         selectedModelID = model.id
+                        syncSelectedContextWindow()
                         activePicker = nil
                     }
                 }
@@ -505,7 +803,13 @@ struct ChatPanelView: View {
         .buttonStyle(.plain)
     }
 
-    private func selectorButton(title: String, systemImage: String, tint: Color, picker: ChatPicker) -> some View {
+    private func selectorButton(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        picker: ChatPicker,
+        maxTitleWidth: CGFloat? = nil
+    ) -> some View {
         Button {
             activePicker = activePicker == picker ? nil : picker
         } label: {
@@ -516,13 +820,16 @@ struct ChatPanelView: View {
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: maxTitleWidth, alignment: .leading)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
             .foregroundStyle(tint)
-            .fixedSize(horizontal: true, vertical: false)
+            .frame(minHeight: 24)
             .padding(.vertical, 4)
+            .padding(.horizontal, 2)
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -551,7 +858,7 @@ struct ChatPanelView: View {
     }
 
     private var selectedModelTitle: String {
-        ChatModelCatalog.title(for: selectedModelID, cli: appState.selectedCLI)
+        modelService.title(for: selectedModelID, cli: appState.selectedCLI)
     }
 
     private var canSend: Bool {
@@ -593,7 +900,9 @@ struct ChatPanelView: View {
             project: appState.selectedProject,
             cli: appState.selectedCLI,
             modelID: selectedModelID,
+            contextModelID: selectedContextModelID,
             permissionMode: permissionMode,
+            reasoningEffort: reasoningEffort,
             sessionMode: appState.selectedMode,
             resumeSessionID: appState.resumeSessionId
         )
@@ -684,10 +993,34 @@ struct ChatPanelView: View {
     }
 
     private func normalizeSelectedModel() {
-        let options = ChatModelCatalog.options(for: appState.selectedCLI)
+        let options = modelService.options(for: appState.selectedCLI)
         if !options.contains(where: { $0.id == selectedModelID }) {
-            selectedModelID = ChatModelCatalog.defaultModelID(for: appState.selectedCLI)
+            let executionModelID = ChatModelCatalog.executionModelID(for: selectedModelID)
+            selectedModelID = options.first {
+                ChatModelCatalog.executionModelID(for: $0.id) == executionModelID
+            }?.id ?? modelService.defaultModelID(for: appState.selectedCLI)
         }
+        syncSelectedContextWindow()
+    }
+
+    private func normalizeReasoningEffort() {
+        let options = ChatReasoningEffort.options(for: appState.selectedCLI)
+        if !options.contains(reasoningEffort) {
+            reasoningEffort = options.contains(.xhigh) ? .xhigh : .high
+        }
+    }
+
+    private func resetReasoningEffortToConfiguredDefault() {
+        reasoningEffort = modelService.defaultReasoningEffort(for: appState.selectedCLI)
+        normalizeReasoningEffort()
+    }
+
+    private var selectedContextModelID: String {
+        modelService.contextModelID(for: selectedModelID, cli: appState.selectedCLI)
+    }
+
+    private func syncSelectedContextWindow() {
+        chatState.syncContextWindow(modelID: selectedContextModelID)
     }
 
     private func iconOnlyButton(systemImage: String, tint: Color, action: @escaping () -> Void) -> some View {
@@ -711,6 +1044,92 @@ struct ChatPanelView: View {
         .foregroundStyle(.tertiary)
         .contentShape(Rectangle())
         .help(help)
+    }
+}
+
+private enum ChatTranscriptItem: Identifiable {
+    case message(ChatMessage)
+    case activity(ChatActivityGroup)
+
+    var id: String {
+        switch self {
+        case .message(let message):
+            "message-\(message.id.uuidString)"
+        case .activity(let group):
+            "activity-\(group.id.uuidString)"
+        }
+    }
+}
+
+private struct ChatActivityGroup: Identifiable {
+    let id: UUID
+    let messages: [ChatMessage]
+
+    init(messages: [ChatMessage]) {
+        self.messages = messages
+        id = messages.first?.id ?? UUID()
+    }
+
+    var isStreaming: Bool {
+        messages.contains { $0.isStreaming }
+    }
+
+    var isMeaningful: Bool {
+        messages.contains { message in
+            switch message.kind {
+            case .commandOutput, .rawOutput, .result:
+                false
+            default:
+                true
+            }
+        }
+    }
+
+    var title: String {
+        "\(isStreaming ? "处理中" : "已处理") \(durationText)"
+    }
+
+    var summaryText: String? {
+        var parts: [String] = []
+        let reasoningCount = messages.filter { $0.kind == .reasoning }.count
+        let toolCount = messages.filter { $0.kind == .toolCall }.count
+        let commandCount = messages.filter { $0.kind == .command }.count
+
+        if reasoningCount > 0 {
+            parts.append(isStreaming ? "正在思考" : "已思考")
+        }
+        if toolCount > 0 {
+            parts.append("已调用 \(toolCount) 个工具")
+        }
+        if commandCount > 0 {
+            parts.append("已运行 \(commandCount) 条命令")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: "，")
+    }
+
+    var detailMessages: [ChatMessage] {
+        messages.filter { message in
+            switch message.kind {
+            case .commandOutput, .rawOutput, .result:
+                false
+            default:
+                true
+            }
+        }
+    }
+
+    private var durationText: String {
+        guard let start = messages.first?.createdAt, let end = messages.last?.createdAt else {
+            return "0s"
+        }
+        let seconds = max(1, Int(end.timeIntervalSince(start).rounded()))
+        if seconds < 60 {
+            return "\(seconds)s"
+        }
+        let minutes = seconds / 60
+        let rest = seconds % 60
+        return rest == 0 ? "\(minutes)m" : "\(minutes)m \(rest)s"
     }
 }
 
@@ -839,9 +1258,84 @@ private extension ChatMessageKind {
 
     var isMonospaced: Bool {
         switch self {
-        case .command, .commandOutput, .rawOutput, .system, .result: true
-        case .user, .assistant, .reasoning, .toolCall, .toolResult, .permissionRequest, .diff, .error: false
+        case .toolCall, .toolResult, .command, .commandOutput, .rawOutput, .system, .result: true
+        case .user, .assistant, .reasoning, .permissionRequest, .diff, .error: false
         }
+    }
+
+    var isGroupedActivityEvent: Bool {
+        switch self {
+        case .reasoning, .toolCall, .toolResult, .command, .commandOutput, .result, .rawOutput:
+            true
+        case .user, .assistant, .permissionRequest, .diff, .error, .system:
+            false
+        }
+    }
+
+    var activityIcon: String {
+        switch self {
+        case .reasoning:
+            "lightbulb"
+        case .toolCall, .toolResult:
+            "gearshape"
+        case .command, .commandOutput:
+            "terminal"
+        case .result:
+            "checkmark.circle"
+        case .rawOutput:
+            "doc.text"
+        case .diff:
+            "pencil"
+        case .permissionRequest:
+            "hand.raised"
+        case .error:
+            "exclamationmark.triangle"
+        case .user, .assistant, .system:
+            "circle"
+        }
+    }
+
+    var isVisibleInTranscript: Bool {
+        switch self {
+        case .system:
+            false
+        case .user, .assistant, .reasoning, .toolCall, .toolResult, .command, .commandOutput, .permissionRequest, .diff, .error, .result, .rawOutput:
+            true
+        }
+    }
+}
+
+private extension ChatMessage {
+    var activityTitle: String {
+        switch kind {
+        case .reasoning:
+            isStreaming ? "正在思考" : "思考"
+        case .toolCall:
+            compactActivityTitle(prefix: "已调用工具")
+        case .toolResult:
+            compactActivityTitle(prefix: "工具已完成")
+        case .command:
+            compactActivityTitle(prefix: "已运行命令")
+        case .commandOutput:
+            compactActivityTitle(prefix: "命令输出")
+        case .result:
+            compactActivityTitle(prefix: "结果")
+        case .rawOutput:
+            compactActivityTitle(prefix: "原始事件")
+        default:
+            title.isEmpty ? kind.defaultTitle : title
+        }
+    }
+
+    var activityBody: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func compactActivityTitle(prefix: String) -> String {
+        let titleText = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let subtitleText = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = titleText.isEmpty ? subtitleText : titleText
+        return detail.isEmpty ? prefix : "\(prefix) \(detail)"
     }
 }
 
@@ -886,5 +1380,6 @@ private extension String {
 private enum ChatPicker {
     case cli
     case permission
+    case reasoning
     case model
 }

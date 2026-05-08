@@ -20,6 +20,15 @@ struct ProjectSidebarView: View {
                     .padding(.horizontal, 10)
                     .padding(.top, 12)
                     .padding(.bottom, 12)
+
+                Spacer(minLength: 0)
+
+                Divider().opacity(0.24)
+                    .padding(.horizontal, 14)
+
+                settingsButton
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
             }
         }
         .alert("移除项目？", isPresented: Binding(
@@ -41,11 +50,12 @@ struct ProjectSidebarView: View {
             set: { if !$0 { historyToRemove = nil } }
         )) {
             Button("取消", role: .cancel) { historyToRemove = nil }
-            Button("删除", role: .destructive) {
-                if let session = historyToRemove {
+            Button("删除") {
+                let session = historyToRemove
+                historyToRemove = nil
+                if let session {
                     appState.deleteCLIHistory(session)
                 }
-                historyToRemove = nil
             }
         } message: {
             Text("会从本地 CLI 历史中删除“\(historyToRemove?.title ?? "该会话")”。")
@@ -162,6 +172,21 @@ struct ProjectSidebarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private var settingsButton: some View {
+        Button(action: { appState.showSettings = true }) {
+            HStack(spacing: 8) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14, weight: .medium))
+                Text("设置")
+                    .font(.system(size: 13, weight: .medium))
+                Spacer()
+            }
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

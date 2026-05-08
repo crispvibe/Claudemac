@@ -1,6 +1,17 @@
 import Foundation
 
 final class ClaudeCodeProcessBackend: ChatProcessBackend {
+    private struct ProcessRunResult {
+        let terminationStatus: Int32
+        let terminationReason: Process.TerminationReason
+        let didReceiveVisibleOutput: Bool
+        let didReceiveStderr: Bool
+
+        var shouldRetryWithoutEffort: Bool {
+            terminationStatus != 0 && didReceiveVisibleOutput == false
+        }
+    }
+
     private var process: Process?
     private var inputPipe: Pipe?
 
@@ -8,67 +19,148 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         AsyncThrowingStream { continuation in
             let task = Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self else { return }
-                let process = Process()
-                let stdout = Pipe()
-                let stderr = Pipe()
-                let stdin = Pipe()
-                process.executableURL = URL(fileURLWithPath: options.executablePath)
-                process.arguments = self.arguments(prompt: prompt, options: options, session: session)
-                process.environment = ChatCLIEnvironment.processEnvironment
-                process.standardOutput = stdout
-                process.standardError = stderr
-                process.standardInput = stdin
-                self.process = process
-                self.inputPipe = stdin
 
-                do {
-                    continuation.yield(.appendMessage(kind: .command, title: "claude", subtitle: options.projectPath, text: ([options.executablePath] + (process.arguments ?? [])).joined(separator: " "), status: "start", requestID: nil))
-                    try process.run()
-                } catch {
-                    continuation.yield(.failed(ChatProcessError.launchFailed(error.localizedDescription).localizedDescription))
+                guard let firstRun = await self.runProcess(
+                    prompt: prompt,
+                    options: options,
+                    session: session,
+                    includeEffort: true,
+                    continuation: continuation
+                ) else {
                     continuation.finish()
                     return
                 }
 
-                let stdoutTask = Task {
-                    do {
-                        for try await line in JSONLStreamReader.lines(from: stdout) {
-                            for event in Self.events(fromClaudeLine: line) {
-                                continuation.yield(event)
-                            }
-                        }
-                    } catch {
-                        continuation.yield(.failed(error.localizedDescription))
+                let finalRun: ProcessRunResult
+                if firstRun.shouldRetryWithoutEffort {
+                    continuation.yield(.appendMessage(
+                        kind: .system,
+                        title: "Claude Code",
+                        subtitle: "fallback",
+                        text: "当前 Claude Code 没有接受 --effort，本次已自动改用默认思考强度重试。",
+                        status: "retry",
+                        requestID: nil
+                    ))
+                    guard let fallbackRun = await self.runProcess(
+                        prompt: prompt,
+                        options: options,
+                        session: session,
+                        includeEffort: false,
+                        continuation: continuation
+                    ) else {
+                        continuation.finish()
+                        return
                     }
-                }
-
-                let stderrTask = Task {
-                    do {
-                        for try await line in JSONLStreamReader.lines(from: stderr) {
-                            continuation.yield(.appendMessage(kind: .commandOutput, title: "stderr", subtitle: "Claude Code", text: line, status: "stream", requestID: nil))
-                        }
-                    } catch {
-                        continuation.yield(.failed(error.localizedDescription))
-                    }
-                }
-
-                process.waitUntilExit()
-                _ = await stdoutTask.result
-                _ = await stderrTask.result
-
-                if process.terminationStatus == 0 {
-                    continuation.yield(.finished)
-                } else if process.terminationReason == .uncaughtSignal {
-                    continuation.yield(.failed("Claude Code 已停止。"))
+                    finalRun = fallbackRun
                 } else {
-                    continuation.yield(.failed("Claude Code 退出码：\(process.terminationStatus)"))
+                    finalRun = firstRun
                 }
+
+                self.finish(finalRun, continuation: continuation)
                 continuation.finish()
             }
             continuation.onTermination = { _ in
                 task.cancel()
                 self.interrupt()
             }
+        }
+    }
+
+    private func runProcess(
+        prompt: String,
+        options: ChatRunOptions,
+        session: ChatSessionRecord?,
+        includeEffort: Bool,
+        continuation: AsyncThrowingStream<ChatBackendEvent, Error>.Continuation
+    ) async -> ProcessRunResult? {
+        let process = Process()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        let stdin = Pipe()
+        process.executableURL = URL(fileURLWithPath: options.executablePath)
+        process.arguments = arguments(prompt: prompt, options: options, session: session, includeEffort: includeEffort)
+        process.currentDirectoryURL = URL(fileURLWithPath: options.projectPath, isDirectory: true)
+        process.environment = ChatCLIEnvironment.processEnvironment
+        process.standardOutput = stdout
+        process.standardError = stderr
+        process.standardInput = stdin
+        self.process = process
+        inputPipe = stdin
+
+        do {
+            continuation.yield(.appendMessage(
+                kind: .command,
+                title: "claude",
+                subtitle: options.projectPath,
+                text: ([options.executablePath] + (process.arguments ?? [])).joined(separator: " "),
+                status: "start",
+                requestID: nil
+            ))
+            try process.run()
+        } catch {
+            continuation.yield(.failed(ChatProcessError.launchFailed(error.localizedDescription).localizedDescription))
+            return nil
+        }
+
+        let stdoutTask = Task { () -> Bool in
+            var didReceiveVisibleOutput = false
+            do {
+                for try await line in JSONLStreamReader.lines(from: stdout) {
+                    let events = Self.events(fromClaudeLine: line)
+                    if events.contains(where: Self.isVisibleOutput) {
+                        didReceiveVisibleOutput = true
+                    }
+                    for event in events {
+                        continuation.yield(event)
+                    }
+                }
+            } catch {
+                continuation.yield(.failed(error.localizedDescription))
+            }
+            return didReceiveVisibleOutput
+        }
+
+        let stderrTask = Task { () -> Bool in
+            var didReceiveStderr = false
+            do {
+                for try await line in JSONLStreamReader.lines(from: stderr) {
+                    didReceiveStderr = true
+                    continuation.yield(.appendMessage(kind: .commandOutput, title: "stderr", subtitle: "Claude Code", text: line, status: "stream", requestID: nil))
+                }
+            } catch {
+                continuation.yield(.failed(error.localizedDescription))
+            }
+            return didReceiveStderr
+        }
+
+        process.waitUntilExit()
+        let didReceiveVisibleOutput = (try? await stdoutTask.value) ?? false
+        let didReceiveStderr = (try? await stderrTask.value) ?? false
+        inputPipe = nil
+        self.process = nil
+
+        return ProcessRunResult(
+            terminationStatus: process.terminationStatus,
+            terminationReason: process.terminationReason,
+            didReceiveVisibleOutput: didReceiveVisibleOutput,
+            didReceiveStderr: didReceiveStderr
+        )
+    }
+
+    private func finish(
+        _ result: ProcessRunResult,
+        continuation: AsyncThrowingStream<ChatBackendEvent, Error>.Continuation
+    ) {
+        if result.terminationStatus == 0 {
+            if result.didReceiveVisibleOutput || result.didReceiveStderr {
+                continuation.yield(.finished)
+            } else {
+                continuation.yield(.failed("Claude Code 没有输出任何对话内容。请检查 CLAUDE_CONFIG_DIR、认证配置或模型设置。"))
+            }
+        } else if result.terminationReason == .uncaughtSignal {
+            continuation.yield(.failed("Claude Code 已停止。"))
+        } else {
+            continuation.yield(.failed("Claude Code 退出码：\(result.terminationStatus)"))
         }
     }
 
@@ -81,18 +173,28 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         }
     }
 
-    func respondToPermission(requestID: String, allowed: Bool) {
+    func respondToPermission(requestID: String, decision: ChatPermissionDecision) {
+        var response: [String: Any] = ["allowed": decision.isAllowed]
+        if decision == .allowForSession {
+            response["scope"] = "session"
+        }
         let object: [String: Any] = [
             "type": "control_response",
             "request_id": requestID,
-            "response": ["allowed": allowed]
+            "response": response
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: object), let inputPipe else { return }
-        inputPipe.fileHandleForWriting.write(data)
-        inputPipe.fileHandleForWriting.write(Data("\n".utf8))
+        ChatPipeWriter.writeJSONObject(object, to: inputPipe)
     }
 
-    private func arguments(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?) -> [String] {
+    func sendCompact() {
+        let object: [String: Any] = [
+            "type": "command",
+            "command": "/compact"
+        ]
+        ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+    }
+
+    private func arguments(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, includeEffort: Bool) -> [String] {
         var args: [String] = []
         if options.sessionMode == .continueLast {
             args.append("--continue")
@@ -105,8 +207,12 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         args.append(contentsOf: ["--output-format", "stream-json"])
         args.append("--verbose")
         args.append(contentsOf: ["--permission-mode", options.permissionMode.claudePermissionMode])
-        if options.modelID != ChatModelCatalog.defaultClaudeModelID {
-            args.append(contentsOf: ["--model", options.modelID])
+        if includeEffort {
+            args.append(contentsOf: ["--effort", options.reasoningEffort.claudeArgument])
+        }
+        let executionModelID = ChatModelCatalog.executionModelID(for: options.modelID)
+        if executionModelID != ChatModelCatalog.defaultClaudeModelID {
+            args.append(contentsOf: ["--model", executionModelID])
         }
         return args
     }
@@ -120,6 +226,11 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         var events: [ChatBackendEvent] = []
         if let sessionID = object["session_id"] as? String ?? object["sessionId"] as? String {
             events.append(.sessionID(sessionID))
+        }
+
+        // Extract token usage from any event that carries it
+        if let usageEvent = extractTokenUsage(from: object) {
+            events.append(usageEvent)
         }
 
         let type = object["type"] as? String ?? object["event"] as? String ?? "raw"
@@ -158,6 +269,17 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         return events
     }
 
+    private static func isVisibleOutput(_ event: ChatBackendEvent) -> Bool {
+        switch event {
+        case .appendDelta, .permissionRequest, .failed:
+            true
+        case .appendMessage(let kind, _, _, let text, _, _):
+            kind != .system && !text.isEmpty
+        case .sessionID, .updateStreamingStatus, .finished, .tokenUsage:
+            false
+        }
+    }
+
     private static func assistantText(from object: [String: Any]) -> String? {
         if let delta = object["delta"] as? [String: Any] {
             return stringValue(delta["text"]) ?? stringValue(delta["content"])
@@ -178,6 +300,32 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
               let value = String(data: data, encoding: .utf8) else { return "" }
         return value
+    }
+
+    private static func extractTokenUsage(from object: [String: Any]) -> ChatBackendEvent? {
+        // Try top-level "usage" field
+        if let usage = object["usage"] as? [String: Any] {
+            let inputTokens = usage["input_tokens"] as? Int ?? 0
+            let outputTokens = usage["output_tokens"] as? Int ?? 0
+            let cacheRead = usage["cache_read_input_tokens"] as? Int ?? usage["cache_creation_input_tokens"] as? Int ?? 0
+            let used = inputTokens + outputTokens + cacheRead
+            let total = usage["context_window"] as? Int ?? usage["max_tokens"] as? Int ?? 0
+            if used > 0 || total > 0 {
+                return .tokenUsage(used: used, total: total)
+            }
+        }
+        // Try nested "message.usage"
+        if let message = object["message"] as? [String: Any], let usage = message["usage"] as? [String: Any] {
+            let inputTokens = usage["input_tokens"] as? Int ?? 0
+            let outputTokens = usage["output_tokens"] as? Int ?? 0
+            let cacheRead = usage["cache_read_input_tokens"] as? Int ?? usage["cache_creation_input_tokens"] as? Int ?? 0
+            let used = inputTokens + outputTokens + cacheRead
+            let total = usage["context_window"] as? Int ?? usage["max_tokens"] as? Int ?? 0
+            if used > 0 || total > 0 {
+                return .tokenUsage(used: used, total: total)
+            }
+        }
+        return nil
     }
 
     private static func stringValue(_ value: Any?) -> String? {

@@ -5,7 +5,7 @@
 
 ## 一句话状态
 
-ClaudeMac 目前已经从“外部 Terminal 启动器”推进到“macOS 原生 IDE 式工作台 + 内嵌 Claude Code 对话 MVP”。项目管理、文件树、编辑器、多标签、右侧真实 Claude Code 会话、会话本地保存、历史列表合并已经具备；Codex app-server 路径有实现骨架，但本机未安装 Codex，端到端未验证。
+ClaudeMac 目前已经从“外部 Terminal 启动器”推进到“macOS 原生 IDE 式工作台 + 内嵌 Claude Code 对话 MVP”。项目管理、文件树、编辑器、多标签、右侧真实 Claude Code 会话、会话本地保存、历史列表合并已经具备；Codex app-server 已按本机 `codex-cli 0.120.0` schema 校准并验证 initialize / model-list，完整模型 turn 仍需在 App 内手工确认。
 
 ## 当前完成度总览
 
@@ -18,7 +18,7 @@ ClaudeMac 目前已经从“外部 Terminal 启动器”推进到“macOS 原生
 | 顶部文件标签 | 进行中 | 已多轮贴近设计图，但视觉还在调细节，当前主要问题是尺寸、融合度和设计稿一致性仍需人工复核。 |
 | 右侧聊天 UI | 中等偏高 | 已是 IDE 式消息流，支持 user/assistant/tool/permission/error/diff 等行样式、复制、编辑/撤销入口、文本选中。 |
 | Claude Code 对接 | MVP 可用 | 通过 `Process + Pipe + stream-json` 真实启动 Claude Code，并已用最小探针验证收到 `OK` 回复。 |
-| Codex 对接 | 骨架完成，未闭环 | 已实现 `codex app-server --listen stdio://` 启动和事件适配，但本机 Codex 缺失，未做真实端到端验证。 |
+| Codex 对接 | MVP 可试用，待完整闭环 | 已实现 `codex app-server --listen stdio://` 启动、initialize、thread/start、turn/start、权限响应和事件适配；本机已验证 `codex-cli 0.120.0` 的 app-server schema 与 model/list，完整模型 turn 仍需 App 内手工确认。 |
 | CLI 能力探针 | 中等 | 支持查找 Homebrew 路径、读取版本、判断 Claude stream-json / resume / continue 和 Codex app-server。 |
 | 会话保存/历史 | 中等 | App 自建聊天会话保存到 Application Support，并和扫描到的 Claude/Codex 历史合并到左侧历史。 |
 | 外部 Terminal fallback | 可用 | 仍保留 Terminal/iTerm2 启动命令路径，但不再是主要对话路径。 |
@@ -169,8 +169,8 @@ App 自己的聊天会话：
 
 ### 高优先级
 
-1. **Codex 未真实验证**  
-   代码路径存在，但缺少安装 Codex 后的 app-server 真实协议验证。
+1. **Codex 完整 turn 仍需 App 内手工验证**  
+   本机已验证 Codex app-server initialize、schema 和 model/list；由于直接命令探针受当前 shell 沙盒限制，完整 thread 写入和模型 turn 需要用带 `.codex` entitlement 的 App 构建手工确认。
 
 2. **聊天权限链路需要更多真实场景**  
    目前有 permission row 和 response 写回，但真实文件编辑、命令执行、拒绝权限、重复权限请求仍需矩阵验证。
@@ -181,8 +181,8 @@ App 自己的聊天会话：
 4. **缺少自动化测试 target**  
    JSONL 半包解析、Claude 事件适配、ChatSessionStore、AppState 文件保护目前没有 XCTest 覆盖。
 
-5. **README 已落后于当前形态**  
-   根 README 还偏“Terminal 启动器”时期，后续应更新为“内嵌 CLI 对话工作台”。
+5. ~~**README 已落后于当前形态**~~  
+   ✅ 已修复。README 已重写为”内嵌 CLI 对话工作台”形态，分类列出已实现功能、修正了毛玻璃/语法高亮/图标等描述偏差。
 
 ### 中优先级
 
@@ -194,7 +194,7 @@ App 自己的聊天会话：
 
 ### 低优先级
 
-1. 正式 App 图标和品牌视觉。
+1. ~~正式 App 图标和品牌视觉。~~  ✅ App 图标已完成（10 尺寸齐全）。品牌视觉待定。
 2. 发布签名、公证、自动更新。
 3. 插件系统、MCP marketplace、多 agent、云同步。
 4. Git 集成、SSH、远程开发。
@@ -238,7 +238,7 @@ open ClaudeMac.xcodeproj
 2. 给 JSONLStreamReader、ClaudeCodeProcessBackend event adapter、ChatSessionStore 加 XCTest。
 3. 安装 Codex 后做 app-server 协议真实验证。
 4. 补齐权限请求真实场景：命令执行、文件修改、允许/拒绝、停止。
-5. 更新 README，使其和当前内嵌聊天形态一致。
+5. ~~更新 README，使其和当前内嵌聊天形态一致。~~ ✅ 已完成。
 6. 做一次 UI 手工回归：文件树、编辑器、聊天、历史、外部文件打开、终端 fallback。
 
 ## 最近验证记录

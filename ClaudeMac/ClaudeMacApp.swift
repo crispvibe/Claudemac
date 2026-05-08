@@ -1,15 +1,26 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 @main
 struct ClaudeMacApp: App {
     @StateObject private var appState = AppState()
+    @StateObject private var modelService = ChatModelService()
+
+    init() {
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+        _ = signal(SIGPIPE, SIG_IGN)
+    }
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(appState)
+                .environmentObject(modelService)
                 .background(WindowConfigurator())
+                .onAppear { triggerModelFetch() }
+                .onChange(of: appState.settings.apiBaseURL) { _, _ in triggerModelFetch() }
+                .onChange(of: appState.settings.apiKey) { _, _ in triggerModelFetch() }
         }
         .defaultSize(width: 1380, height: 820)
         .windowStyle(.hiddenTitleBar)
@@ -39,7 +50,14 @@ struct ClaudeMacApp: App {
         Settings {
             SettingsView()
                 .environmentObject(appState)
+                .environmentObject(modelService)
         }
+    }
+
+    private func triggerModelFetch() {
+        let settings = appState.settings
+        modelService.reloadConfiguredModels()
+        modelService.fetchClaudeModels(baseURL: settings.apiBaseURL, apiKey: settings.apiKey)
     }
 }
 
@@ -69,6 +87,7 @@ private struct WindowConfigurator: NSViewRepresentable {
         window.styleMask.insert(.fullSizeContentView)
         window.contentView?.wantsLayer = true
         window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+        window.isRestorable = false
         localizeMenuBar()
     }
 

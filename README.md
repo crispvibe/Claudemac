@@ -1,6 +1,6 @@
 # ClaudeMac
 
-ClaudeMac 是一个 macOS 原生 AI CLI 工作台，用来管理项目、快速浏览/编辑文件，并在内嵌面板或系统 Terminal / iTerm2 中启动 Claude Code / Codex 会话。
+ClaudeMac 是一个 macOS 原生 AI CLI 工作台，用来管理项目、快速浏览/编辑文件，并在内嵌面板中与 Claude Code / Codex 进行真实对话。同时保留外部 Terminal / iTerm2 启动作为 fallback。
 
 > 当前完善程度、已验证链路和接手建议见：[`docs/project-current-status.md`](docs/project-current-status.md)。
 
@@ -22,50 +22,120 @@ open ClaudeMac.xcodeproj
 
 ## 已实现功能
 
-- macOS 原生 SwiftUI 三栏界面。
-- 左右侧栏使用 `NSVisualEffectView` 毛玻璃效果。
-- 添加项目目录。
+### 工作台
+
+- macOS 原生 SwiftUI 三栏界面（左侧项目/文件、中间编辑器、右侧 CLI 对话）。
+- 左侧栏使用 `NSVisualEffectView` 毛玻璃效果（`GlassPanel`）。
+- 编辑器和聊天面板之间可拖拽调整宽度（300–640）。
+- 隐藏标题栏，菜单栏全中文化。
+
+### 项目管理
+
+- 添加 / 删除项目目录。
 - 使用 security-scoped bookmark 持久化项目访问权限。
 - 项目列表持久化到 Application Support。
-- 文件目录树，默认忽略 `.git`、`node_modules`、`dist`、`build`、`.dart_tool`、`.idea`、`.vscode` 等目录。
+- 启动时自动恢复项目列表和最近打开状态。
+
+### 文件树
+
+- 懒加载目录树，只读取当前展开目录的直接子级。
+- 默认忽略 `.git`、`node_modules`、`dist`、`build`、`.dart_tool`、`.idea`、`.vscode` 等 16 个目录。
 - 点击文本文件打开到中间编辑器。
-- 多标签编辑。
+- 文件节点支持拖拽到聊天输入框。
+
+### 编辑器
+
+- 多标签编辑，顶部 tab 栏支持关闭和外部文件打开（`+` 按钮）。
 - `NSTextView` + `NSRulerView` 行号编辑器。
-- UTF-8 文本保存。
-- 二进制文件、大文件、非 UTF-8 文件打开保护。
-- Claude Code 会话面板。
+- 基础语法高亮：Swift / JS / Python / Go / JSON / YAML / Markdown / Shell 八种语言的 regex 级着色。
+- UTF-8 文本保存（`⌘S`）。
+- 二进制文件、大文件（>5 MB）、非 UTF-8 文件打开保护。
+- 底部状态栏：文件名、大小、行数、光标位置、修改时间。
+
+### 内嵌 CLI 对话
+
 - 右侧面板可切换 Claude Code / Codex。
-- 恢复历史支持手动输入 session id / name，留空则打开 Claude 选择器。
-- macOS Settings 窗口，可配置默认 CLI、默认终端、命令预览、Claude 历史扫描和忽略目录。
-- 新建会话：`claude`。
-- 继续上次：`claude --continue`。
-- 恢复历史：`claude --resume <sessionId>`。
+- Claude Code 通过 `claude -p <prompt> --output-format stream-json --verbose` 真实启动，流式接收 assistant delta。
+- Codex 通过 `codex app-server --listen stdio://` 对接（JSON-RPC），已按本机 `codex-cli 0.120.0` 协议校准 initialize / model-list。Codex 完整模型 turn 仍需 App 内手工确认。
+- 模型选择：Claude 支持 Opus 4.7 / Sonnet 4.6 / Haiku 4.5；Codex 支持 GPT-5.x 系列。
+- 权限模式选择：询问（default）、自动编辑（acceptEdits）、完全访问（bypassPermissions）。
+- 权限请求 UI：拒绝 / 允许 / 本会话允许。Codex 三态完整；Claude 当前只传 `allowed: bool`，session scope 待补。
+- 消息流支持 user / assistant / reasoning / tool / command / permission / diff / error / result / raw 等行样式。
+- 新建会话 / 继续上次（`--continue`）/ 恢复历史（`--resume <id>`）。
+- 会话本地持久化（`chat-sessions.json` + `chat-messages/<uuid>.jsonl`）。
+
+### 历史会话
+
+- 实验性只读扫描 `~/.claude/projects` 和 `~/.codex/sessions` 下的 JSONL 历史。
+- 本地会话和外部 CLI 历史合并到左侧项目下方，按 updatedAt 排序。
+- 支持删除本地会话和外部历史条目。
+
+### 外部终端 fallback
+
 - 安全 shell quoting，支持中文、空格、单引号等路径。
 - Apple Terminal / iTerm2 AppleScript 启动。
-- 本 App 最近启动记录持久化。
-- 实验性只读扫描 `~/.claude/projects` 下的 Claude Code JSONL 历史。
+- 本 App 最近启动记录持久化（最多 50 条）。
 
-## 未实现功能
+### 设置
 
-- 完整语法高亮。
-- Git 集成。
-- 内嵌终端。
-- Codex 私有历史解析。
+- macOS Settings 窗口：默认 CLI、默认终端、历史扫描开关、忽略目录列表。
+
+### 其他
+
+- App 图标已设计（10 个尺寸齐全）。
+- GUI App PATH 修复：自动注入 Homebrew / npm-global / cargo / bun 等路径，解决 sandbox 下找不到 CLI 的问题。
+
+## 未实现 / 待完善
+
+- LSP / tree-sitter 级完整语法高亮（当前为 regex 基础高亮）。
+- Git 集成（状态、diff、blame）。
+- 内嵌终端（PTY）。
+- Codex 完整模型 turn 端到端验证。
+- 自动化测试（无 XCTest target）。
 - 远程 SSH。
 - 插件系统。
-- App 图标设计。
+- 编辑器搜索 / 替换 / LSP 补全。
+- 聊天 delta 节流优化（长输出性能）。
 
 ## 项目结构
 
 ```text
 ClaudeMac.xcodeproj/
 ClaudeMac/
-  ClaudeMacApp.swift
+  ClaudeMacApp.swift          # @main 入口，窗口配置，菜单中文化
   Models/
+    AppModels.swift           # ProjectItem, FileNode, EditorTab, LaunchRecord, CLIHistorySession, AppSettings
+    ChatModels.swift          # ChatMessage, ChatSessionRecord, ChatRunOptions, ChatBackendEvent, 权限/模型枚举
   ViewModels/
+    AppState.swift            # 全局状态中心：项目、文件树、标签、历史、设置
+    ChatPanelState.swift      # 聊天状态机：idle → starting → streaming → completed/failed
   Views/
+    RootView.swift            # 三栏布局 + 拖拽调整
+    ProjectSidebarView.swift  # 项目列表 + 历史子行 + 文件树
+    FileTreeView.swift        # 懒加载文件树节点
+    EditorTabBarView.swift    # 顶部标签栏
+    EditorAreaView.swift      # 编辑器 + 状态栏
+    ClaudeSessionPanelView.swift  # 聊天面板（消息流 + composer）
+    GlassPanel.swift          # AppTheme 调色板 + 毛玻璃容器
+    SettingsView.swift        # macOS Settings 窗口
   AppKit/
+    VisualEffectView.swift    # NSVisualEffectView SwiftUI 包装
+    TextEditorRepresentable.swift  # NSTextView + 语法高亮
+    LineNumberRulerView.swift # 行号绘制
   Services/
+    ProjectStore.swift        # 项目持久化 + bookmark
+    FileTreeScanner.swift     # 目录扫描 + 忽略规则
+    CommandBuilder.swift      # shell quoting
+    TerminalLauncher.swift    # AppleScript 启动终端
+    LaunchHistoryStore.swift  # 启动记录持久化
+    ClaudeHistoryScanner.swift  # 外部 CLI 历史扫描
+    Chat/
+      ChatProcessBackend.swift      # 协议 + 环境 + PATH 修复 + 进程运行器
+      ChatCLICapabilityProbe.swift  # CLI 能力探测
+      ClaudeCodeProcessBackend.swift  # Claude Code stream-json 对接
+      CodexAppServerBackend.swift     # Codex app-server JSON-RPC 对接
+      JSONLStreamReader.swift         # Pipe → AsyncThrowingStream<String>
+      ChatSessionStore.swift          # 本地会话持久化
   Assets.xcassets/
   Info.plist
   ClaudeMac.entitlements
@@ -75,11 +145,15 @@ ClaudeMac/
 
 ### NSVisualEffectView 毛玻璃
 
-`AppKit/VisualEffectView.swift` 将 `NSVisualEffectView` 封装为 SwiftUI `NSViewRepresentable`。左右侧栏通过 `GlassPanel` 使用系统 material，保持浅色半透明和原生 macOS 质感。
+`AppKit/VisualEffectView.swift` 将 `NSVisualEffectView` 封装为 SwiftUI `NSViewRepresentable`。左侧栏通过 `GlassPanel` 使用系统 `.sidebar` material，保持浅色半透明和原生 macOS 质感。右侧聊天面板使用 `editorSurface` 半透明背景，不使用 NSVisualEffectView。
 
 ### Security-scoped bookmark
 
 `Services/ProjectStore.swift` 在添加项目时通过 `NSOpenPanel` 获取用户授权目录，并保存 `.withSecurityScope` bookmark。读取文件树、打开文件、保存文件时都会 resolve bookmark 并临时 `startAccessingSecurityScopedResource()`。
+
+### GUI App PATH 修复
+
+macOS sandbox App 启动时 `$PATH` 极简，找不到 Homebrew 安装的 CLI。`ChatCLIEnvironment` 通过 `getpwuid` 获取真实 HOME，把 `~/.local/bin`、`~/.bun/bin`、`~/.cargo/bin`、`/opt/homebrew/bin`、`/usr/local/bin` 等路径注入子进程环境。Capability probe 还兜底 `zsh -lc 'command -v'`。
 
 ### 文件树
 
@@ -87,7 +161,16 @@ ClaudeMac/
 
 ### NSTextView 编辑器
 
-`AppKit/TextEditorRepresentable.swift` 封装 `NSScrollView + NSTextView`。`AppKit/LineNumberRulerView.swift` 通过 `NSRulerView` 绘制行号。MVP 不做复杂语法高亮，优先保证文本清晰、可编辑、可保存。
+`AppKit/TextEditorRepresentable.swift` 封装 `NSScrollView + NSTextView`。`AppKit/LineNumberRulerView.swift` 通过 `NSRulerView` 绘制行号。内置 `SyntaxHighlighter` 提供八种语言的 regex 级基础高亮（关键字、类型、字符串、注释、数字、函数、属性），用 protected ranges 避免字符串/注释内被误着色。
+
+### CLI 对话 Backend
+
+统一协议 `ChatProcessBackend`，输出 `AsyncThrowingStream<ChatBackendEvent>`：
+
+- **Claude Code**：`claude -p <prompt> --output-format stream-json --verbose --permission-mode <mode>`，解析 JSONL 事件。
+- **Codex**：`codex app-server --listen stdio://`，JSON-RPC 协议（`initialize → thread/start → turn/start`），通知事件适配为相同的 `ChatBackendEvent`。
+
+UI 层 `ChatPanelState.apply(event)` 统一处理，换 CLI 不改 UI。
 
 ### Terminal / iTerm2 启动
 
@@ -108,18 +191,18 @@ a'b        -> 'a'\''b'
 cd '/Users/oreo/Desktop/公司/摄影 go-server/server' && claude --continue
 ```
 
-不会使用 `cd "~/..."`，避免 `~` 在引号内无法展开。
+不会使用 `cd “~/...”`，避免 `~` 在引号内无法展开。
 
 ## 手工验收建议
 
 1. 添加一个中文或带空格路径的项目。
 2. 展开文件树，确认大目录被忽略。
-3. 打开 Markdown 文件。
+3. 打开 Markdown 文件，确认语法高亮（标题、链接、列表）。
 4. 编辑文本并使用 `⌘S` 保存。
-5. 点击“新建会话”，检查命令预览为 `claude`。
-6. 点击“继续上次”，检查命令预览为 `claude --continue`。
-7. 点击“打开终端”，确认 Terminal 新窗口执行命令。
-8. 重启 App，确认项目和最近记录仍存在。
+5. 右侧选择 Claude Code，发送一句简单消息，确认流式回复。
+6. 停止一次运行中的回复。
+7. 切换到外部终端模式，确认 Terminal 新窗口执行命令。
+8. 重启 App，确认项目、历史、聊天会话仍存在。
 
 ## 数据位置
 
@@ -127,11 +210,19 @@ cd '/Users/oreo/Desktop/公司/摄影 go-server/server' && claude --continue
 
 ```text
 ~/Library/Application Support/ClaudeMac/projects.json
+~/Library/Application Support/ClaudeMac/settings.json
 ~/Library/Application Support/ClaudeMac/launch-history.json
+~/Library/Application Support/ClaudeMac/chat-sessions.json
+~/Library/Application Support/ClaudeMac/chat-messages/<session-id>.jsonl
 ```
 
-Claude Code 历史扫描只读访问：
+外部 CLI 历史只读扫描：
 
 ```text
-~/.claude/projects
+~/.claude/projects/**/*.jsonl
+~/.claude/history.jsonl
+~/.codex/sessions/**/*.jsonl
+~/.codex/archived_sessions/**/*.jsonl
+~/.codex/history.jsonl
+~/.codex/session_index.jsonl
 ```

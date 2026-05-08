@@ -1,4 +1,5 @@
 .DS_Store
+.claude/
 DerivedData/
 build/
 *.xcuserstate

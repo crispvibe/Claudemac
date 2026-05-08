@@ -14,7 +14,17 @@ struct RootView: View {
             ProjectSidebarView()
                 .frame(width: 228)
 
-            workbenchCard
+            if appState.showSettings {
+                SettingsPageView()
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(AppTheme.hairline, lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(0.055), radius: 16, y: 8)
+            } else {
+                workbenchCard
+            }
         }
         .padding(.horizontal, 8)
         .padding(.top, 8)

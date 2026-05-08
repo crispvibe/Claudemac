@@ -6,11 +6,36 @@ final class ChatPanelState: ObservableObject {
     @Published var status: ChatRunStatus = .idle
     @Published var capabilities: [CLIType: ChatCLICapability] = [:]
     @Published var statusText = "就绪"
+    @Published var tokensUsed: Int = 0
+    @Published var tokensTotal: Int = 200_000
+
+    private static let compactThreshold: Double = 0.90
+    private var didAutoCompact = false
+
+    static func defaultContextWindow(for modelID: String) -> Int {
+        let lower = modelID.lowercased()
+        if isMillionContextModel(modelID) {
+            return 1_000_000
+        }
+        return 200_000
+    }
+
+    static func isMillionContextModel(_ modelID: String) -> Bool {
+        let lower = modelID.lowercased()
+        let executionID = ChatModelCatalog.executionModelID(for: lower)
+        return executionID == "claude-opus-4-7"
+            || lower.contains("gpt-5.5")
+            || lower.contains("gpt5.5")
+            || lower.contains("[1m]")
+            || lower.contains("1m")
+            || lower.contains("1000k")
+    }
 
     private var currentSession: ChatSessionRecord?
     private var currentTask: Task<Void, Never>?
     private var activeBackend: ChatProcessBackend?
     private var activeAssistantMessageID: UUID?
+    private var activeStreamingMessageIDs: [ChatMessageKind: UUID] = [:]
     private var activeParentUserMessageID: UUID?
 
     init() {
@@ -24,9 +49,20 @@ final class ChatPanelState: ObservableObject {
         }
     }
 
-    func loadFromAppState(_ appState: AppState, modelID: String, permissionMode: ChatPermissionMode) {
+    func syncContextWindow(modelID: String) {
+        tokensTotal = Self.defaultContextWindow(for: modelID)
+        didAutoCompact = false
+    }
+
+    func loadFromAppState(
+        _ appState: AppState,
+        modelID: String,
+        permissionMode: ChatPermissionMode,
+        reasoningEffort: ChatReasoningEffort
+    ) {
         interruptIfNeededForLoad()
         activeAssistantMessageID = nil
+        activeStreamingMessageIDs.removeAll()
         activeParentUserMessageID = nil
 
         guard let historyID = appState.selectedCLIHistoryID,
@@ -55,6 +91,7 @@ final class ChatPanelState: ObservableObject {
             title: history.title,
             modelID: modelID,
             permissionMode: permissionMode,
+            reasoningEffort: reasoningEffort,
             externalSessionID: history.sessionId,
             createdAt: history.createdAt ?? Date(),
             updatedAt: history.updatedAt ?? Date()
@@ -78,7 +115,9 @@ final class ChatPanelState: ObservableObject {
         project: ProjectItem?,
         cli: CLIType,
         modelID: String,
+        contextModelID: String? = nil,
         permissionMode: ChatPermissionMode,
+        reasoningEffort: ChatReasoningEffort,
         sessionMode: SessionMode,
         resumeSessionID: String?
     ) {
@@ -111,16 +150,29 @@ final class ChatPanelState: ObservableObject {
             return
         }
 
-        var session = ensureSession(project: project, cli: visibleCLI, modelID: modelID, permissionMode: permissionMode, firstPrompt: text)
+        let effectiveContextModelID = contextModelID?.nonEmptyTrimmed ?? modelID
+        var session = ensureSession(
+            project: project,
+            cli: visibleCLI,
+            modelID: effectiveContextModelID,
+            permissionMode: permissionMode,
+            reasoningEffort: reasoningEffort,
+            firstPrompt: text
+        )
         session.cli = visibleCLI
-        session.modelID = modelID
+        session.modelID = effectiveContextModelID
         session.permissionMode = permissionMode
+        session.reasoningEffort = reasoningEffort
         session.updatedAt = Date()
         currentSession = session
+
+        tokensTotal = Self.defaultContextWindow(for: effectiveContextModelID)
+        didAutoCompact = false
 
         let userMessage = ChatMessage(sessionID: session.id, kind: .user, text: text, status: "user")
         activeParentUserMessageID = userMessage.id
         activeAssistantMessageID = nil
+        activeStreamingMessageIDs.removeAll()
         messages.append(userMessage)
         persistCurrentSession()
 
@@ -130,6 +182,7 @@ final class ChatPanelState: ObservableObject {
             projectPath: project.path,
             modelID: modelID,
             permissionMode: permissionMode,
+            reasoningEffort: reasoningEffort,
             sessionMode: sessionMode,
             resumeSessionID: resumeSessionID?.nonEmptyTrimmed
         )
@@ -140,6 +193,26 @@ final class ChatPanelState: ObservableObject {
 
         currentTask = Task { [weak self] in
             guard let self else { return }
+            let scopedURL: URL
+            let didStartAccessing: Bool
+            do {
+                scopedURL = try ProjectStore.resolveURL(for: project)
+                didStartAccessing = scopedURL.startAccessingSecurityScopedResource()
+            } catch {
+                await MainActor.run {
+                    self.appendError(error.localizedDescription)
+                    self.status = .failed
+                    self.statusText = "项目权限失效"
+                    self.persistCurrentSession()
+                }
+                return
+            }
+            defer {
+                if didStartAccessing {
+                    scopedURL.stopAccessingSecurityScopedResource()
+                }
+            }
+
             do {
                 for try await event in backend.start(prompt: text, options: options, session: session) {
                     await MainActor.run {
@@ -160,9 +233,14 @@ final class ChatPanelState: ObservableObject {
 
     func removeMessageThread(_ id: UUID) {
         messages.removeAll { $0.id == id || $0.parentUserMessageID == id }
+        activeStreamingMessageIDs = activeStreamingMessageIDs.filter { $0.value != id }
+        if activeAssistantMessageID == id {
+            activeAssistantMessageID = nil
+        }
         if activeParentUserMessageID == id {
             activeParentUserMessageID = nil
             activeAssistantMessageID = nil
+            activeStreamingMessageIDs.removeAll()
         }
         persistCurrentSession()
     }
@@ -180,12 +258,16 @@ final class ChatPanelState: ObservableObject {
     }
 
     func respondToPermission(requestID: String, allowed: Bool) {
-        activeBackend?.respondToPermission(requestID: requestID, allowed: allowed)
+        respondToPermission(requestID: requestID, decision: allowed ? .allow : .deny)
+    }
+
+    func respondToPermission(requestID: String, decision: ChatPermissionDecision) {
+        activeBackend?.respondToPermission(requestID: requestID, decision: decision)
         if let index = messages.firstIndex(where: { $0.requestID == requestID }) {
-            messages[index].status = allowed ? "allowed" : "denied"
+            messages[index].status = decision.statusText
         }
         status = .streaming
-        statusText = allowed ? "已允许" : "已拒绝"
+        statusText = decision.displayText
         persistCurrentSession()
     }
 
@@ -193,7 +275,14 @@ final class ChatPanelState: ObservableObject {
         if status.isRunning { interrupt() }
     }
 
-    private func ensureSession(project: ProjectItem, cli: CLIType, modelID: String, permissionMode: ChatPermissionMode, firstPrompt: String) -> ChatSessionRecord {
+    private func ensureSession(
+        project: ProjectItem,
+        cli: CLIType,
+        modelID: String,
+        permissionMode: ChatPermissionMode,
+        reasoningEffort: ChatReasoningEffort,
+        firstPrompt: String
+    ) -> ChatSessionRecord {
         if var currentSession, currentSession.projectPath == project.path, currentSession.cli == cli.visibleValue {
             currentSession.updatedAt = Date()
             return currentSession
@@ -204,7 +293,8 @@ final class ChatPanelState: ObservableObject {
             projectPath: project.path,
             title: title(from: firstPrompt),
             modelID: modelID,
-            permissionMode: permissionMode
+            permissionMode: permissionMode,
+            reasoningEffort: reasoningEffort
         )
     }
 
@@ -247,6 +337,15 @@ final class ChatPanelState: ObservableObject {
             ))
             status = .waitingPermission
             statusText = "等待权限"
+        case .tokenUsage(let used, let total):
+            tokensUsed = used
+            if total > 0 {
+                let modelID = currentSession?.modelID ?? ""
+                tokensTotal = Self.isMillionContextModel(modelID)
+                    ? max(total, Self.defaultContextWindow(for: modelID))
+                    : total
+            }
+            checkAutoCompact()
         case .finished:
             finishStreamingMessages()
             currentSession?.updatedAt = Date()
@@ -265,8 +364,8 @@ final class ChatPanelState: ObservableObject {
 
     private func appendDelta(kind: ChatMessageKind, text: String) {
         guard !text.isEmpty, let sessionID = currentSession?.id else { return }
-        if let activeAssistantMessageID,
-           let index = messages.firstIndex(where: { $0.id == activeAssistantMessageID }) {
+        if let activeMessageID = activeStreamingMessageIDs[kind],
+           let index = messages.firstIndex(where: { $0.id == activeMessageID }) {
             messages[index].text += text
             messages[index].isStreaming = true
             messages[index].status = "streaming"
@@ -281,7 +380,10 @@ final class ChatPanelState: ObservableObject {
             parentUserMessageID: activeParentUserMessageID,
             isStreaming: true
         )
-        activeAssistantMessageID = message.id
+        activeStreamingMessageIDs[kind] = message.id
+        if kind == .assistant {
+            activeAssistantMessageID = message.id
+        }
         messages.append(message)
     }
 
@@ -303,6 +405,7 @@ final class ChatPanelState: ObservableObject {
             messages[index].status = itemStatus
         }
         activeAssistantMessageID = nil
+        activeStreamingMessageIDs.removeAll()
     }
 
     private func persistCurrentSession() {
@@ -319,5 +422,15 @@ final class ChatPanelState: ObservableObject {
         let line = text.components(separatedBy: .newlines).first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "新会话"
         if line.count <= 30 { return line.isEmpty ? "新会话" : line }
         return String(line.prefix(30)) + "…"
+    }
+
+    private func checkAutoCompact() {
+        guard !didAutoCompact, tokensTotal > 0 else { return }
+        let usage = Double(tokensUsed) / Double(tokensTotal)
+        if usage >= Self.compactThreshold {
+            didAutoCompact = true
+            activeBackend?.sendCompact()
+            statusText = "自动压缩上下文"
+        }
     }
 }

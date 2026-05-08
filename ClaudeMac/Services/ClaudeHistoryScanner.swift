@@ -7,7 +7,7 @@ struct CLIHistoryScanner {
     }
 
     private func scanClaude(projectPath: String?) -> [CLIHistorySession] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        let home = URL(fileURLWithPath: ChatCLIEnvironment.realHomeDirectory, isDirectory: true)
         let projectsRoot = home.appendingPathComponent(".claude", isDirectory: true).appendingPathComponent("projects", isDirectory: true)
         var sessions: [CLIHistorySession] = []
 
@@ -30,7 +30,7 @@ struct CLIHistoryScanner {
     }
 
     private func scanCodex(projectPath: String?) -> [CLIHistorySession] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        let home = URL(fileURLWithPath: ChatCLIEnvironment.realHomeDirectory, isDirectory: true)
         let codexRoot = home.appendingPathComponent(".codex", isDirectory: true)
         let index = parseCodexSessionIndex(url: codexRoot.appendingPathComponent("session_index.jsonl"))
         var sessions: [CLIHistorySession] = []

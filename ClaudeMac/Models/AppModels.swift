@@ -151,12 +151,16 @@ struct AppSettings: Codable, Equatable {
     var showCommandPreview: Bool
     var ignoredFolders: [String]
     var enableClaudeHistoryScan: Bool
+    var apiBaseURL: String
+    var apiKey: String
 
     static let `default` = AppSettings(
         defaultTerminal: .terminal,
         defaultCLI: .claude,
         showCommandPreview: true,
         ignoredFolders: FileTreeScanner.defaultIgnoredNames.sorted(),
-        enableClaudeHistoryScan: true
+        enableClaudeHistoryScan: true,
+        apiBaseURL: "",
+        apiKey: ""
     )
 }

@@ -42,6 +42,12 @@ enum ChatCLICapabilityProbe {
         let helpOutput = await ChatProcessRunner.run(executable, arguments: ["--help"], timeout: 5)
         let help = helpOutput.stdout + "\n" + helpOutput.stderr
         let version = (versionOutput.stdout.nonEmptyTrimmed ?? versionOutput.stderr.nonEmptyTrimmed)
+        let launchError = launchErrorMessage(
+            cli: visible,
+            executable: executable,
+            versionOutput: versionOutput,
+            helpOutput: helpOutput
+        )
 
         switch visible {
         case .claude:
@@ -49,12 +55,12 @@ enum ChatCLICapabilityProbe {
                 cli: visible,
                 executablePath: executable,
                 version: version,
-                supportsStreamJSON: help.contains("stream-json"),
+                supportsStreamJSON: launchError == nil && help.contains("stream-json"),
                 supportsPermissionPromptTool: help.contains("permission-prompt-tool"),
-                supportsResume: help.contains("--resume"),
-                supportsContinue: help.contains("--continue"),
+                supportsResume: launchError == nil && help.contains("--resume"),
+                supportsContinue: launchError == nil && help.contains("--continue"),
                 supportsAppServer: false,
-                errorMessage: nil
+                errorMessage: launchError
             )
         case .codex:
             let appServerHelp = await ChatProcessRunner.run(executable, arguments: ["app-server", "--help"], timeout: 5)
@@ -63,12 +69,12 @@ enum ChatCLICapabilityProbe {
                 cli: visible,
                 executablePath: executable,
                 version: version,
-                supportsStreamJSON: true,
+                supportsStreamJSON: launchError == nil,
                 supportsPermissionPromptTool: false,
-                supportsResume: help.contains("resume"),
-                supportsContinue: help.contains("resume"),
-                supportsAppServer: appServerHelp.status == 0 || appServerText.contains("listen") || appServerText.contains("app-server"),
-                errorMessage: nil
+                supportsResume: launchError == nil && help.contains("resume"),
+                supportsContinue: launchError == nil && help.contains("resume"),
+                supportsAppServer: launchError == nil && (appServerHelp.status == 0 || appServerText.contains("listen") || appServerText.contains("app-server")),
+                errorMessage: launchError
             )
         case .gemini, .custom:
             return await probe(.claude)
@@ -76,15 +82,8 @@ enum ChatCLICapabilityProbe {
     }
 
     private static func locateExecutable(named name: String) async -> String? {
-        let candidates = [
-            "/opt/homebrew/bin/\(name)",
-            "/usr/local/bin/\(name)",
-            "/usr/bin/\(name)",
-            "/opt/homebrew/sbin/\(name)",
-            "/usr/local/sbin/\(name)"
-        ]
-        for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
-            return candidate
+        for candidate in ChatCLIEnvironment.executableCandidatePaths(named: name) where FileManager.default.fileExists(atPath: candidate) {
+            return canonicalExecutablePath(candidate)
         }
 
         let shellOutput = await ChatProcessRunner.run(
@@ -93,11 +92,29 @@ enum ChatCLICapabilityProbe {
             timeout: 4
         )
         if shellOutput.status == 0, let path = shellOutput.stdout.nonEmptyTrimmed {
-            return path.components(separatedBy: .newlines).first?.nonEmptyTrimmed
+            return path.components(separatedBy: .newlines).first?.nonEmptyTrimmed.map(canonicalExecutablePath)
         }
 
         let output = await ChatProcessRunner.run("/usr/bin/env", arguments: ["which", name], timeout: 4)
         guard output.status == 0, let path = output.stdout.nonEmptyTrimmed else { return nil }
-        return path.components(separatedBy: .newlines).first?.nonEmptyTrimmed
+        return path.components(separatedBy: .newlines).first?.nonEmptyTrimmed.map(canonicalExecutablePath)
+    }
+
+    private static func canonicalExecutablePath(_ path: String) -> String {
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        return FileManager.default.fileExists(atPath: resolved) ? resolved : path
+    }
+
+    private static func launchErrorMessage(
+        cli: CLIType,
+        executable: String,
+        versionOutput: ChatProcessOutput,
+        helpOutput: ChatProcessOutput
+    ) -> String? {
+        guard versionOutput.status == 127 || helpOutput.status == 127 else { return nil }
+        let message = versionOutput.stderr.nonEmptyTrimmed
+            ?? helpOutput.stderr.nonEmptyTrimmed
+            ?? "未知启动错误"
+        return "已找到 \(cli.displayName)：\(executable)，但无法启动：\(message)"
     }
 }

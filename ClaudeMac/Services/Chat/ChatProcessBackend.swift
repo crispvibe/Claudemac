@@ -1,9 +1,11 @@
+import Darwin
 import Foundation
 
 protocol ChatProcessBackend: AnyObject {
     func start(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?) -> AsyncThrowingStream<ChatBackendEvent, Error>
     func interrupt()
-    func respondToPermission(requestID: String, allowed: Bool)
+    func respondToPermission(requestID: String, decision: ChatPermissionDecision)
+    func sendCompact()
 }
 
 struct ChatProcessOutput: Equatable {
@@ -28,14 +30,168 @@ enum ChatProcessError: LocalizedError {
     }
 }
 
+enum ChatPipeWriter {
+    @discardableResult
+    static func writeJSONObject(_ object: [String: Any], to pipe: Pipe?) -> Bool {
+        guard let pipe,
+              JSONSerialization.isValidJSONObject(object),
+              var data = try? JSONSerialization.data(withJSONObject: object) else { return false }
+        data.append(Data("\n".utf8))
+        do {
+            try pipe.fileHandleForWriting.write(contentsOf: data)
+            return true
+        } catch {
+            return false
+        }
+    }
+}
+
 enum ChatCLIEnvironment {
-    static let defaultPath = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin"
+    static var realHomeDirectory: String {
+        if let passwd = getpwuid(getuid()),
+           let directory = passwd.pointee.pw_dir {
+            return String(cString: directory)
+        }
+        return ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+    }
+
+    static var defaultPath: String {
+        defaultPathComponents.joined(separator: ":")
+    }
+
+    static var defaultPathComponents: [String] {
+        let home = realHomeDirectory
+        return [
+            "\(home)/.local/bin",
+            "\(home)/bin",
+            "\(home)/.npm-global/bin",
+            "\(home)/.bun/bin",
+            "\(home)/.cargo/bin",
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin"
+        ]
+    }
+
+    static func executableCandidatePaths(named name: String) -> [String] {
+        defaultPathComponents
+            .map { "\($0)/\(name)" }
+            .reduce(into: [String]()) { result, item in
+                if !result.contains(item) { result.append(item) }
+            }
+    }
 
     static var processEnvironment: [String: String] {
         var environment = ProcessInfo.processInfo.environment
         let existingPath = environment["PATH"] ?? ""
+        sanitizeInheritedAgentEnvironment(&environment)
+        mergePersistedProxyEnvironment(into: &environment)
+        normalizeProxyValues(&environment)
+        mirrorProxyValues(&environment)
+        environment["HOME"] = realHomeDirectory
+        environment["CLAUDE_CONFIG_DIR"] = "\(realHomeDirectory)/.claude"
         environment["PATH"] = mergePath(existingPath)
         return environment
+    }
+
+    private static func sanitizeInheritedAgentEnvironment(_ environment: inout [String: String]) {
+        let runtimeKeys = [
+            "CODEX_CI",
+            "CODEX_SANDBOX",
+            "CODEX_THREAD_ID",
+            "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+            "CODEX_SHELL",
+            "__CFBundleIdentifier"
+        ]
+        runtimeKeys.forEach { environment.removeValue(forKey: $0) }
+        normalizeProxyValues(&environment)
+    }
+
+    private static let proxyURLKeys = [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy"
+    ]
+
+    private static let proxyBypassKeys = [
+        "NO_PROXY",
+        "no_proxy"
+    ]
+
+    private static var proxyKeys: [String] {
+        proxyURLKeys + proxyBypassKeys
+    }
+
+    private static func mergePersistedProxyEnvironment(into environment: inout [String: String]) {
+        for (key, value) in persistedProxyEnvironment() {
+            environment[key] = value
+        }
+    }
+
+    private static func persistedProxyEnvironment() -> [String: String] {
+        let settingsURL = URL(fileURLWithPath: realHomeDirectory, isDirectory: true)
+            .appendingPathComponent(".claude/settings.json")
+        guard let data = try? Data(contentsOf: settingsURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let env = json["env"] as? [String: Any] else {
+            return [:]
+        }
+
+        return proxyKeys.reduce(into: [String: String]()) { result, key in
+            guard let value = env[key] as? String else { return }
+            result[key] = value
+        }
+    }
+
+    private static func normalizeProxyValues(_ environment: inout [String: String]) {
+        for key in proxyURLKeys {
+            guard let rawValue = environment[key] else { continue }
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty || proxyURLHasMissingHost(value) {
+                environment.removeValue(forKey: key)
+                continue
+            }
+            environment[key] = value.replacingOccurrences(of: "127.0.01", with: "127.0.0.1")
+        }
+
+        for key in proxyBypassKeys {
+            guard let rawValue = environment[key] else { continue }
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty {
+                environment.removeValue(forKey: key)
+            } else {
+                environment[key] = value
+            }
+        }
+    }
+
+    private static func mirrorProxyValues(_ environment: inout [String: String]) {
+        mirrorProxyValue(upper: "HTTP_PROXY", lower: "http_proxy", environment: &environment)
+        mirrorProxyValue(upper: "HTTPS_PROXY", lower: "https_proxy", environment: &environment)
+        mirrorProxyValue(upper: "ALL_PROXY", lower: "all_proxy", environment: &environment)
+        mirrorProxyValue(upper: "NO_PROXY", lower: "no_proxy", environment: &environment)
+    }
+
+    private static func mirrorProxyValue(upper: String, lower: String, environment: inout [String: String]) {
+        if let upperValue = environment[upper], environment[lower] == nil {
+            environment[lower] = upperValue
+        } else if let lowerValue = environment[lower], environment[upper] == nil {
+            environment[upper] = lowerValue
+        }
+    }
+
+    private static func proxyURLHasMissingHost(_ value: String) -> Bool {
+        guard value.contains("://") else { return false }
+        guard let components = URLComponents(string: value) else { return true }
+        return components.host?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
     }
 
     static func mergePath(_ path: String) -> String {
