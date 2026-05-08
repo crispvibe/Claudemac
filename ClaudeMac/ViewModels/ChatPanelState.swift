@@ -13,7 +13,6 @@ final class ChatPanelState: ObservableObject {
     private var didAutoCompact = false
 
     static func defaultContextWindow(for modelID: String) -> Int {
-        let lower = modelID.lowercased()
         if isMillionContextModel(modelID) {
             return 1_000_000
         }
@@ -34,6 +33,7 @@ final class ChatPanelState: ObservableObject {
     private var currentSession: ChatSessionRecord?
     private var currentTask: Task<Void, Never>?
     private var activeBackend: ChatProcessBackend?
+    private var isUserStopping = false
     private var activeAssistantMessageID: UUID?
     private var activeStreamingMessageIDs: [ChatMessageKind: UUID] = [:]
     private var activeParentUserMessageID: UUID?
@@ -64,6 +64,7 @@ final class ChatPanelState: ObservableObject {
         activeAssistantMessageID = nil
         activeStreamingMessageIDs.removeAll()
         activeParentUserMessageID = nil
+        isUserStopping = false
 
         guard let historyID = appState.selectedCLIHistoryID,
               let history = appState.cliHistory.first(where: { $0.id == historyID }) else {
@@ -188,6 +189,7 @@ final class ChatPanelState: ObservableObject {
         )
         let backend: ChatProcessBackend = visibleCLI == .codex ? CodexAppServerBackend() : ClaudeCodeProcessBackend()
         activeBackend = backend
+        isUserStopping = false
         status = .starting
         statusText = "启动 \(visibleCLI.displayName)"
 
@@ -247,13 +249,11 @@ final class ChatPanelState: ObservableObject {
 
     func interrupt() {
         guard status.isRunning else { return }
+        isUserStopping = true
         status = .stopping
         statusText = "正在停止"
         activeBackend?.interrupt()
-        currentTask?.cancel()
         finishStreamingMessages(status: "stopped")
-        status = .completed
-        statusText = "已停止"
         persistCurrentSession()
     }
 
@@ -347,12 +347,22 @@ final class ChatPanelState: ObservableObject {
             }
             checkAutoCompact()
         case .finished:
-            finishStreamingMessages()
+            finishStreamingMessages(status: isUserStopping ? "stopped" : "done")
             currentSession?.updatedAt = Date()
             status = .completed
-            statusText = "完成"
+            statusText = isUserStopping ? "已停止" : "完成"
+            isUserStopping = false
             persistCurrentSession()
         case .failed(let message):
+            if isUserStopping {
+                finishStreamingMessages(status: "stopped")
+                currentSession?.updatedAt = Date()
+                status = .completed
+                statusText = "已停止"
+                isUserStopping = false
+                persistCurrentSession()
+                return
+            }
             finishStreamingMessages(status: "failed")
             appendError(message)
             currentSession?.updatedAt = Date()

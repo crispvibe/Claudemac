@@ -26,7 +26,7 @@ struct ClaudeMacApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("关于 ClaudeMac") {
+                Button("关于 Acode") {
                     NSApp.orderFrontStandardAboutPanel(nil)
                 }
             }
@@ -107,7 +107,7 @@ private struct WindowConfigurator: NSViewRepresentable {
     }
 
     private func localizedMenuTitle(_ title: String) -> String {
-        let appName = "ClaudeMac"
+        let appName = "Acode"
         let replacements = [
             "File": "文件",
             "Edit": "编辑",

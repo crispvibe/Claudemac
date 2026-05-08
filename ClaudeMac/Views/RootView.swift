@@ -5,9 +5,13 @@ struct RootView: View {
     @EnvironmentObject private var appState: AppState
     @State private var chatPanelWidth: CGFloat = 420
     @State private var dragStartChatPanelWidth: CGFloat?
+    @State private var isHoveringResizeHandle = false
+    @State private var workbenchContentWidth: CGFloat = 0
 
-    private let minChatPanelWidth: CGFloat = 300
-    private let maxChatPanelWidth: CGFloat = 640
+    private let minChatPanelWidth: CGFloat = 260
+    private let maxChatPanelWidth: CGFloat = 840
+    private let minEditorWidth: CGFloat = 520
+    private let resizeHandleWidth: CGFloat = 12
 
     var body: some View {
         HStack(spacing: 6) {
@@ -52,18 +56,24 @@ struct RootView: View {
         VStack(spacing: 0) {
             EditorTabBarView()
 
-            HStack(spacing: 0) {
-                EditorAreaView()
-                    .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
+            GeometryReader { proxy in
+                HStack(spacing: 0) {
+                    EditorAreaView()
+                        .frame(minWidth: minEditorWidth, maxWidth: .infinity, maxHeight: .infinity)
 
-                resizeHandle
+                    resizeHandle
 
-                ChatPanelView()
-                    .frame(width: chatPanelWidth)
+                    ChatPanelView()
+                        .frame(width: clampedChatPanelWidth(chatPanelWidth))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onAppear { workbenchContentWidth = proxy.size.width }
+                .onChange(of: proxy.size.width) { _, width in
+                    workbenchContentWidth = width
+                    chatPanelWidth = clampedChatPanelWidth(chatPanelWidth)
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(8)
         .background(AppTheme.editorSurface.opacity(0.86))
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
@@ -74,11 +84,30 @@ struct RootView: View {
     }
 
     private var resizeHandle: some View {
-        Rectangle()
-            .fill(Color.clear)
-            .frame(width: 6)
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
+        ZStack {
+            Rectangle()
+                .fill(Color.clear)
+            Capsule()
+                .fill(Color.black.opacity(isHoveringResizeHandle || dragStartChatPanelWidth != nil ? 0.18 : 0.07))
+                .frame(width: 3, height: 46)
+        }
+        .frame(width: resizeHandleWidth)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHoveringResizeHandle = hovering
+            if hovering {
+                NSCursor.resizeLeftRight.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .onDisappear {
+            if isHoveringResizeHandle {
+                NSCursor.pop()
+                isHoveringResizeHandle = false
+            }
+        }
         .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { value in
@@ -92,10 +121,13 @@ struct RootView: View {
                     dragStartChatPanelWidth = nil
                 }
         )
-        .help("拖动调整编辑器和聊天面板宽度")
+        .help("拖动调整编辑器和对话卡片宽度")
     }
 
     private func clampedChatPanelWidth(_ width: CGFloat) -> CGFloat {
-        min(max(width, minChatPanelWidth), maxChatPanelWidth)
+        let availableMax = workbenchContentWidth > 0
+            ? max(minChatPanelWidth, workbenchContentWidth - minEditorWidth - resizeHandleWidth)
+            : maxChatPanelWidth
+        return min(max(width, minChatPanelWidth), min(maxChatPanelWidth, availableMax))
     }
 }

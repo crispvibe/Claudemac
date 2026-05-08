@@ -94,7 +94,7 @@ enum ChatCLIEnvironment {
         normalizeProxyValues(&environment)
         mirrorProxyValues(&environment)
         environment["HOME"] = realHomeDirectory
-        environment["CLAUDE_CONFIG_DIR"] = "\(realHomeDirectory)/.claude"
+        environment.removeValue(forKey: "CLAUDE_CONFIG_DIR")
         environment["PATH"] = mergePath(existingPath)
         return environment
     }

@@ -12,6 +12,8 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Acode</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIconName</key>
@@ -31,7 +33,7 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>ClaudeMac 需要控制“终端”，以便在外部终端中打开 AI 命令行会话。</string>
+	<string>Acode 需要控制“终端”，以便在外部终端中打开 AI 命令行会话。</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>版权所有 © 2026。</string>
 	<key>NSPrincipalClass</key>

@@ -1,7 +1,37 @@
 import SwiftUI
 
 struct SettingsPageView: View {
-    private enum CodexAuthMode: String, CaseIterable, Identifiable {
+    private enum SettingsCategory: String, CaseIterable, Identifiable {
+        case general
+        case claude
+        case codex
+        case update
+        case about
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .general: "通用"
+            case .claude: "Claude Code"
+            case .codex: "Codex"
+            case .update: "版本"
+            case .about: "关于"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .general: "gearshape"
+            case .claude: "terminal"
+            case .codex: "cpu"
+            case .update: "arrow.triangle.2.circlepath"
+            case .about: "info.circle"
+            }
+        }
+    }
+
+    private enum CodexAuthMode: String, CaseIterable, Identifiable, Hashable {
         case account
         case apiKey
 
@@ -17,6 +47,13 @@ struct SettingsPageView: View {
 
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var modelService: ChatModelService
+    private let showsBackButton: Bool
+
+    init(showsBackButton: Bool = true) {
+        self.showsBackButton = showsBackButton
+    }
+
+    @State private var selectedCategory: SettingsCategory = .general
     @State private var defaultCLI: CLIType = .claude
     @State private var defaultTerminal: TerminalType = .terminal
     @State private var showCommandPreview = true
@@ -35,6 +72,9 @@ struct SettingsPageView: View {
     @State private var relaySaveStatus = ""
     @State private var claudeModelList: [String] = []
     @State private var isFetchingClaudeModels = false
+    @State private var configProfiles: ConfigProfileCollection = .empty
+    @State private var selectedClaudeProfileID: UUID?
+    @State private var newClaudeProfileName = ""
 
     // Codex 配置（读写 ~/.codex/config.toml + auth.json）
     @State private var codexModel = ""
@@ -46,6 +86,8 @@ struct SettingsPageView: View {
     @State private var codexSaveStatus = ""
     @State private var codexModelList: [String] = []
     @State private var isFetchingCodexModels = false
+    @State private var selectedCodexProfileID: UUID?
+    @State private var newCodexProfileName = ""
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知"
@@ -90,44 +132,102 @@ struct SettingsPageView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().opacity(0.3)
-            ScrollView {
-                VStack(spacing: 22) {
-                    generalSection
-                    relaySection
-                    codexSection
-                    updateSection
-                    aboutSection
+            Divider().opacity(0.18)
+            HStack(alignment: .top, spacing: 18) {
+                categoryTabs
+                    .frame(width: 178)
+                ScrollView {
+                    selectedSettingsContent
+                        .padding(.trailing, 28)
+                        .padding(.vertical, 24)
+                        .frame(maxWidth: 760)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 36)
-                .padding(.vertical, 28)
-                .frame(maxWidth: 900)
-                .frame(maxWidth: .infinity)
             }
+            .padding(.leading, 28)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppTheme.editorSurface.opacity(0.86))
+        .background(Color.white)
         .onAppear {
             loadSettings()
             loadClaudeSettings()
             loadCodexSettings()
+            loadConfigProfiles()
         }
+    }
+
+    @ViewBuilder
+    private var selectedSettingsContent: some View {
+        switch selectedCategory {
+        case .general:
+            generalSection
+        case .claude:
+            relaySection
+        case .codex:
+            codexSection
+        case .update:
+            updateSection
+        case .about:
+            aboutSection
+        }
+    }
+
+    private var categoryTabs: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(SettingsCategory.allCases) { category in
+                Button {
+                    withAnimation(.easeOut(duration: 0.14)) {
+                        selectedCategory = category
+                    }
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: category.systemImage)
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(width: 16)
+                            .foregroundStyle(selectedCategory == category ? Color.accentColor : .secondary)
+                        Text(category.title)
+                            .font(.system(size: 13, weight: selectedCategory == category ? .semibold : .medium))
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 13)
+                    .frame(height: 38)
+                    .foregroundStyle(selectedCategory == category ? .primary : .secondary)
+                    .background(selectedCategory == category ? AppTheme.selectedSurface : Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.weakHairline, lineWidth: 1))
+                    .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 24)
+        .padding(.bottom, 24)
     }
 
     // MARK: - Header
 
     private var header: some View {
         HStack {
-            Button(action: { appState.showSettings = false }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("返回")
-                        .font(.system(size: 14, weight: .medium))
+            if showsBackButton {
+                Button(action: { appState.showSettings = false }) {
+                    HStack(spacing: 7) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("返回")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            } else {
+                Color.clear.frame(width: 76, height: 34)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
 
             Spacer()
 
@@ -136,17 +236,10 @@ struct SettingsPageView: View {
 
             Spacer()
 
-            // Balance spacer
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("返回")
-                    .font(.system(size: 14, weight: .medium))
-            }
-            .opacity(0)
+            Color.clear.frame(width: 76, height: 34)
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .padding(.vertical, 14)
     }
 
     // MARK: - General
@@ -154,32 +247,35 @@ struct SettingsPageView: View {
     private var generalSection: some View {
         settingsCard(title: "通用") {
             settingsGrid {
-                Picker("默认 CLI", selection: $defaultCLI) {
-                    ForEach(CLIType.visibleCases) { cli in
-                        Text(cli.displayName).tag(cli)
-                    }
-                }
+                optionSelector(
+                    title: "默认 CLI",
+                    selection: $defaultCLI,
+                    options: CLIType.visibleCases.map { ($0, $0.displayName) }
+                )
 
-                Picker("默认终端", selection: $defaultTerminal) {
-                    ForEach(TerminalType.allCases) { terminal in
-                        Text(terminal.displayName).tag(terminal)
-                    }
-                }
+                optionSelector(
+                    title: "默认终端",
+                    selection: $defaultTerminal,
+                    options: TerminalType.allCases.map { ($0, $0.displayName) }
+                )
 
-                Toggle("显示命令预览", isOn: $showCommandPreview)
-                Toggle("扫描 Claude / Codex 历史会话", isOn: $enableClaudeHistoryScan)
+                settingsToggle(title: "显示命令预览", isOn: $showCommandPreview)
+                settingsToggle(title: "扫描 Claude / Codex 历史会话", isOn: $enableClaudeHistoryScan)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("忽略目录")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13, weight: .semibold))
                 TextEditor(text: $ignoredFoldersText)
-                    .font(.system(.body, design: .monospaced))
+                    .font(.system(size: 13, design: .monospaced))
+                    .scrollContentBackground(.hidden)
+                    .padding(10)
                     .frame(minHeight: 132)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(AppTheme.hairline, lineWidth: 1))
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
                 Text("每行一个目录名")
-                    .font(.footnote)
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
 
@@ -187,8 +283,10 @@ struct SettingsPageView: View {
                 Button("恢复默认") {
                     ignoredFoldersText = FileTreeScanner.defaultIgnoredNames.sorted().joined(separator: "\n")
                 }
+                .buttonStyle(SettingsSecondaryButtonStyle())
                 Spacer()
                 Button("保存") { saveAppSettings() }
+                    .buttonStyle(SettingsPrimaryButtonStyle())
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -198,6 +296,8 @@ struct SettingsPageView: View {
 
     private var relaySection: some View {
         settingsCard(title: "中转站（Claude Code）") {
+            claudeProfileSelector
+
             settingsGrid {
                 envField(label: "ANTHROPIC_BASE_URL", placeholder: "https://api.anthropic.com", text: $anthropicBaseURL)
                 envField(label: "ANTHROPIC_AUTH_TOKEN", placeholder: "sk-...", text: $anthropicAuthToken, secure: true)
@@ -223,8 +323,7 @@ struct SettingsPageView: View {
                                 .font(.system(size: 12))
                         }
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(SettingsSecondaryButtonStyle(compact: true))
                     .disabled(isFetchingClaudeModels || anthropicBaseURL.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 .padding(.top, 4)
@@ -269,6 +368,7 @@ struct SettingsPageView: View {
                 Button("保存到 ~/.claude/settings.json") {
                     saveClaudeSettings()
                 }
+                .buttonStyle(SettingsPrimaryButtonStyle())
             }
 
             Text("代理字段会从 ~/.claude/settings.json 注入到新启动的 Claude Code / Codex 子进程。留空的字段不会写入配置文件。")
@@ -281,19 +381,18 @@ struct SettingsPageView: View {
 
     private var codexSection: some View {
         settingsCard(title: "Codex") {
+            codexProfileSelector
+
             Group {
                 settingsGrid {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("认证方式")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
-                        Picker("", selection: $codexAuthMode) {
-                            ForEach(CodexAuthMode.allCases) { mode in
-                                Text(mode.title).tag(mode)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
+                        inlineSegmentedPicker(
+                            selection: $codexAuthMode,
+                            options: CodexAuthMode.allCases.map { ($0, $0.title) }
+                        )
                     }
 
                 }
@@ -316,8 +415,7 @@ struct SettingsPageView: View {
                                     .font(.system(size: 12))
                             }
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
+                        .buttonStyle(SettingsSecondaryButtonStyle(compact: true))
                         .disabled(isFetchingCodexModels || codexBaseURL.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 }
@@ -334,12 +432,10 @@ struct SettingsPageView: View {
                             Text("wire_api")
                                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                                 .foregroundStyle(.secondary)
-                            Picker("", selection: $codexWireApi) {
-                                Text("responses").tag("responses")
-                                Text("chat").tag("chat")
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
+                            inlineSegmentedPicker(
+                                selection: $codexWireApi,
+                                options: [("responses", "responses"), ("chat", "chat")]
+                            )
                         }
                     }
                 }
@@ -364,6 +460,7 @@ struct SettingsPageView: View {
                 Button("保存到 ~/.codex/") {
                     saveCodexSettings()
                 }
+                .buttonStyle(SettingsPrimaryButtonStyle())
             }
 
             Text(codexAuthMode == .apiKey
@@ -372,6 +469,76 @@ struct SettingsPageView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var claudeProfileSelector: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("配置列表")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text("选中后会立即写入 ~/.claude/settings.json")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            if configProfiles.claudeRelayProfiles.isEmpty {
+                emptyProfileText("还没有中转站配置，可填写下方字段后添加。")
+            } else {
+                profileChips(
+                    profiles: configProfiles.claudeRelayProfiles,
+                    selectedID: selectedClaudeProfileID,
+                    title: \.name,
+                    select: selectClaudeProfile,
+                    delete: deleteClaudeProfile
+                )
+            }
+
+            addProfileRow(
+                placeholder: "配置名称，例如 Anna Relay",
+                text: $newClaudeProfileName,
+                action: addClaudeProfile
+            )
+        }
+        .padding(14)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+    }
+
+    private var codexProfileSelector: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("配置列表")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text("选中后会立即写入 ~/.codex/")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            if configProfiles.codexProfiles.isEmpty {
+                emptyProfileText("还没有 Codex 配置，可填写下方字段后添加。")
+            } else {
+                profileChips(
+                    profiles: configProfiles.codexProfiles,
+                    selectedID: selectedCodexProfileID,
+                    title: \.name,
+                    select: selectCodexProfile,
+                    delete: deleteCodexProfile
+                )
+            }
+
+            addProfileRow(
+                placeholder: "配置名称，例如 Codex OpenAI",
+                text: $newCodexProfileName,
+                action: addCodexProfile
+            )
+        }
+        .padding(14)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
     }
 
     private var codexSaveStatusColor: Color {
@@ -394,16 +561,18 @@ struct SettingsPageView: View {
                 Button("从 cc-switch 导入登录态") {
                     importCodexOAuthFromCCSwitch()
                 }
+                .buttonStyle(SettingsSecondaryButtonStyle())
                 .disabled(!FileManager.default.fileExists(atPath: Self.ccSwitchCodexOAuthURL.path))
 
                 Button("重新检测") {
                     loadCodexSettings()
                 }
+                .buttonStyle(SettingsSecondaryButtonStyle())
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.editorSurface.opacity(0.55))
+        .background(Color.white)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
     }
@@ -419,6 +588,7 @@ struct SettingsPageView: View {
                 Button("检查更新") {
                     // TODO: Implement update check
                 }
+                .buttonStyle(SettingsSecondaryButtonStyle())
             }
         }
     }
@@ -428,7 +598,7 @@ struct SettingsPageView: View {
     private var aboutSection: some View {
         settingsCard(title: "关于") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("ClaudeMac")
+                Text("Acode")
                     .font(.system(size: 15, weight: .semibold))
                 Text("一个轻量级的 Claude Code / Codex 桌面客户端")
                     .font(.system(size: 13))
@@ -439,46 +609,186 @@ struct SettingsPageView: View {
 
     // MARK: - UI Helpers
 
+    @ViewBuilder
     private func envField(label: String, placeholder: String, text: Binding<String>, secure: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-            if secure {
-                SecureField(placeholder, text: text)
-                    .textFieldStyle(.roundedBorder)
-            } else {
-                TextField(placeholder, text: text)
-                    .textFieldStyle(.roundedBorder)
+        VStack(alignment: .leading, spacing: 8) {
+            fieldLabel(label)
+            Group {
+                if secure {
+                    SecureField(placeholder, text: text)
+                } else {
+                    TextField(placeholder, text: text)
+                }
             }
+            .settingsTextFieldChrome()
         }
     }
 
     private func settingsGrid<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         LazyVGrid(
             columns: [
-                GridItem(.adaptive(minimum: 280), spacing: 14, alignment: .topLeading)
+                GridItem(.adaptive(minimum: 300), spacing: 16, alignment: .topLeading)
             ],
             alignment: .leading,
-            spacing: 12
+            spacing: 16
         ) {
             content()
         }
     }
 
     private func settingsCard<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.system(size: 15, weight: .semibold))
-                .padding(.horizontal, 2)
-            VStack(alignment: .leading, spacing: 14) {
+                .font(.system(size: 16, weight: .semibold))
+                .padding(.horizontal, 4)
+            VStack(alignment: .leading, spacing: 18) {
                 content()
             }
-            .padding(18)
+            .padding(22)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AppTheme.controlSurface.opacity(0.52))
+            .background {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(Color.white)
+            }
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+        }
+    }
+
+    private func fieldLabel(_ label: String) -> some View {
+        Text(label)
+            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.secondary)
+    }
+
+    private func settingsToggle(title: String, isOn: Binding<Bool>) -> some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.16)) {
+                isOn.wrappedValue.toggle()
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 12)
+                ZStack(alignment: isOn.wrappedValue ? .trailing : .leading) {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(isOn.wrappedValue ? Color.accentColor.opacity(0.82) : Color.black.opacity(0.08))
+                        .frame(width: 46, height: 26)
+                    Circle()
+                        .fill(Color.white.opacity(0.96))
+                        .frame(width: 20, height: 20)
+                        .shadow(color: Color.black.opacity(0.12), radius: 3, y: 1)
+                        .padding(.horizontal, 3)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func optionSelector<Value: Hashable>(title: String, selection: Binding<Value>, options: [(Value, String)]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            inlineSegmentedPicker(selection: selection, options: options)
+        }
+    }
+
+    private func inlineSegmentedPicker<Value: Hashable>(selection: Binding<Value>, options: [(Value, String)]) -> some View {
+        HStack(spacing: 4) {
+            ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                let isSelected = selection.wrappedValue == option.0
+                Button {
+                    withAnimation(.easeOut(duration: 0.14)) {
+                        selection.wrappedValue = option.0
+                    }
+                } label: {
+                    Text(option.1)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 10)
+                        .frame(height: 34)
+                        .background(isSelected ? AppTheme.selectedSurface : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+    }
+
+    private func emptyProfileText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color.white)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+    }
+
+    private func profileChips<Profile: Identifiable>(
+        profiles: [Profile],
+        selectedID: UUID?,
+        title: KeyPath<Profile, String>,
+        select: @escaping (Profile) -> Void,
+        delete: @escaping (Profile) -> Void
+    ) -> some View where Profile.ID == UUID {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(profiles) { profile in
+                    let isSelected = selectedID == profile.id
+                    HStack(spacing: 6) {
+                        Button {
+                            select(profile)
+                        } label: {
+                            Text(profile[keyPath: title])
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(1)
+                                .foregroundStyle(isSelected ? .primary : .secondary)
+                                .padding(.leading, 12)
+                                .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            delete(profile)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .bold))
+                                .frame(width: 18, height: 18)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tertiary)
+                        .padding(.trailing, 8)
+                    }
+                    .background(isSelected ? AppTheme.selectedSurface : Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).stroke(isSelected ? AppTheme.hairline : AppTheme.weakHairline, lineWidth: 1))
+                }
+            }
+            .padding(.vertical, 1)
+        }
+    }
+
+    private func addProfileRow(placeholder: String, text: Binding<String>, action: @escaping () -> Void) -> some View {
+        HStack(spacing: 10) {
+            TextField(placeholder, text: text)
+                .settingsTextFieldChrome()
+            Button("添加当前配置") { action() }
+                .buttonStyle(SettingsSecondaryButtonStyle())
         }
     }
 
@@ -506,69 +816,275 @@ struct SettingsPageView: View {
         )
     }
 
+    // MARK: - Config Profiles
+
+    private func loadConfigProfiles() {
+        configProfiles = ProjectStore.loadConfigProfiles()
+        selectedClaudeProfileID = configProfiles.activeClaudeRelayProfileID
+        selectedCodexProfileID = configProfiles.activeCodexProfileID
+
+        if let id = selectedClaudeProfileID,
+           let profile = configProfiles.claudeRelayProfiles.first(where: { $0.id == id }) {
+            applyClaudeProfile(profile)
+        }
+        if let id = selectedCodexProfileID,
+           let profile = configProfiles.codexProfiles.first(where: { $0.id == id }) {
+            applyCodexProfile(profile)
+        }
+    }
+
+    private func persistConfigProfiles() throws {
+        try ProjectStore.saveConfigProfiles(configProfiles)
+    }
+
+    private func addClaudeProfile() {
+        let profile = currentClaudeProfile(named: nextProfileName(newClaudeProfileName, fallback: "Claude 中转站", count: configProfiles.claudeRelayProfiles.count))
+        configProfiles.claudeRelayProfiles.insert(profile, at: 0)
+        configProfiles.activeClaudeRelayProfileID = profile.id
+        selectedClaudeProfileID = profile.id
+        newClaudeProfileName = ""
+        do {
+            try persistConfigProfiles()
+            try writeClaudeSettings(updateSelectedProfile: false)
+            relaySaveStatus = "已添加并切换配置"
+        } catch {
+            relaySaveStatus = "保存失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func selectClaudeProfile(_ profile: ClaudeRelayProfile) {
+        applyClaudeProfile(profile)
+        selectedClaudeProfileID = profile.id
+        configProfiles.activeClaudeRelayProfileID = profile.id
+        do {
+            try persistConfigProfiles()
+            try writeClaudeSettings(updateSelectedProfile: false)
+            relaySaveStatus = "已切换配置：\(profile.name)"
+        } catch {
+            relaySaveStatus = "切换失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func deleteClaudeProfile(_ profile: ClaudeRelayProfile) {
+        let wasSelected = selectedClaudeProfileID == profile.id
+        configProfiles.claudeRelayProfiles.removeAll { $0.id == profile.id }
+        if wasSelected {
+            selectedClaudeProfileID = configProfiles.claudeRelayProfiles.first?.id
+            configProfiles.activeClaudeRelayProfileID = selectedClaudeProfileID
+            if let selectedClaudeProfileID,
+               let next = configProfiles.claudeRelayProfiles.first(where: { $0.id == selectedClaudeProfileID }) {
+                applyClaudeProfile(next)
+            }
+        }
+        do {
+            try persistConfigProfiles()
+            if wasSelected, selectedClaudeProfileID != nil {
+                try writeClaudeSettings(updateSelectedProfile: false)
+            }
+            relaySaveStatus = "已删除配置"
+        } catch {
+            relaySaveStatus = "删除失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func addCodexProfile() {
+        let profile = currentCodexProfile(named: nextProfileName(newCodexProfileName, fallback: "Codex 配置", count: configProfiles.codexProfiles.count))
+        configProfiles.codexProfiles.insert(profile, at: 0)
+        configProfiles.activeCodexProfileID = profile.id
+        selectedCodexProfileID = profile.id
+        newCodexProfileName = ""
+        do {
+            try persistConfigProfiles()
+            try writeCodexSettings(updateSelectedProfile: false)
+            codexSaveStatus = "已添加并切换配置"
+        } catch {
+            codexSaveStatus = "保存失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func selectCodexProfile(_ profile: CodexConfigProfile) {
+        applyCodexProfile(profile)
+        selectedCodexProfileID = profile.id
+        configProfiles.activeCodexProfileID = profile.id
+        do {
+            try persistConfigProfiles()
+            try writeCodexSettings(updateSelectedProfile: false)
+            codexSaveStatus = "已切换配置：\(profile.name)"
+        } catch {
+            codexSaveStatus = "切换失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func deleteCodexProfile(_ profile: CodexConfigProfile) {
+        let wasSelected = selectedCodexProfileID == profile.id
+        configProfiles.codexProfiles.removeAll { $0.id == profile.id }
+        if wasSelected {
+            selectedCodexProfileID = configProfiles.codexProfiles.first?.id
+            configProfiles.activeCodexProfileID = selectedCodexProfileID
+            if let selectedCodexProfileID,
+               let next = configProfiles.codexProfiles.first(where: { $0.id == selectedCodexProfileID }) {
+                applyCodexProfile(next)
+            }
+        }
+        do {
+            try persistConfigProfiles()
+            if wasSelected, selectedCodexProfileID != nil {
+                try writeCodexSettings(updateSelectedProfile: false)
+            }
+            codexSaveStatus = "已删除配置"
+        } catch {
+            codexSaveStatus = "删除失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func applyClaudeProfile(_ profile: ClaudeRelayProfile) {
+        anthropicBaseURL = profile.baseURL
+        anthropicAuthToken = profile.authToken
+        anthropicModel = profile.model
+        anthropicHaikuModel = profile.haikuModel
+        anthropicSonnetModel = profile.sonnetModel
+        anthropicOpusModel = profile.opusModel
+        httpProxy = profile.httpProxy
+        httpsProxy = profile.httpsProxy
+    }
+
+    private func applyCodexProfile(_ profile: CodexConfigProfile) {
+        codexAuthMode = profile.authMode == CodexAuthMode.account.rawValue ? .account : .apiKey
+        codexModel = profile.model
+        codexBaseURL = profile.baseURL
+        codexApiKey = profile.apiKey
+        codexWireApi = profile.wireApi.isEmpty ? "responses" : profile.wireApi
+    }
+
+    private func currentClaudeProfile(named name: String, id: UUID = UUID()) -> ClaudeRelayProfile {
+        let now = Date()
+        return ClaudeRelayProfile(
+            id: id,
+            name: name,
+            baseURL: anthropicBaseURL,
+            authToken: anthropicAuthToken,
+            model: anthropicModel,
+            haikuModel: anthropicHaikuModel,
+            sonnetModel: anthropicSonnetModel,
+            opusModel: anthropicOpusModel,
+            httpProxy: httpProxy,
+            httpsProxy: httpsProxy,
+            createdAt: now,
+            updatedAt: now
+        )
+    }
+
+    private func currentCodexProfile(named name: String, id: UUID = UUID()) -> CodexConfigProfile {
+        let now = Date()
+        return CodexConfigProfile(
+            id: id,
+            name: name,
+            authMode: codexAuthMode.rawValue,
+            model: codexModel,
+            baseURL: codexBaseURL,
+            apiKey: codexApiKey,
+            wireApi: codexWireApi,
+            createdAt: now,
+            updatedAt: now
+        )
+    }
+
+    private func updateSelectedClaudeProfile() throws {
+        guard let selectedClaudeProfileID,
+              let index = configProfiles.claudeRelayProfiles.firstIndex(where: { $0.id == selectedClaudeProfileID }) else { return }
+        var updated = currentClaudeProfile(named: configProfiles.claudeRelayProfiles[index].name, id: selectedClaudeProfileID)
+        updated.createdAt = configProfiles.claudeRelayProfiles[index].createdAt
+        updated.updatedAt = Date()
+        configProfiles.claudeRelayProfiles[index] = updated
+        configProfiles.activeClaudeRelayProfileID = selectedClaudeProfileID
+        try persistConfigProfiles()
+    }
+
+    private func updateSelectedCodexProfile() throws {
+        guard let selectedCodexProfileID,
+              let index = configProfiles.codexProfiles.firstIndex(where: { $0.id == selectedCodexProfileID }) else { return }
+        var updated = currentCodexProfile(named: configProfiles.codexProfiles[index].name, id: selectedCodexProfileID)
+        updated.createdAt = configProfiles.codexProfiles[index].createdAt
+        updated.updatedAt = Date()
+        configProfiles.codexProfiles[index] = updated
+        configProfiles.activeCodexProfileID = selectedCodexProfileID
+        try persistConfigProfiles()
+    }
+
+    private func nextProfileName(_ rawName: String, fallback: String, count: Int) -> String {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "\(fallback) \(count + 1)" : name
+    }
+
     // MARK: - Claude Settings (relay)
 
     private func loadClaudeSettings() {
         guard let data = try? Data(contentsOf: Self.claudeSettingsURL),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let env = json["env"] as? [String: String] else { return }
+              let env = json["env"] as? [String: Any] else { return }
 
-        anthropicBaseURL = env["ANTHROPIC_BASE_URL"] ?? ""
-        anthropicAuthToken = env["ANTHROPIC_AUTH_TOKEN"] ?? ""
-        anthropicModel = env["ANTHROPIC_MODEL"] ?? ""
-        anthropicHaikuModel = env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] ?? ""
-        anthropicSonnetModel = env["ANTHROPIC_DEFAULT_SONNET_MODEL"] ?? ""
-        anthropicOpusModel = env["ANTHROPIC_DEFAULT_OPUS_MODEL"] ?? ""
-        httpProxy = env["HTTP_PROXY"] ?? ""
-        httpsProxy = env["HTTPS_PROXY"] ?? ""
+        anthropicBaseURL = env["ANTHROPIC_BASE_URL"] as? String ?? ""
+        anthropicAuthToken = env["ANTHROPIC_AUTH_TOKEN"] as? String ?? ""
+        anthropicModel = env["ANTHROPIC_MODEL"] as? String ?? ""
+        anthropicHaikuModel = env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] as? String ?? ""
+        anthropicSonnetModel = env["ANTHROPIC_DEFAULT_SONNET_MODEL"] as? String ?? ""
+        anthropicOpusModel = env["ANTHROPIC_DEFAULT_OPUS_MODEL"] as? String ?? ""
+        httpProxy = env["HTTP_PROXY"] as? String ?? ""
+        httpsProxy = env["HTTPS_PROXY"] as? String ?? ""
     }
 
     private func saveClaudeSettings() {
         relaySaveStatus = ""
 
         do {
-            // 确保目录存在
-            let claudeDir = Self.claudeSettingsURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: claudeDir, withIntermediateDirectories: true)
-
-            var json: [String: Any] = [:]
-            if let data = try? Data(contentsOf: Self.claudeSettingsURL),
-               let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                json = existing
-            }
-
-            var env = (json["env"] as? [String: String]) ?? [:]
-
-            let fields: [(String, String)] = [
-                ("ANTHROPIC_BASE_URL", anthropicBaseURL),
-                ("ANTHROPIC_AUTH_TOKEN", anthropicAuthToken),
-                ("ANTHROPIC_MODEL", anthropicModel),
-                ("ANTHROPIC_DEFAULT_HAIKU_MODEL", anthropicHaikuModel),
-                ("ANTHROPIC_DEFAULT_SONNET_MODEL", anthropicSonnetModel),
-                ("ANTHROPIC_DEFAULT_OPUS_MODEL", anthropicOpusModel),
-                ("HTTP_PROXY", httpProxy),
-                ("HTTPS_PROXY", httpsProxy),
-            ]
-
-            for (key, value) in fields {
-                let trimmed = value.trimmingCharacters(in: .whitespaces)
-                if trimmed.isEmpty {
-                    env.removeValue(forKey: key)
-                } else {
-                    env[key] = trimmed
-                }
-            }
-
-            json["env"] = env
-
-            let outputData = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
-            try outputData.write(to: Self.claudeSettingsURL, options: .atomic)
-            modelService.reloadConfiguredModels()
-
+            try writeClaudeSettings(updateSelectedProfile: true)
             relaySaveStatus = "保存成功"
         } catch {
             relaySaveStatus = "保存失败：\(error.localizedDescription)"
         }
+    }
+
+    private func writeClaudeSettings(updateSelectedProfile: Bool) throws {
+        let claudeDir = Self.claudeSettingsURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: claudeDir, withIntermediateDirectories: true)
+
+        var json: [String: Any] = [:]
+        if let data = try? Data(contentsOf: Self.claudeSettingsURL),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            json = existing
+        }
+
+        var env = (json["env"] as? [String: Any]) ?? [:]
+
+        let fields: [(String, String)] = [
+            ("ANTHROPIC_BASE_URL", anthropicBaseURL),
+            ("ANTHROPIC_AUTH_TOKEN", anthropicAuthToken),
+            ("ANTHROPIC_MODEL", anthropicModel),
+            ("ANTHROPIC_DEFAULT_HAIKU_MODEL", anthropicHaikuModel),
+            ("ANTHROPIC_DEFAULT_SONNET_MODEL", anthropicSonnetModel),
+            ("ANTHROPIC_DEFAULT_OPUS_MODEL", anthropicOpusModel),
+            ("HTTP_PROXY", httpProxy),
+            ("HTTPS_PROXY", httpsProxy),
+        ]
+
+        for (key, value) in fields {
+            let trimmed = value.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                env.removeValue(forKey: key)
+            } else {
+                env[key] = trimmed
+            }
+        }
+
+        json["env"] = env
+
+        let outputData = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+        try outputData.write(to: Self.claudeSettingsURL, options: .atomic)
+        if updateSelectedProfile {
+            try updateSelectedClaudeProfile()
+        }
+        modelService.reloadConfiguredModels()
+        modelService.fetchClaudeModels(baseURL: anthropicBaseURL, apiKey: anthropicAuthToken)
     }
 
     // MARK: - Codex Settings
@@ -583,8 +1099,8 @@ struct SettingsPageView: View {
             codexModel = parseTomlValue(text, key: "model") ?? ""
             configuredProvider = parseTomlValue(text, key: "model_provider") ?? ""
 
-            // 从 [model_providers.custom] 段读取 base_url 和 wire_api
-            if let customSection = extractTomlSection(text, section: "model_providers.custom") {
+            let providerSection = configuredProvider.isEmpty ? "acode_custom" : configuredProvider
+            if let customSection = extractTomlSection(text, section: "model_providers.\(providerSection)") {
                 codexBaseURL = parseTomlValue(customSection, key: "base_url") ?? ""
                 codexWireApi = parseTomlValue(customSection, key: "wire_api") ?? "responses"
             }
@@ -611,7 +1127,7 @@ struct SettingsPageView: View {
             }
         }
 
-        if configuredProvider == "custom" {
+        if configuredProvider == "custom" || configuredProvider == "acode_custom" {
             codexAuthMode = .apiKey
         } else {
             codexAuthMode = .account
@@ -622,34 +1138,35 @@ struct SettingsPageView: View {
         codexSaveStatus = ""
 
         do {
-            // 确保目录存在
-            let codexDir = Self.codexConfigURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: codexDir, withIntermediateDirectories: true)
+            try writeCodexSettings(updateSelectedProfile: true)
+            codexSaveStatus = codexAuthMode == .apiKey
+                ? "保存成功（API Key）"
+                : (codexAccountStatus.contains("检测到") || codexAccountStatus.contains("已导入") ? "保存成功（账号登录）" : "已保存模型；请先运行 codex login")
+        } catch {
+            codexSaveStatus = "保存失败：\(error.localizedDescription)"
+        }
+    }
 
-            // 读取现有 config.toml 并更新
-            var existingText = (try? String(contentsOf: Self.codexConfigURL, encoding: .utf8)) ?? ""
+    private func writeCodexSettings(updateSelectedProfile: Bool) throws {
+        let codexDir = Self.codexConfigURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: codexDir, withIntermediateDirectories: true)
 
-            // 更新顶层字段
-            existingText = updateTomlValue(existingText, key: "model", value: codexModel.isEmpty ? "gpt-5.5" : codexModel)
+        let previousConfigData = try? Data(contentsOf: Self.codexConfigURL)
+        let previousAuthData = try? Data(contentsOf: Self.codexAuthURL)
 
+        do {
+            let providerID = "acode_custom"
+            var configText = (try? String(contentsOf: Self.codexConfigURL, encoding: .utf8)) ?? ""
+            configText = updateTomlValue(configText, key: "model", value: codexModel.isEmpty ? "gpt-5.5" : codexModel)
+
+            var authDataToWrite: Data?
             if codexAuthMode == .apiKey {
-                existingText = updateTomlValue(existingText, key: "model_provider", value: "custom")
+                configText = updateTomlValue(configText, key: "model_provider", value: providerID)
+                configText = updateTomlSectionValue(configText, section: "model_providers.\(providerID)", key: "name", value: providerID)
+                configText = updateTomlSectionValue(configText, section: "model_providers.\(providerID)", key: "base_url", value: codexBaseURL)
+                configText = updateTomlSectionValue(configText, section: "model_providers.\(providerID)", key: "wire_api", value: codexWireApi)
+                configText = updateTomlSectionRawValue(configText, section: "model_providers.\(providerID)", key: "requires_openai_auth", value: "true")
 
-                // 更新 [model_providers.custom] 段
-                existingText = updateTomlSectionValue(existingText, section: "model_providers.custom", key: "name", value: "custom")
-                existingText = updateTomlSectionValue(existingText, section: "model_providers.custom", key: "base_url", value: codexBaseURL)
-                existingText = updateTomlSectionValue(existingText, section: "model_providers.custom", key: "wire_api", value: codexWireApi)
-                existingText = updateTomlSectionRawValue(existingText, section: "model_providers.custom", key: "requires_openai_auth", value: "true")
-            } else {
-                // 账号登录走 Codex CLI 自己的 OAuth 登录态，不能继续强制 custom provider。
-                existingText = removeTopLevelTomlValue(existingText, key: "model_provider")
-            }
-
-            try existingText.write(to: Self.codexConfigURL, atomically: true, encoding: .utf8)
-            modelService.reloadConfiguredModels()
-
-            if codexAuthMode == .apiKey {
-                // 更新 auth.json — 只更新 OPENAI_API_KEY，保留其他字段。
                 var authJson: [String: Any] = [:]
                 if let data = try? Data(contentsOf: Self.codexAuthURL),
                    let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -662,19 +1179,28 @@ struct SettingsPageView: View {
                 } else {
                     authJson["OPENAI_API_KEY"] = trimmedKey
                 }
+                authDataToWrite = try JSONSerialization.data(withJSONObject: authJson, options: [.prettyPrinted, .sortedKeys])
+            } else {
+                configText = removeTopLevelTomlValue(configText, key: "model_provider")
+            }
 
-                let authData = try JSONSerialization.data(withJSONObject: authJson, options: [.prettyPrinted, .sortedKeys])
-                try authData.write(to: Self.codexAuthURL, options: .atomic)
+            try configText.write(to: Self.codexConfigURL, atomically: true, encoding: .utf8)
+            if let authDataToWrite {
+                try authDataToWrite.write(to: Self.codexAuthURL, options: .atomic)
                 try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.codexAuthURL.path)
-                codexSaveStatus = "保存成功（API Key）"
             } else {
                 refreshCodexAccountStatus()
-                codexSaveStatus = codexAccountStatus.contains("检测到") || codexAccountStatus.contains("已导入")
-                    ? "保存成功（账号登录）"
-                    : "已保存模型；请先运行 codex login"
             }
+
+            if updateSelectedProfile {
+                try updateSelectedCodexProfile()
+            }
+            modelService.reloadConfiguredModels()
+            modelService.fetchCodexModels(baseURL: codexBaseURL, apiKey: codexApiKey)
         } catch {
-            codexSaveStatus = "保存失败：\(error.localizedDescription)"
+            restoreFile(at: Self.codexConfigURL, data: previousConfigData)
+            restoreFile(at: Self.codexAuthURL, data: previousAuthData)
+            throw error
         }
     }
 
@@ -886,6 +1412,14 @@ struct SettingsPageView: View {
         return result.joined(separator: "\n")
     }
 
+    private func restoreFile(at url: URL, data: Data?) {
+        if let data {
+            try? data.write(to: url, options: .atomic)
+        } else if FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
     private func removeTopLevelTomlValue(_ text: String, key: String) -> String {
         let lines = text.components(separatedBy: .newlines)
         var result: [String] = []
@@ -938,23 +1472,34 @@ struct SettingsPageView: View {
     // MARK: - Model Picker UI
 
     private func modelPicker(label: String, selection: Binding<String>, models: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                Picker("", selection: selection) {
-                    Text("（不设置）").tag("")
-                    ForEach(models, id: \.self) { model in
-                        Text(model).tag(model)
-                    }
-                }
-                .labelsHidden()
-                .frame(minWidth: 120)
-                // 也允许手动输入
-                TextField("或手动输入", text: selection)
-                    .textFieldStyle(.roundedBorder)
+        VStack(alignment: .leading, spacing: 8) {
+            fieldLabel(label)
+            HStack(spacing: 10) {
+                TextField("模型 ID", text: selection)
+                    .settingsTextFieldChrome()
                     .frame(maxWidth: .infinity)
+
+                Menu {
+                    Button("不设置") { selection.wrappedValue = "" }
+                    Divider()
+                    ForEach(models, id: \.self) { model in
+                        Button(model) { selection.wrappedValue = model }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(selection.wrappedValue.isEmpty ? "选择" : "切换")
+                            .font(.system(size: 12, weight: .semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 40)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
         }
     }
@@ -1067,5 +1612,52 @@ struct SettingsPageView: View {
         }
 
         return nil
+    }
+}
+
+private extension View {
+    func settingsTextFieldChrome() -> some View {
+        self
+            .textFieldStyle(.plain)
+            .font(.system(size: 14, weight: .medium))
+            .padding(.horizontal, 14)
+            .frame(height: 40)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+    }
+}
+
+private struct SettingsPrimaryButtonStyle: ButtonStyle {
+    var compact = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: compact ? 12 : 13, weight: .semibold))
+            .foregroundStyle(Color.primary)
+            .padding(.horizontal, compact ? 11 : 16)
+            .frame(height: compact ? 32 : 40)
+            .background(configuration.isPressed ? Color.black.opacity(0.035) : Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: compact ? 12 : 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: compact ? 12 : 14, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+private struct SettingsSecondaryButtonStyle: ButtonStyle {
+    var compact = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: compact ? 12 : 13, weight: .semibold))
+            .foregroundStyle(Color.secondary)
+            .padding(.horizontal, compact ? 10 : 14)
+            .frame(height: compact ? 30 : 38)
+            .background(configuration.isPressed ? Color.black.opacity(0.03) : Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: compact ? 11 : 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: compact ? 11 : 14, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }

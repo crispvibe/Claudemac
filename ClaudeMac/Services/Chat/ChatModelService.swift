@@ -6,6 +6,8 @@ final class ChatModelService: ObservableObject {
     @Published var claudeModels: [ChatModelOption] = []
     @Published var codexModels: [ChatModelOption] = []
     @Published var isFetching = false
+    @Published private var customClaudeModels: [ChatModelOption] = []
+    @Published private var customCodexModels: [ChatModelOption] = []
 
     private var lastClaudeBaseURL: String = ""
     private var lastCodexBaseURL: String = ""
@@ -14,23 +16,28 @@ final class ChatModelService: ObservableObject {
     private var configuredClaudeDefaultModelID: String?
     private var configuredCodexDefaultModelID: String?
 
+    init() {
+        customClaudeModels = Self.loadCustomModels(for: .claude)
+        customCodexModels = Self.loadCustomModels(for: .codex)
+    }
+
     // MARK: - Public API
 
     func options(for cli: CLIType) -> [ChatModelOption] {
         switch cli.visibleValue {
         case .claude:
             return withConfiguredDefaultTitle(
-                mergedOptions(ChatModelCatalog.options(for: .claude), claudeModels, configuredClaudeModels),
+                mergedOptions(ChatModelCatalog.options(for: .claude), claudeModels, configuredClaudeModels, customClaudeModels),
                 cli: .claude
             )
         case .codex:
             return withConfiguredDefaultTitle(
-                mergedOptions(ChatModelCatalog.options(for: .codex), codexModels, configuredCodexModels),
+                mergedOptions(ChatModelCatalog.options(for: .codex), codexModels, configuredCodexModels, customCodexModels),
                 cli: .codex
             )
         case .gemini, .custom:
             return withConfiguredDefaultTitle(
-                mergedOptions(ChatModelCatalog.options(for: .claude), claudeModels, configuredClaudeModels),
+                mergedOptions(ChatModelCatalog.options(for: .claude), claudeModels, configuredClaudeModels, customClaudeModels),
                 cli: .claude
             )
         }
@@ -61,6 +68,20 @@ final class ChatModelService: ObservableObject {
 
     func defaultReasoningEffort(for cli: CLIType) -> ChatReasoningEffort {
         .high
+    }
+
+    func addCustomModel(id rawID: String, cli: CLIType) {
+        let id = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return }
+        let visibleCLI = cli.visibleValue == .codex ? CLIType.codex : CLIType.claude
+        let option = ChatModelOption(id: id, title: prettifyModelID(id, cli: visibleCLI), cli: visibleCLI)
+        if visibleCLI == .codex {
+            customCodexModels = mergedOptions(customCodexModels, [option])
+            Self.saveCustomModels(customCodexModels.map(\.id), for: .codex)
+        } else {
+            customClaudeModels = mergedOptions(customClaudeModels, [option])
+            Self.saveCustomModels(customClaudeModels.map(\.id), for: .claude)
+        }
     }
 
     func reloadConfiguredModels() {
@@ -262,6 +283,24 @@ final class ChatModelService: ObservableObject {
     private static func loadCodexConfiguredModel() -> String? {
         guard let text = try? String(contentsOf: codexConfigURL, encoding: .utf8) else { return nil }
         return parseTomlValue(text, key: "model")?.nonEmptyTrimmed
+    }
+
+    private static func loadCustomModels(for cli: CLIType) -> [ChatModelOption] {
+        customModelIDs(for: cli).map { id in
+            ChatModelOption(id: id, title: id, cli: cli.visibleValue == .codex ? .codex : .claude)
+        }
+    }
+
+    private static func customModelIDs(for cli: CLIType) -> [String] {
+        UserDefaults.standard.stringArray(forKey: customModelsKey(for: cli)) ?? []
+    }
+
+    private static func saveCustomModels(_ ids: [String], for cli: CLIType) {
+        UserDefaults.standard.set(unique(ids), forKey: customModelsKey(for: cli))
+    }
+
+    private static func customModelsKey(for cli: CLIType) -> String {
+        cli.visibleValue == .codex ? "customCodexModelIDs" : "customClaudeModelIDs"
     }
 
     private static func parseTomlValue(_ text: String, key: String) -> String? {

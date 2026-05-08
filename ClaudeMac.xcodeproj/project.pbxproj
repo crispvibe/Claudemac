@@ -63,7 +63,7 @@
 		F00000000000000000000020 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F00000000000000000000021 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000022 /* ClaudeMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMac.entitlements; sourceTree = "<group>"; };
-		F00000000000000000000023 /* ClaudeMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000023 /* Acode.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Acode.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000024 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F00000000000000000000025 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
 		F00000000000000000000026 /* ChatPanelState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPanelState.swift; sourceTree = "<group>"; };
@@ -173,7 +173,7 @@
 		G00000000000000000000008 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				F00000000000000000000023 /* ClaudeMac.app */,
+				F00000000000000000000023 /* Acode.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -208,8 +208,8 @@
 			dependencies = (
 			);
 			name = ClaudeMac;
-			productName = ClaudeMac;
-			productReference = F00000000000000000000023 /* ClaudeMac.app */;
+			productName = Acode;
+			productReference = F00000000000000000000023 /* Acode.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -429,7 +429,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = vin.anna.ClaudeMac;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Acode;
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -455,7 +455,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = vin.anna.ClaudeMac;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = Acode;
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;

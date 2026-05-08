@@ -16,7 +16,8 @@ struct TextEditorRepresentable: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = false
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .white
         scrollView.hasVerticalRuler = true
         scrollView.rulersVisible = true
 
@@ -27,7 +28,7 @@ struct TextEditorRepresentable: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
-        textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .light)
+        textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.textColor = SyntaxHighlighter.baseColor
         textView.insertionPointColor = .controlAccentColor
         textView.selectedTextAttributes = [
@@ -36,9 +37,7 @@ struct TextEditorRepresentable: NSViewRepresentable {
         ]
         textView.backgroundColor = .clear
         textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 18, height: 14)
-        textView.textContainer?.widthTracksTextView = false
-        textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        configureTextLayout(textView)
         textView.isHorizontallyResizable = true
         textView.isVerticallyResizable = true
         textView.minSize = NSSize(width: 0, height: 0)
@@ -61,12 +60,34 @@ struct TextEditorRepresentable: NSViewRepresentable {
         let previousFileName = context.coordinator.parent.fileName
         context.coordinator.parent = self
         if textView.string != text {
+            configureTextLayout(textView)
+            context.coordinator.rulerView?.ruleThickness = 68
             textView.string = text
             context.coordinator.applyHighlighting()
-            resetHorizontalOrigin(in: scrollView)
+            DispatchQueue.main.async {
+                configureTextLayout(textView)
+                resetHorizontalOrigin(in: scrollView)
+            }
             context.coordinator.rulerView?.needsDisplay = true
         } else if previousFileName != fileName {
+            configureTextLayout(textView)
+            context.coordinator.rulerView?.ruleThickness = 68
             context.coordinator.applyHighlighting()
+            DispatchQueue.main.async {
+                configureTextLayout(textView)
+                resetHorizontalOrigin(in: scrollView)
+            }
+            context.coordinator.rulerView?.needsDisplay = true
+        }
+    }
+
+    private func configureTextLayout(_ textView: NSTextView) {
+        textView.textContainerInset = NSSize(width: 26, height: 16)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        if let textContainer = textView.textContainer {
+            textView.layoutManager?.ensureLayout(for: textContainer)
         }
     }
 

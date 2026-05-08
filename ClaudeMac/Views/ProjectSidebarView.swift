@@ -43,7 +43,7 @@ struct ProjectSidebarView: View {
                 projectToRemove = nil
             }
         } message: {
-            Text("只会从 ClaudeMac 的项目列表移除“\(projectToRemove?.name ?? "该项目")”，不会删除磁盘上的文件夹。")
+            Text("只会从 Acode 的项目列表移除“\(projectToRemove?.name ?? "该项目")”，不会删除磁盘上的文件夹。")
         }
         .alert("删除历史会话？", isPresented: Binding(
             get: { historyToRemove != nil },

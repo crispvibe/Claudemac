@@ -32,7 +32,11 @@ struct ProjectStore {
             guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
                 throw ProjectStoreError.applicationSupportUnavailable
             }
-            let directory = base.appendingPathComponent("ClaudeMac", isDirectory: true)
+            let directory = base.appendingPathComponent("Acode", isDirectory: true)
+            let legacyDirectory = base.appendingPathComponent("ClaudeMac", isDirectory: true)
+            if !FileManager.default.fileExists(atPath: directory.path), FileManager.default.fileExists(atPath: legacyDirectory.path) {
+                try? FileManager.default.copyItem(at: legacyDirectory, to: directory)
+            }
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             return directory
         }
@@ -40,6 +44,8 @@ struct ProjectStore {
 
     private static var projectsURL: URL { get throws { try appSupportDirectory.appendingPathComponent("projects.json") } }
     private static var settingsURL: URL { get throws { try appSupportDirectory.appendingPathComponent("settings.json") } }
+    private static var fileTreeStateURL: URL { get throws { try appSupportDirectory.appendingPathComponent("file-tree-state.json") } }
+    private static var configProfilesURL: URL { get throws { try appSupportDirectory.appendingPathComponent("config-profiles.json") } }
 
     static func loadProjects() -> [ProjectItem] {
         do {
@@ -71,6 +77,52 @@ struct ProjectStore {
     static func saveSettings(_ settings: AppSettings) throws {
         let data = try encoder.encode(settings)
         try data.write(to: settingsURL, options: [.atomic])
+    }
+
+    static func loadExpandedFileTreePaths(for projectPath: String) -> Set<String> {
+        do {
+            let url = try fileTreeStateURL
+            guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+            let data = try Data(contentsOf: url)
+            let state = try decoder.decode([String: [String]].self, from: data)
+            return Set(state[normalizedProjectPath(projectPath)] ?? [])
+        } catch {
+            return []
+        }
+    }
+
+    static func saveExpandedFileTreePaths(_ paths: Set<String>, for projectPath: String) throws {
+        let url = try fileTreeStateURL
+        var state: [String: [String]] = [:]
+        if FileManager.default.fileExists(atPath: url.path) {
+            let data = try Data(contentsOf: url)
+            state = (try? decoder.decode([String: [String]].self, from: data)) ?? [:]
+        }
+        state[normalizedProjectPath(projectPath)] = paths.sorted()
+        let data = try encoder.encode(state)
+        try data.write(to: url, options: [.atomic])
+    }
+
+    static func loadConfigProfiles() -> ConfigProfileCollection {
+        do {
+            let url = try configProfilesURL
+            guard FileManager.default.fileExists(atPath: url.path) else { return .empty }
+            let data = try Data(contentsOf: url)
+            return try decoder.decode(ConfigProfileCollection.self, from: data)
+        } catch {
+            return .empty
+        }
+    }
+
+    static func saveConfigProfiles(_ profiles: ConfigProfileCollection) throws {
+        let data = try encoder.encode(profiles)
+        let url = try configProfilesURL
+        try data.write(to: url, options: [.atomic])
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    private static func normalizedProjectPath(_ value: String) -> String {
+        (value as NSString).standardizingPath
     }
 
     static func resolveURL(for project: ProjectItem) throws -> URL {

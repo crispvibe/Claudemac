@@ -12,6 +12,7 @@ struct ChatPanelView: View {
     @State private var permissionMode = ChatPermissionMode.ask
     @State private var reasoningEffort = ChatReasoningEffort.high
     @State private var activePicker: ChatPicker?
+    @State private var customModelInput = ""
     @State private var showCopiedToast = false
     @State private var attachedPaths: [String] = []
     @State private var showResumePopover = false
@@ -43,39 +44,35 @@ struct ChatPanelView: View {
                     .transition(.opacity)
             }
         }
-        .background {
-            ZStack {
-                VisualEffectView(material: .sidebar, blendingMode: .withinWindow)
-                    .opacity(0.62)
-                AppTheme.panelSurface
-            }
-        }
+        .background(Color.white)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AppTheme.weakHairline, lineWidth: 1)
+                .stroke(AppTheme.hairline, lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.08), radius: 18, y: 8)
         .onAppear {
-            normalizeSelectedModel()
+            applyPersistedChatSelection()
             resetReasoningEffortToConfiguredDefault()
             syncSelectedContextWindow()
             chatState.loadFromAppState(appState, modelID: selectedModelID, permissionMode: permissionMode, reasoningEffort: reasoningEffort)
         }
         .onChange(of: appState.chatConversationSerial) { _, _ in
-            normalizeSelectedModel()
+            applyPersistedChatSelection()
             normalizeReasoningEffort()
             syncSelectedContextWindow()
             chatState.loadFromAppState(appState, modelID: selectedModelID, permissionMode: permissionMode, reasoningEffort: reasoningEffort)
         }
         .onChange(of: appState.selectedCLI) { _, _ in
+            selectedModelID = persistedModelID(for: appState.selectedCLI)
             normalizeSelectedModel()
             resetReasoningEffortToConfiguredDefault()
             syncSelectedContextWindow()
+            persistChatSelection()
             activePicker = nil
         }
         .onChange(of: selectedModelID) { _, _ in
             syncSelectedContextWindow()
+            persistChatSelection()
         }
     }
 
@@ -157,7 +154,7 @@ struct ChatPanelView: View {
             .textSelection(.enabled)
         }
         .scrollIndicators(.hidden)
-        .background(Color.white.opacity(0.08))
+        .background(Color.white)
     }
 
     private var transcriptItems: [ChatTranscriptItem] {
@@ -605,7 +602,7 @@ struct ChatPanelView: View {
             }
         }
         .padding(12)
-        .background(Color.white.opacity(0.16))
+        .background(Color.white)
     }
 
     private var composerCard: some View {
@@ -627,12 +624,11 @@ struct ChatPanelView: View {
                 }
             }
 
-            HStack(spacing: 7) {
+            HStack(spacing: 4) {
                 iconOnlyButton(systemImage: "plus", tint: .secondary, action: openFilesForComposer)
 
-                selectorButton(title: appState.selectedCLI.displayName, systemImage: "terminal", tint: .primary, picker: .cli, maxTitleWidth: 92)
-                selectorButton(title: permissionMode.shortTitle, systemImage: permissionMode.systemImage, tint: permissionMode.tint, picker: .permission, maxTitleWidth: 46)
-                selectorButton(title: reasoningEffort.title(for: appState.selectedCLI), systemImage: "sparkles", tint: .primary, picker: .reasoning, maxTitleWidth: 48)
+                selectorButton(title: appState.selectedCLI.displayName, systemImage: "terminal", tint: .primary, picker: .cli, maxTitleWidth: 78)
+                selectorButton(title: permissionMode.shortTitle, systemImage: permissionMode.systemImage, tint: permissionMode.tint, picker: .permission, maxTitleWidth: 30)
 
                 if editingMessageID != nil {
                     Button("取消") {
@@ -646,14 +642,14 @@ struct ChatPanelView: View {
 
                 Spacer(minLength: 8)
 
-                selectorButton(title: selectedModelTitle, systemImage: "cpu", tint: .primary, picker: .model, maxTitleWidth: 142)
+                selectorButton(title: selectedModelTitle, systemImage: "cpu", tint: .primary, picker: .model, maxTitleWidth: 118)
                 contextIcon
                 sendButton
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .padding(.bottom, 9)
         }
-        .background(AppTheme.editorSurface.opacity(0.82))
+        .background(Color.white)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -725,9 +721,6 @@ struct ChatPanelView: View {
         case .permission:
             customPickerPanel(picker)
                 .padding(.leading, 128)
-        case .reasoning:
-            customPickerPanel(picker)
-                .padding(.leading, 188)
         case .model:
             HStack {
                 Spacer(minLength: 0)
@@ -744,7 +737,9 @@ struct ChatPanelView: View {
                 ForEach(CLIType.visibleCases) { cli in
                     pickerOption(title: cli.displayName, isSelected: appState.selectedCLI == cli) {
                         appState.selectedCLI = cli
+                        selectedModelID = persistedModelID(for: cli)
                         normalizeSelectedModel()
+                        persistChatSelection()
                         activePicker = nil
                     }
                 }
@@ -752,13 +747,7 @@ struct ChatPanelView: View {
                 ForEach(ChatPermissionMode.allCases) { mode in
                     pickerOption(title: mode.title, isSelected: permissionMode == mode) {
                         permissionMode = mode
-                        activePicker = nil
-                    }
-                }
-            case .reasoning:
-                ForEach(ChatReasoningEffort.options(for: appState.selectedCLI)) { effort in
-                    pickerOption(title: effort.menuTitle(for: appState.selectedCLI), isSelected: reasoningEffort == effort) {
-                        reasoningEffort = effort
+                        persistChatSelection()
                         activePicker = nil
                     }
                 }
@@ -767,14 +756,38 @@ struct ChatPanelView: View {
                     pickerOption(title: model.title, isSelected: selectedModelID == model.id) {
                         selectedModelID = model.id
                         syncSelectedContextWindow()
+                        persistChatSelection()
                         activePicker = nil
                     }
+                }
+                Divider().opacity(0.28)
+                HStack(spacing: 6) {
+                    TextField("添加模型 ID", text: $customModelInput)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .padding(.horizontal, 9)
+                        .frame(height: 30)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+                    Button("添加") {
+                        addCustomModel()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 9)
+                    .frame(height: 30)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+                    .disabled(customModelInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
         .padding(6)
-        .frame(maxWidth: 220, alignment: .leading)
-        .background(AppTheme.editorSurface.opacity(0.95))
+        .frame(maxWidth: picker == .model ? 300 : 220, alignment: .leading)
+        .background(Color.white)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -813,10 +826,10 @@ struct ChatPanelView: View {
         Button {
             activePicker = activePicker == picker ? nil : picker
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Image(systemName: systemImage)
                     .font(.system(size: 9, weight: .semibold))
-                    .frame(width: 12)
+                    .frame(width: 11)
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)
@@ -827,9 +840,9 @@ struct ChatPanelView: View {
                     .foregroundStyle(.secondary)
             }
             .foregroundStyle(tint)
-            .frame(minHeight: 24)
-            .padding(.vertical, 4)
-            .padding(.horizontal, 2)
+            .frame(minHeight: 22)
+            .padding(.vertical, 3)
+            .padding(.horizontal, 1)
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -990,6 +1003,31 @@ struct ChatPanelView: View {
             editingMessageID = nil
             draftMessage = ""
         }
+    }
+
+    private func addCustomModel() {
+        let id = customModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return }
+        modelService.addCustomModel(id: id, cli: appState.selectedCLI)
+        selectedModelID = id
+        customModelInput = ""
+        syncSelectedContextWindow()
+        persistChatSelection()
+        activePicker = nil
+    }
+
+    private func applyPersistedChatSelection() {
+        permissionMode = appState.settings.chatPermissionMode
+        selectedModelID = persistedModelID(for: appState.selectedCLI)
+        normalizeSelectedModel()
+    }
+
+    private func persistedModelID(for cli: CLIType) -> String {
+        cli.visibleValue == .codex ? appState.settings.selectedCodexModelID : appState.settings.selectedClaudeModelID
+    }
+
+    private func persistChatSelection() {
+        appState.saveChatSelection(cli: appState.selectedCLI, permissionMode: permissionMode, modelID: selectedModelID)
     }
 
     private func normalizeSelectedModel() {
@@ -1380,6 +1418,5 @@ private extension String {
 private enum ChatPicker {
     case cli
     case permission
-    case reasoning
     case model
 }

@@ -103,8 +103,8 @@ final class CodexAppServerBackend: ChatProcessBackend {
                 }
 
                 process.waitUntilExit()
-                let didReceiveVisibleOutput = (try? await stdoutTask.value) ?? false
-                let didEmitStderrOutput = (try? await stderrTask.value) ?? false
+                let didReceiveVisibleOutput = await stdoutTask.value
+                let didEmitStderrOutput = await stderrTask.value
 
                 self.inputPipe = nil
                 self.process = nil
@@ -185,8 +185,8 @@ final class CodexAppServerBackend: ChatProcessBackend {
     private func bootstrapCodex() {
         let id = sendRequest(method: "initialize", params: [
             "clientInfo": [
-                "name": "ClaudeMac",
-                "title": "ClaudeMac",
+                "name": "Acode",
+                "title": "Acode",
                 "version": "1.0"
             ],
             "capabilities": [
@@ -203,7 +203,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
             "model": options.modelID,
             "approvalPolicy": options.permissionMode.codexApprovalPolicy,
             "sandbox": options.permissionMode.codexSandbox,
-            "serviceName": "ClaudeMac"
+            "serviceName": "Acode"
         ]
 
         let method: String

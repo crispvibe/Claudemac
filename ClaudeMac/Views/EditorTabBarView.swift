@@ -5,11 +5,7 @@ struct EditorTabBarView: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            Color.black.opacity(0.012)
-
-            Rectangle()
-                .fill(AppTheme.hairline)
-                .frame(height: 1)
+            Color.clear
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .bottom, spacing: 0) {
@@ -21,7 +17,7 @@ struct EditorTabBarView: View {
                 .padding(.horizontal, 0)
             }
         }
-        .frame(height: 42)
+        .frame(height: 39)
     }
 
     private var addTabButton: some View {
@@ -30,12 +26,12 @@ struct EditorTabBarView: View {
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 13, weight: .regular))
-                .frame(width: 34, height: 36)
+                .frame(width: 34, height: 35)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .padding(.bottom, 2)
+        .padding(.bottom, 1)
     }
 
     private func tabView(_ tab: EditorTab) -> some View {
@@ -61,21 +57,18 @@ struct EditorTabBarView: View {
         }
         .padding(.leading, selected ? 16 : 14)
         .padding(.trailing, selected ? 11 : 10)
-        .frame(width: selected ? 186 : 160, height: selected ? 40 : 36)
-        .background(selected ? AppTheme.editorSurface.opacity(0.98) : Color.clear)
-        .clipShape(TopRoundedRectangle(radius: selected ? 12 : 0))
-        .overlay(alignment: .trailing) {
-            if !selected {
-                Rectangle()
-                    .fill(AppTheme.weakHairline)
-                    .frame(width: 1, height: 20)
+        .frame(width: selected ? 186 : 160, height: selected ? 37 : 34)
+        .background {
+            if selected {
+                TopRoundedTabShape(radius: 18)
+                    .fill(Color.white)
             }
         }
         .overlay(alignment: .bottom) {
             if selected {
                 Rectangle()
-                    .fill(AppTheme.editorSurface.opacity(0.98))
-                    .frame(height: 1)
+                    .fill(Color.white)
+                    .frame(height: 2)
             }
         }
         .padding(.bottom, 0)
@@ -85,11 +78,11 @@ struct EditorTabBarView: View {
     }
 }
 
-private struct TopRoundedRectangle: Shape {
+private struct TopRoundedTabShape: Shape {
     var radius: CGFloat
 
     func path(in rect: CGRect) -> Path {
-        let radius = min(radius, rect.width / 2, rect.height / 2)
+        let radius = min(radius, rect.width / 2, rect.height)
         var path = Path()
         path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
         path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
@@ -107,3 +100,4 @@ private struct TopRoundedRectangle: Shape {
         return path
     }
 }
+

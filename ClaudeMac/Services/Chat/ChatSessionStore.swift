@@ -1,7 +1,6 @@
 import Foundation
 
 enum ChatSessionStore {
-    private static let appDirectoryName = "ClaudeMac"
     private static let indexFileName = "chat-sessions.json"
     private static let messagesDirectoryName = "chat-messages"
     static let storageKey = "claudemac"
@@ -75,9 +74,8 @@ enum ChatSessionStore {
     }
 
     private static func appSupportURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent(appDirectoryName, isDirectory: true)
+        (try? ProjectStore.appSupportDirectory)
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/Acode", isDirectory: true)
     }
 
     private static func indexURL() -> URL {

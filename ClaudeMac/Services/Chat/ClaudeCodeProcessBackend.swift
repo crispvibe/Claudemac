@@ -92,7 +92,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                 kind: .command,
                 title: "claude",
                 subtitle: options.projectPath,
-                text: ([options.executablePath] + (process.arguments ?? [])).joined(separator: " "),
+                text: displayCommand(executablePath: options.executablePath, arguments: process.arguments ?? []),
                 status: "start",
                 requestID: nil
             ))
@@ -134,8 +134,9 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         }
 
         process.waitUntilExit()
-        let didReceiveVisibleOutput = (try? await stdoutTask.value) ?? false
-        let didReceiveStderr = (try? await stderrTask.value) ?? false
+        let didReceiveVisibleOutput = await stdoutTask.value
+        let didReceiveStderr = await stderrTask.value
+        inputPipe?.fileHandleForWriting.closeFile()
         inputPipe = nil
         self.process = nil
 
@@ -192,6 +193,14 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             "command": "/compact"
         ]
         ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+    }
+
+    private func displayCommand(executablePath: String, arguments: [String]) -> String {
+        var displayArguments = arguments
+        if let promptFlagIndex = displayArguments.firstIndex(of: "-p"), displayArguments.indices.contains(promptFlagIndex + 1) {
+            displayArguments[promptFlagIndex + 1] = "<prompt>"
+        }
+        return ([executablePath] + displayArguments).joined(separator: " ")
     }
 
     private func arguments(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, includeEffort: Bool) -> [String] {

@@ -4,14 +4,16 @@ struct FileTreeItemView: View {
     @EnvironmentObject private var appState: AppState
     let node: FileNode
     let level: Int
-    @State private var isExpanded = false
+
+    private var isExpanded: Bool {
+        appState.isFileTreeNodeExpanded(node)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Button {
                 if node.isDirectory {
-                    isExpanded.toggle()
-                    if isExpanded { appState.loadChildren(for: node) }
+                    appState.toggleFileTreeNode(node)
                 } else {
                     appState.openFile(node)
                 }
@@ -47,6 +49,9 @@ struct FileTreeItemView: View {
             .buttonStyle(.plain)
             .onDrag {
                 NSItemProvider(object: node.url.path as NSString)
+            }
+            .onAppear {
+                appState.restoreExpandedFileTreeNode(node)
             }
 
             if node.isDirectory && isExpanded {

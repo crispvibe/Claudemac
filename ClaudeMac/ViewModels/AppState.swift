@@ -8,6 +8,7 @@ final class AppState: ObservableObject {
     @Published var selectedProjectID: UUID?
     @Published var rootNodes: [FileNode] = []
     @Published var childCache: [String: [FileNode]] = [:]
+    @Published var expandedFileTreePaths: Set<String> = []
     @Published var openTabs: [EditorTab] = []
     @Published var selectedTabID: UUID?
     @Published var launchHistory: [LaunchRecord]
@@ -30,10 +31,11 @@ final class AppState: ObservableObject {
     init() {
         var settings = ProjectStore.loadSettings()
         settings.defaultCLI = settings.defaultCLI.visibleValue
+        settings.chatCLI = settings.chatCLI.visibleValue
         self.settings = settings
         self.projects = ProjectStore.loadProjects().sorted { ($0.lastOpenedAt ?? .distantPast) > ($1.lastOpenedAt ?? .distantPast) }
         self.launchHistory = LaunchHistoryStore.load().sorted { $0.createdAt > $1.createdAt }
-        self.selectedCLI = settings.defaultCLI
+        self.selectedCLI = settings.chatCLI
         self.selectedTerminal = settings.defaultTerminal
         self.scanner = FileTreeScanner(ignoredNames: Set(settings.ignoredFolders))
         self.selectedProjectID = projects.first?.id
@@ -66,6 +68,7 @@ final class AppState: ObservableObject {
     }
 
     func addProject() {
+        guard confirmDiscardUnsavedChangesIfNeeded() else { return }
         do {
             guard let project = try ProjectStore.chooseProjectDirectory() else { return }
             projects.removeAll { $0.path == project.path }
@@ -79,6 +82,9 @@ final class AppState: ObservableObject {
     }
 
     func removeProject(_ project: ProjectItem) {
+        if selectedProjectID == project.id {
+            guard confirmDiscardUnsavedChangesIfNeeded() else { return }
+        }
         projects.removeAll { $0.id == project.id }
         if selectedProjectID == project.id {
             selectedProjectID = projects.first?.id
@@ -91,7 +97,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    func selectProject(_ project: ProjectItem) {
+    @discardableResult
+    func selectProject(_ project: ProjectItem) -> Bool {
+        guard selectedProjectID != project.id else { return true }
+        guard confirmDiscardUnsavedChangesIfNeeded() else { return false }
         selectedProjectID = project.id
         if let index = projects.firstIndex(where: { $0.id == project.id }) {
             projects[index].lastOpenedAt = Date()
@@ -99,11 +108,13 @@ final class AppState: ObservableObject {
             try? ProjectStore.saveProjects(projects)
         }
         refreshProjectContext()
+        return true
     }
 
     func refreshProjectContext() {
         rootNodes = []
         childCache = [:]
+        expandedFileTreePaths = selectedProject.map { ProjectStore.loadExpandedFileTreePaths(for: $0.path) } ?? []
         selectedHistoryProjectPath = nil
         selectedCLIHistoryID = nil
         selectedMode = .newSession
@@ -130,8 +141,12 @@ final class AppState: ObservableObject {
 
     private func openInitialTextFile() {
         guard openTabs.isEmpty, let project = selectedProject else { return }
-        // Silently skip if project access fails (e.g. stale bookmark after packaging)
-        guard let _ = try? withProjectAccess(project, operation: { $0 }) else { return }
+        do {
+            _ = try withProjectAccess(project, operation: { $0 })
+        } catch {
+            show(error)
+            return
+        }
         let preferredNames = ["README.md", "README", "readme.md"]
         if let preferred = rootNodes.first(where: { !$0.isDirectory && preferredNames.contains($0.name) }) {
             openFile(preferred)
@@ -155,6 +170,31 @@ final class AppState: ObservableObject {
         }
     }
 
+    func isFileTreeNodeExpanded(_ node: FileNode) -> Bool {
+        expandedFileTreePaths.contains(normalizedFileTreePath(node.url.path))
+    }
+
+    func toggleFileTreeNode(_ node: FileNode) {
+        guard node.isDirectory, let project = selectedProject else { return }
+        let path = normalizedFileTreePath(node.url.path)
+        if expandedFileTreePaths.contains(path) {
+            expandedFileTreePaths.remove(path)
+        } else {
+            expandedFileTreePaths.insert(path)
+            loadChildren(for: node)
+        }
+        try? ProjectStore.saveExpandedFileTreePaths(expandedFileTreePaths, for: project.path)
+    }
+
+    func restoreExpandedFileTreeNode(_ node: FileNode) {
+        guard node.isDirectory, isFileTreeNodeExpanded(node) else { return }
+        loadChildren(for: node)
+    }
+
+    private func normalizedFileTreePath(_ path: String) -> String {
+        (path as NSString).standardizingPath
+    }
+
     func openFile(_ node: FileNode) {
         guard !node.isDirectory, let project = selectedProject else { return }
         if let existing = openTabs.first(where: { $0.url == node.url }) {
@@ -168,7 +208,7 @@ final class AppState: ObservableObject {
                 let modifiedAt = (try? node.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
                 return (text, modifiedAt)
             }
-            appendEditorTab(url: node.url, projectId: project.id, text: text, modifiedAt: modifiedAt)
+            appendEditorTab(url: node.url, projectId: project.id, text: text, modifiedAt: modifiedAt, isExternal: false)
         } catch {
             show(error)
         }
@@ -198,21 +238,23 @@ final class AppState: ObservableObject {
             do {
                 let text = try readTextFile(url)
                 let modifiedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
-                appendEditorTab(url: url, projectId: projectId, text: text, modifiedAt: modifiedAt)
+                appendEditorTab(url: url, projectId: projectId, text: text, modifiedAt: modifiedAt, isExternal: true)
             } catch {
                 show(error)
             }
         }
     }
 
-    private func appendEditorTab(url: URL, projectId: UUID, text: String, modifiedAt: Date) {
+    private func appendEditorTab(url: URL, projectId: UUID, text: String, modifiedAt: Date, isExternal: Bool) {
         let tab = EditorTab(
             id: UUID(),
             projectId: projectId,
             url: url,
             title: url.lastPathComponent,
             text: text,
+            savedText: text,
             isDirty: false,
+            isExternal: isExternal,
             openedAt: Date(),
             lastActiveAt: Date(),
             modifiedAt: modifiedAt
@@ -230,6 +272,7 @@ final class AppState: ObservableObject {
 
     func closeTab(_ tab: EditorTab) {
         guard let index = openTabs.firstIndex(where: { $0.id == tab.id }) else { return }
+        guard confirmDiscardUnsavedTabsIfNeeded([tab]) else { return }
         openTabs.remove(at: index)
         if selectedTabID == tab.id {
             selectedTabID = openTabs.indices.contains(index) ? openTabs[index].id : openTabs.last?.id
@@ -239,8 +282,7 @@ final class AppState: ObservableObject {
     func updateText(tabID: UUID, text: String) {
         guard let index = openTabs.firstIndex(where: { $0.id == tabID }) else { return }
         openTabs[index].text = text
-        openTabs[index].isDirty = true
-        openTabs[index].modifiedAt = Date()
+        openTabs[index].isDirty = text != openTabs[index].savedText
     }
 
     func saveSelectedTab() {
@@ -248,17 +290,36 @@ final class AppState: ObservableObject {
         saveTab(id: id)
     }
 
-    func saveTab(id: UUID) {
-        guard let index = openTabs.firstIndex(where: { $0.id == id }), let project = selectedProject else { return }
+    @discardableResult
+    func saveTab(id: UUID) -> Bool {
+        guard let index = openTabs.firstIndex(where: { $0.id == id }) else { return false }
+        return saveTab(at: index)
+    }
+
+    @discardableResult
+    private func saveTab(at index: Int) -> Bool {
         do {
             let tab = openTabs[index]
-            try withProjectAccess(project) { _ in
+            if tab.isExternal {
+                let didStart = tab.url.startAccessingSecurityScopedResource()
+                defer {
+                    if didStart { tab.url.stopAccessingSecurityScopedResource() }
+                }
                 try tab.text.write(to: tab.url, atomically: true, encoding: .utf8)
+            } else if let project = selectedProject {
+                try withProjectAccess(project) { _ in
+                    try tab.text.write(to: tab.url, atomically: true, encoding: .utf8)
+                }
+            } else {
+                throw AppStateError.missingProjectForSave
             }
+            openTabs[index].savedText = tab.text
             openTabs[index].isDirty = false
             openTabs[index].modifiedAt = (try? tab.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
+            return true
         } catch {
             show(error)
+            return false
         }
     }
 
@@ -279,7 +340,7 @@ final class AppState: ObservableObject {
 
     func startNewChat(for project: ProjectItem? = nil) {
         if let project, selectedProjectID != project.id {
-            selectProject(project)
+            guard selectProject(project) else { return }
         }
         selectedHistoryProjectPath = nil
         selectedCLIHistoryID = nil
@@ -423,19 +484,39 @@ final class AppState: ObservableObject {
         settings = AppSettings(
             defaultTerminal: defaultTerminal,
             defaultCLI: defaultCLI,
+            chatCLI: settings.chatCLI,
+            chatPermissionMode: settings.chatPermissionMode,
+            selectedClaudeModelID: settings.selectedClaudeModelID,
+            selectedCodexModelID: settings.selectedCodexModelID,
             showCommandPreview: showCommandPreview,
             ignoredFolders: ignoredFolders,
             enableClaudeHistoryScan: enableClaudeHistoryScan,
             apiBaseURL: settings.apiBaseURL,
             apiKey: settings.apiKey
         )
-        selectedCLI = defaultCLI
         selectedTerminal = defaultTerminal
         scanner = FileTreeScanner(ignoredNames: Set(ignoredFolders))
         do {
             try ProjectStore.saveSettings(settings)
             refreshFileTree()
             refreshCLIHistory()
+        } catch {
+            show(error)
+        }
+    }
+
+    func saveChatSelection(cli: CLIType, permissionMode: ChatPermissionMode, modelID: String) {
+        let cli = cli.visibleValue
+        settings.chatCLI = cli
+        settings.chatPermissionMode = permissionMode
+        if cli == .codex {
+            settings.selectedCodexModelID = modelID
+        } else {
+            settings.selectedClaudeModelID = modelID
+        }
+        selectedCLI = cli
+        do {
+            try ProjectStore.saveSettings(settings)
         } catch {
             show(error)
         }
@@ -474,6 +555,35 @@ final class AppState: ObservableObject {
         return try operation(url)
     }
 
+    private func confirmDiscardUnsavedChangesIfNeeded() -> Bool {
+        confirmDiscardUnsavedTabsIfNeeded(openTabs)
+    }
+
+    private func confirmDiscardUnsavedTabsIfNeeded(_ tabs: [EditorTab]) -> Bool {
+        let dirtyTabs = tabs.filter(\.isDirty)
+        guard !dirtyTabs.isEmpty else { return true }
+
+        let alert = NSAlert()
+        alert.messageText = dirtyTabs.count == 1 ? "保存对“\(dirtyTabs[0].title)”的修改？" : "保存 \(dirtyTabs.count) 个已修改文件？"
+        alert.informativeText = "不保存会丢失当前编辑内容。"
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "放弃")
+        alert.addButton(withTitle: "取消")
+        alert.alertStyle = .warning
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return dirtyTabs.allSatisfy { tab in
+                guard let index = openTabs.firstIndex(where: { $0.id == tab.id }) else { return true }
+                return saveTab(at: index)
+            }
+        case .alertSecondButtonReturn:
+            return true
+        default:
+            return false
+        }
+    }
+
     private func show(_ error: Error) {
         if let localized = error as? LocalizedError, let description = localized.errorDescription {
             errorMessage = description
@@ -487,12 +597,14 @@ private enum AppStateError: LocalizedError {
     case fileTooLarge
     case binaryFile
     case unsupportedEncoding
+    case missingProjectForSave
 
     var errorDescription: String? {
         switch self {
         case .fileTooLarge: "文件过大，暂不支持打开超过 5 MB 的文件。"
         case .binaryFile: "这是二进制文件，暂不支持在编辑器中打开。"
         case .unsupportedEncoding: "文件编码不是 UTF-8，暂不支持打开。"
+        case .missingProjectForSave: "当前文件不在已授权项目中，无法保存。"
         }
     }
 }

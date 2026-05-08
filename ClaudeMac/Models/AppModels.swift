@@ -98,7 +98,9 @@ struct EditorTab: Identifiable, Equatable {
     var url: URL
     var title: String
     var text: String
+    var savedText: String
     var isDirty: Bool
+    var isExternal: Bool
     var openedAt: Date
     var lastActiveAt: Date
     var modifiedAt: Date
@@ -148,6 +150,10 @@ struct CLIHistorySession: Identifiable, Equatable {
 struct AppSettings: Codable, Equatable {
     var defaultTerminal: TerminalType
     var defaultCLI: CLIType
+    var chatCLI: CLIType
+    var chatPermissionMode: ChatPermissionMode
+    var selectedClaudeModelID: String
+    var selectedCodexModelID: String
     var showCommandPreview: Bool
     var ignoredFolders: [String]
     var enableClaudeHistoryScan: Bool
@@ -157,10 +163,96 @@ struct AppSettings: Codable, Equatable {
     static let `default` = AppSettings(
         defaultTerminal: .terminal,
         defaultCLI: .claude,
+        chatCLI: .claude,
+        chatPermissionMode: .ask,
+        selectedClaudeModelID: ChatModelCatalog.defaultClaudeModelID,
+        selectedCodexModelID: ChatModelCatalog.defaultCodexModelID,
         showCommandPreview: true,
         ignoredFolders: FileTreeScanner.defaultIgnoredNames.sorted(),
         enableClaudeHistoryScan: true,
         apiBaseURL: "",
         apiKey: ""
+    )
+
+    init(
+        defaultTerminal: TerminalType,
+        defaultCLI: CLIType,
+        chatCLI: CLIType,
+        chatPermissionMode: ChatPermissionMode,
+        selectedClaudeModelID: String,
+        selectedCodexModelID: String,
+        showCommandPreview: Bool,
+        ignoredFolders: [String],
+        enableClaudeHistoryScan: Bool,
+        apiBaseURL: String,
+        apiKey: String
+    ) {
+        self.defaultTerminal = defaultTerminal
+        self.defaultCLI = defaultCLI
+        self.chatCLI = chatCLI.visibleValue
+        self.chatPermissionMode = chatPermissionMode
+        self.selectedClaudeModelID = selectedClaudeModelID
+        self.selectedCodexModelID = selectedCodexModelID
+        self.showCommandPreview = showCommandPreview
+        self.ignoredFolders = ignoredFolders
+        self.enableClaudeHistoryScan = enableClaudeHistoryScan
+        self.apiBaseURL = apiBaseURL
+        self.apiKey = apiKey
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        defaultTerminal = try values.decodeIfPresent(TerminalType.self, forKey: .defaultTerminal) ?? .terminal
+        defaultCLI = try values.decodeIfPresent(CLIType.self, forKey: .defaultCLI) ?? .claude
+        chatCLI = (try values.decodeIfPresent(CLIType.self, forKey: .chatCLI) ?? defaultCLI).visibleValue
+        chatPermissionMode = try values.decodeIfPresent(ChatPermissionMode.self, forKey: .chatPermissionMode) ?? .ask
+        selectedClaudeModelID = try values.decodeIfPresent(String.self, forKey: .selectedClaudeModelID) ?? ChatModelCatalog.defaultClaudeModelID
+        selectedCodexModelID = try values.decodeIfPresent(String.self, forKey: .selectedCodexModelID) ?? ChatModelCatalog.defaultCodexModelID
+        showCommandPreview = try values.decodeIfPresent(Bool.self, forKey: .showCommandPreview) ?? true
+        ignoredFolders = try values.decodeIfPresent([String].self, forKey: .ignoredFolders) ?? FileTreeScanner.defaultIgnoredNames.sorted()
+        enableClaudeHistoryScan = try values.decodeIfPresent(Bool.self, forKey: .enableClaudeHistoryScan) ?? true
+        apiBaseURL = try values.decodeIfPresent(String.self, forKey: .apiBaseURL) ?? ""
+        apiKey = try values.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+    }
+}
+
+struct ClaudeRelayProfile: Identifiable, Codable, Equatable {
+    var id: UUID
+    var name: String
+    var baseURL: String
+    var authToken: String
+    var model: String
+    var haikuModel: String
+    var sonnetModel: String
+    var opusModel: String
+    var httpProxy: String
+    var httpsProxy: String
+    var createdAt: Date
+    var updatedAt: Date
+}
+
+struct CodexConfigProfile: Identifiable, Codable, Equatable {
+    var id: UUID
+    var name: String
+    var authMode: String
+    var model: String
+    var baseURL: String
+    var apiKey: String
+    var wireApi: String
+    var createdAt: Date
+    var updatedAt: Date
+}
+
+struct ConfigProfileCollection: Codable, Equatable {
+    var activeClaudeRelayProfileID: UUID?
+    var activeCodexProfileID: UUID?
+    var claudeRelayProfiles: [ClaudeRelayProfile]
+    var codexProfiles: [CodexConfigProfile]
+
+    static let empty = ConfigProfileCollection(
+        activeClaudeRelayProfileID: nil,
+        activeCodexProfileID: nil,
+        claudeRelayProfiles: [],
+        codexProfiles: []
     )
 }

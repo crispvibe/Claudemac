@@ -2,20 +2,19 @@ import AppKit
 
 final class LineNumberRulerView: NSRulerView {
     weak var textView: NSTextView?
-    override var isOpaque: Bool { false }
+    override var isOpaque: Bool { true }
 
-    private let backgroundColor = NSColor(calibratedWhite: 0.97, alpha: 0.82)
-    private let dividerColor = NSColor.white.withAlphaComponent(0.92)
+    private let backgroundColor = NSColor.white
     private let attributes: [NSAttributedString.Key: Any] = [
-        .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .light),
-        .foregroundColor: NSColor(calibratedRed: 0.46, green: 0.50, blue: 0.56, alpha: 1)
+        .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+        .foregroundColor: NSColor(calibratedRed: 0.52, green: 0.57, blue: 0.66, alpha: 0.82)
     ]
 
     init(textView: NSTextView) {
         self.textView = textView
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
         clientView = textView
-        ruleThickness = 42
+        ruleThickness = 68
     }
 
     required init(coder: NSCoder) {
@@ -25,8 +24,6 @@ final class LineNumberRulerView: NSRulerView {
     override func draw(_ dirtyRect: NSRect) {
         backgroundColor.setFill()
         bounds.fill()
-        dividerColor.setStroke()
-        NSBezierPath.strokeLine(from: NSPoint(x: bounds.maxX - 0.5, y: bounds.minY), to: NSPoint(x: bounds.maxX - 0.5, y: bounds.maxY))
         drawHashMarksAndLabels(in: dirtyRect)
     }
 
@@ -52,7 +49,7 @@ final class LineNumberRulerView: NSRulerView {
             let y = rect.minY + textView.textContainerInset.height - visibleRect.minY + 2
             let label = "\(lineNumber)" as NSString
             let size = label.size(withAttributes: attributes)
-            label.draw(at: NSPoint(x: ruleThickness - size.width - 8, y: y), withAttributes: attributes)
+            label.draw(at: NSPoint(x: ruleThickness - size.width - 18, y: y), withAttributes: attributes)
             glyphIndex = NSMaxRange(glyphLineRange)
             lineNumber += 1
         }

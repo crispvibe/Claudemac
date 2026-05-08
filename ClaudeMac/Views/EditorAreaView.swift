@@ -15,7 +15,7 @@ struct EditorAreaView: View {
                         appState.cursorColumn = column
                     }
                 )
-                .background(AppTheme.editorSurface)
+                .background(Color.white)
             } else {
                 emptyEditor
             }
@@ -23,10 +23,10 @@ struct EditorAreaView: View {
             Divider().opacity(0.24)
             statusBar
         }
-        .background(AppTheme.editorSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color.white)
+        .clipShape(EditorSurfaceShape(radius: 18))
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            EditorSurfaceBorderShape(radius: 18)
                 .stroke(AppTheme.hairline, lineWidth: 1)
         )
     }
@@ -43,7 +43,7 @@ struct EditorAreaView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppTheme.editorSurface)
+        .background(Color.white)
     }
 
     private var statusBar: some View {
@@ -65,7 +65,7 @@ struct EditorAreaView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 10)
         .frame(height: 24)
-        .background(AppTheme.editorSurface)
+        .background(Color.white)
     }
 
     private func lineCount(for text: String) -> Int {
@@ -82,5 +82,54 @@ struct EditorAreaView: View {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.unitsStyle = .full
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+private struct EditorSurfaceBorderShape: Shape {
+    var radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let radius = min(radius, rect.width / 2, rect.height / 2)
+        var path = Path()
+        path.move(to: CGPoint(x: rect.maxX, y: rect.minY + radius))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        return path
+    }
+}
+
+private struct EditorSurfaceShape: Shape {
+    var radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let radius = min(radius, rect.width / 2, rect.height / 2)
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY + radius),
+            control: CGPoint(x: rect.maxX, y: rect.minY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.closeSubpath()
+        return path
     }
 }

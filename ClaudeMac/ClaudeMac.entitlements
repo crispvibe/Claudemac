@@ -13,26 +13,21 @@
 	<key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
 	<array>
 		<string>.claude/</string>
+		<string>.claude.json</string>
 		<string>.codex/</string>
 	</array>
 	<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
 	<array>
 		<string>.claude/</string>
+		<string>.claude.json</string>
 		<string>.codex/</string>
 		<string>.cc-switch/</string>
 		<string>.local/</string>
-	</array>
-	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
-	<array>
-		<string>/Users/wuwei/.claude/</string>
-		<string>/Users/wuwei/.codex/</string>
 	</array>
 	<key>com.apple.security.temporary-exception.files.absolute-path.read-only</key>
 	<array>
 		<string>/opt/homebrew/</string>
 		<string>/usr/local/</string>
-		<string>/Users/wuwei/.cc-switch/</string>
-		<string>/Users/wuwei/.local/</string>
 	</array>
 	<key>com.apple.security.automation.apple-events</key>
 	<true/>

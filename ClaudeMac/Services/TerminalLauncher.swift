@@ -102,7 +102,7 @@ struct TerminalLauncher {
 
     private static func friendlyAppleScriptMessage(_ message: String, number: Int?, appName: String) -> String {
         if number == -1743 || message.localizedCaseInsensitiveContains("not authorized") || message.localizedCaseInsensitiveContains("not permitted") {
-            return "请在系统设置 > 隐私与安全性 > 自动化中允许 ClaudeMac 控制 \(appName)。"
+            return "请在系统设置 > 隐私与安全性 > 自动化中允许 Acode 控制 \(appName)。"
         }
         return message
     }
