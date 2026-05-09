@@ -1,45 +1,5 @@
 import Foundation
 
-struct QueuedChatRequest: Identifiable, Equatable {
-    let id: UUID
-    let text: String
-    let project: ProjectItem
-    let cli: CLIType
-    let modelID: String
-    let contextModelID: String?
-    let permissionMode: ChatPermissionMode
-    let reasoningEffort: ChatReasoningEffort
-    let sessionMode: SessionMode
-    let resumeSessionID: String?
-    let createdAt: Date
-
-    init(
-        id: UUID = UUID(),
-        text: String,
-        project: ProjectItem,
-        cli: CLIType,
-        modelID: String,
-        contextModelID: String?,
-        permissionMode: ChatPermissionMode,
-        reasoningEffort: ChatReasoningEffort,
-        sessionMode: SessionMode,
-        resumeSessionID: String?,
-        createdAt: Date = Date()
-    ) {
-        self.id = id
-        self.text = text
-        self.project = project
-        self.cli = cli
-        self.modelID = modelID
-        self.contextModelID = contextModelID
-        self.permissionMode = permissionMode
-        self.reasoningEffort = reasoningEffort
-        self.sessionMode = sessionMode
-        self.resumeSessionID = resumeSessionID
-        self.createdAt = createdAt
-    }
-}
-
 @MainActor
 final class ChatPanelState: ObservableObject {
     @Published var messages: [ChatMessage] = []
@@ -76,6 +36,26 @@ final class ChatPanelState: ObservableObject {
     private var currentSession: ChatSessionRecord?
     private var currentTask: Task<Void, Never>?
     private var activeBackend: ChatProcessBackend?
+    private var activeRunRequest: QueuedChatRequest?
+    private var activeRunStartedAt: Date?
+    var onActivityChanged: ((ChatSessionActivity?) -> Void)?
+    var onSessionPersisted: (() -> Void)?
+
+    var currentSessionID: UUID? { currentSession?.id }
+    var currentSessionSnapshot: ChatSessionRecord? { currentSession }
+
+    var activity: ChatSessionActivity? {
+        if let currentSession {
+            return ChatSessionActivity(
+                status: status,
+                statusText: statusText,
+                queuedCount: queuedRequests.count,
+                lastCompletedAt: currentSession.lastCompletedAt,
+                activeRunStartedAt: activeRunStartedAt
+            )
+        }
+        return nil
+    }
     private struct StreamingMessageKey: Hashable {
         let kind: ChatMessageKind
         let requestID: String?
@@ -119,7 +99,6 @@ final class ChatPanelState: ObservableObject {
         permissionMode: ChatPermissionMode,
         reasoningEffort: ChatReasoningEffort
     ) {
-        interruptIfNeededForLoad()
         activeAssistantMessageID = nil
         activeStreamingMessageIDs.removeAll()
         activeParentUserMessageID = nil
@@ -132,7 +111,8 @@ final class ChatPanelState: ObservableObject {
         stopFallbackTask = nil
         isUserStopping = false
         shouldStartQueuedRequestAfterBackendEnds = false
-        queuedRequests.removeAll()
+        activeRunRequest = nil
+        activeRunStartedAt = nil
         setAwaitingFirstModelOutput(false)
         bumpTranscriptRevision()
 
@@ -140,8 +120,10 @@ final class ChatPanelState: ObservableObject {
               let history = appState.cliHistory.first(where: { $0.id == historyID }) else {
             currentSession = nil
             messages = []
+            queuedRequests = []
             status = .idle
             statusText = "新会话"
+            publishActivity()
             return
         }
 
@@ -149,8 +131,10 @@ final class ChatPanelState: ObservableObject {
             let sessions = ChatSessionStore.loadSessions()
             currentSession = sessions.first { $0.id == uuid }
             messages = ChatSessionStore.loadMessages(sessionID: uuid)
-            status = .idle
-            statusText = "已加载本地会话"
+            queuedRequests = currentSession?.queuedRequests ?? []
+            status = currentSession?.runStatus ?? .idle
+            statusText = currentSession?.statusText ?? "已加载本地会话"
+            publishActivity()
             return
         }
 
@@ -177,8 +161,10 @@ final class ChatPanelState: ObservableObject {
                 status: "resume"
             )
         ]
+        queuedRequests = []
         status = .idle
         statusText = "历史会话"
+        publishActivity()
     }
 
     @discardableResult
@@ -215,6 +201,8 @@ final class ChatPanelState: ObservableObject {
             queuedRequests.append(request)
             statusText = "已加入队列"
             bumpTranscriptRevision()
+            persistCurrentSession()
+            publishActivity()
             return true
         }
         return startRun(request)
@@ -223,6 +211,8 @@ final class ChatPanelState: ObservableObject {
     func cancelQueuedRequest(_ id: UUID) {
         queuedRequests.removeAll { $0.id == id }
         bumpTranscriptRevision()
+        persistCurrentSession()
+        publishActivity()
     }
 
     @discardableResult
@@ -266,11 +256,25 @@ final class ChatPanelState: ObservableObject {
         session.permissionMode = request.permissionMode
         session.reasoningEffort = request.reasoningEffort
         session.updatedAt = Date()
+        let staleExternalSessionID = staleResumeSessionID(session.externalSessionID, cli: visibleCLI, projectPath: request.project.path)
+        if staleExternalSessionID != nil {
+            session.externalSessionID = nil
+        }
         currentSession = session
 
         tokensTotal = Self.defaultContextWindow(for: effectiveContextModelID)
         didAutoCompact = false
 
+        if let staleExternalSessionID {
+            messages.append(ChatMessage(
+                sessionID: session.id,
+                kind: .system,
+                title: "Claude 历史会话",
+                subtitle: staleExternalSessionID,
+                text: "原外部历史会话已不存在，已改为新会话继续。",
+                status: "stale"
+            ))
+        }
         let userMessage = ChatMessage(sessionID: session.id, kind: .user, text: request.text, status: "user")
         activeParentUserMessageID = userMessage.id
         activeAssistantMessageID = nil
@@ -278,7 +282,6 @@ final class ChatPanelState: ObservableObject {
         messages.append(userMessage)
         setAwaitingFirstModelOutput(true)
         bumpTranscriptRevision()
-        persistCurrentSession()
 
         let options = ChatRunOptions(
             cli: visibleCLI,
@@ -288,7 +291,7 @@ final class ChatPanelState: ObservableObject {
             permissionMode: request.permissionMode,
             reasoningEffort: request.reasoningEffort,
             sessionMode: request.sessionMode,
-            resumeSessionID: effectiveResumeSessionID(request.resumeSessionID, for: session)
+            resumeSessionID: effectiveResumeSessionID(request.resumeSessionID, for: session, cli: visibleCLI, projectPath: request.project.path)
         )
         let backend: ChatProcessBackend = visibleCLI == .codex ? CodexAppServerBackend() : ClaudeCodeProcessBackend()
         activeBackend = backend
@@ -296,8 +299,12 @@ final class ChatPanelState: ObservableObject {
         stopFallbackTask = nil
         isUserStopping = false
         shouldStartQueuedRequestAfterBackendEnds = false
+        activeRunRequest = request
+        activeRunStartedAt = Date()
         status = .starting
         statusText = "启动 \(visibleCLI.displayName)"
+        persistCurrentSession()
+        publishActivity()
 
         currentTask = Task { [weak self] in
             guard let self else { return }
@@ -311,6 +318,8 @@ final class ChatPanelState: ObservableObject {
                     self.appendError(error.localizedDescription)
                     self.status = .failed
                     self.statusText = "项目权限失效"
+                    self.activeRunRequest = nil
+                    self.activeRunStartedAt = nil
                     self.setAwaitingFirstModelOutput(false)
                     self.persistCurrentSession()
                 }
@@ -336,6 +345,8 @@ final class ChatPanelState: ObservableObject {
                     self.appendError(error.localizedDescription)
                     self.status = .failed
                     self.statusText = "失败"
+                    self.activeRunRequest = nil
+                    self.activeRunStartedAt = nil
                     self.flushPendingDeltas()
                     self.finishStreamingMessages(status: "failed")
                     self.setAwaitingFirstModelOutput(false)
@@ -420,9 +431,15 @@ final class ChatPanelState: ObservableObject {
         if status.isRunning { interrupt() }
     }
 
-    private func effectiveResumeSessionID(_ resumeSessionID: String?, for session: ChatSessionRecord) -> String? {
+    private func effectiveResumeSessionID(_ resumeSessionID: String?, for session: ChatSessionRecord, cli: CLIType, projectPath: String) -> String? {
         guard let resumeSessionID = resumeSessionID?.nonEmptyTrimmed else { return nil }
-        return resumeSessionID.caseInsensitiveCompare(session.id.uuidString) == .orderedSame ? nil : resumeSessionID
+        if resumeSessionID.caseInsensitiveCompare(session.id.uuidString) == .orderedSame { return nil }
+        return staleResumeSessionID(resumeSessionID, cli: cli, projectPath: projectPath) == nil ? resumeSessionID : nil
+    }
+
+    private func staleResumeSessionID(_ resumeSessionID: String?, cli: CLIType, projectPath: String) -> String? {
+        guard cli == .claude, let resumeSessionID = resumeSessionID?.nonEmptyTrimmed else { return nil }
+        return CLIHistoryScanner.claudeTranscriptExists(sessionID: resumeSessionID, projectPath: projectPath) ? nil : resumeSessionID
     }
 
     private func ensureSession(
@@ -530,6 +547,9 @@ final class ChatPanelState: ObservableObject {
             finishStreamingMessages(status: isUserStopping ? "stopped" : "done")
             setAwaitingFirstModelOutput(false)
             currentSession?.updatedAt = Date()
+            currentSession?.lastCompletedAt = Date()
+            activeRunRequest = nil
+            activeRunStartedAt = nil
             status = .completed
             statusText = isUserStopping ? "已停止" : "完成"
             isUserStopping = false
@@ -540,6 +560,9 @@ final class ChatPanelState: ObservableObject {
                 finishStreamingMessages(status: "stopped")
                 setAwaitingFirstModelOutput(false)
                 currentSession?.updatedAt = Date()
+                currentSession?.lastCompletedAt = Date()
+                activeRunRequest = nil
+                activeRunStartedAt = nil
                 status = .completed
                 statusText = "已停止"
                 isUserStopping = false
@@ -552,6 +575,8 @@ final class ChatPanelState: ObservableObject {
             appendError(message)
             setAwaitingFirstModelOutput(false)
             currentSession?.updatedAt = Date()
+            activeRunRequest = nil
+            activeRunStartedAt = nil
             status = .failed
             statusText = "失败"
             shouldStartQueuedRequestAfterBackendEnds = false
@@ -569,6 +594,9 @@ final class ChatPanelState: ObservableObject {
             finishStreamingMessages(status: isUserStopping ? "stopped" : "done")
             setAwaitingFirstModelOutput(false)
             currentSession?.updatedAt = Date()
+            currentSession?.lastCompletedAt = Date()
+            activeRunRequest = nil
+            activeRunStartedAt = nil
             status = .completed
             statusText = isUserStopping ? "已停止" : "完成"
             isUserStopping = false
@@ -644,7 +672,7 @@ final class ChatPanelState: ObservableObject {
     private func scheduleDeltaFlush() {
         guard deltaFlushTask == nil else { return }
         deltaFlushTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 80_000_000)
+            try? await Task.sleep(nanoseconds: 150_000_000)
             await MainActor.run {
                 self?.flushPendingDeltas()
             }
@@ -698,6 +726,9 @@ final class ChatPanelState: ObservableObject {
         finishStreamingMessages(status: "stopped")
         setAwaitingFirstModelOutput(false)
         currentSession?.updatedAt = Date()
+        currentSession?.lastCompletedAt = Date()
+        activeRunRequest = nil
+        activeRunStartedAt = nil
         status = .completed
         statusText = "已停止"
         isUserStopping = false
@@ -711,6 +742,7 @@ final class ChatPanelState: ObservableObject {
         guard !status.isRunning, !queuedRequests.isEmpty else { return }
         let request = queuedRequests.removeFirst()
         bumpTranscriptRevision()
+        persistCurrentSession()
         _ = startRun(request)
     }
 
@@ -755,13 +787,25 @@ final class ChatPanelState: ObservableObject {
     }
 
     private func persistCurrentSession() {
-        guard let session = currentSession else { return }
+        guard var session = currentSession else { return }
+        session.runStatus = status
+        session.statusText = statusText
+        session.queuedRequests = queuedRequests
+        session.activeRunRequest = activeRunRequest
+        session.activeRunStartedAt = activeRunStartedAt
+        currentSession = session
         do {
             try ChatSessionStore.saveSession(session)
             try ChatSessionStore.saveMessages(messages, sessionID: session.id)
+            onSessionPersisted?()
         } catch {
             statusText = "保存失败"
         }
+        publishActivity()
+    }
+
+    private func publishActivity() {
+        onActivityChanged?(activity)
     }
 
     private func title(from text: String) -> String {

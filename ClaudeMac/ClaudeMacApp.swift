@@ -6,6 +6,7 @@ import SwiftUI
 struct ClaudeMacApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var modelService = ChatModelService()
+    @StateObject private var chatRuntimeStore = ChatRuntimeStore()
 
     init() {
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
@@ -17,6 +18,7 @@ struct ClaudeMacApp: App {
             RootView()
                 .environmentObject(appState)
                 .environmentObject(modelService)
+                .environmentObject(chatRuntimeStore)
                 .background(WindowConfigurator())
                 .onAppear { triggerModelFetch() }
                 .onChange(of: appState.settings.apiBaseURL) { _, _ in triggerModelFetch() }
@@ -51,6 +53,7 @@ struct ClaudeMacApp: App {
             SettingsView()
                 .environmentObject(appState)
                 .environmentObject(modelService)
+                .environmentObject(chatRuntimeStore)
         }
     }
 

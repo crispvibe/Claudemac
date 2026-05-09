@@ -243,6 +243,54 @@ enum ChatRunStatus: String, Codable, Equatable {
     }
 }
 
+struct QueuedChatRequest: Identifiable, Codable, Equatable {
+    let id: UUID
+    let text: String
+    let project: ProjectItem
+    let cli: CLIType
+    let modelID: String
+    let contextModelID: String?
+    let permissionMode: ChatPermissionMode
+    let reasoningEffort: ChatReasoningEffort
+    let sessionMode: SessionMode
+    let resumeSessionID: String?
+    let createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        text: String,
+        project: ProjectItem,
+        cli: CLIType,
+        modelID: String,
+        contextModelID: String?,
+        permissionMode: ChatPermissionMode,
+        reasoningEffort: ChatReasoningEffort,
+        sessionMode: SessionMode,
+        resumeSessionID: String?,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.text = text
+        self.project = project
+        self.cli = cli.visibleValue
+        self.modelID = modelID
+        self.contextModelID = contextModelID
+        self.permissionMode = permissionMode
+        self.reasoningEffort = reasoningEffort
+        self.sessionMode = sessionMode
+        self.resumeSessionID = resumeSessionID
+        self.createdAt = createdAt
+    }
+}
+
+struct ChatSessionActivity: Equatable {
+    var status: ChatRunStatus
+    var statusText: String
+    var queuedCount: Int
+    var lastCompletedAt: Date?
+    var activeRunStartedAt: Date?
+}
+
 struct ChatMessage: Identifiable, Codable, Equatable {
     var id: UUID
     var sessionID: UUID
@@ -308,6 +356,12 @@ struct ChatSessionRecord: Identifiable, Codable, Equatable {
     var externalSessionID: String?
     var createdAt: Date
     var updatedAt: Date
+    var runStatus: ChatRunStatus
+    var statusText: String
+    var queuedRequests: [QueuedChatRequest]
+    var lastCompletedAt: Date?
+    var activeRunStartedAt: Date?
+    var activeRunRequest: QueuedChatRequest?
 
     init(
         id: UUID = UUID(),
@@ -320,7 +374,13 @@ struct ChatSessionRecord: Identifiable, Codable, Equatable {
         reasoningEffort: ChatReasoningEffort = .high,
         externalSessionID: String? = nil,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        runStatus: ChatRunStatus = .idle,
+        statusText: String = "就绪",
+        queuedRequests: [QueuedChatRequest] = [],
+        lastCompletedAt: Date? = nil,
+        activeRunStartedAt: Date? = nil,
+        activeRunRequest: QueuedChatRequest? = nil
     ) {
         self.id = id
         self.cli = cli.visibleValue
@@ -333,6 +393,12 @@ struct ChatSessionRecord: Identifiable, Codable, Equatable {
         self.externalSessionID = externalSessionID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.runStatus = runStatus
+        self.statusText = statusText
+        self.queuedRequests = queuedRequests
+        self.lastCompletedAt = lastCompletedAt
+        self.activeRunStartedAt = activeRunStartedAt
+        self.activeRunRequest = activeRunRequest
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -347,12 +413,18 @@ struct ChatSessionRecord: Identifiable, Codable, Equatable {
         case externalSessionID
         case createdAt
         case updatedAt
+        case runStatus
+        case statusText
+        case queuedRequests
+        case lastCompletedAt
+        case activeRunStartedAt
+        case activeRunRequest
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
-        cli = try container.decode(CLIType.self, forKey: .cli)
+        cli = try container.decode(CLIType.self, forKey: .cli).visibleValue
         projectName = try container.decode(String.self, forKey: .projectName)
         projectPath = try container.decode(String.self, forKey: .projectPath)
         title = try container.decode(String.self, forKey: .title)
@@ -362,6 +434,18 @@ struct ChatSessionRecord: Identifiable, Codable, Equatable {
         externalSessionID = try container.decodeIfPresent(String.self, forKey: .externalSessionID)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        runStatus = try container.decodeIfPresent(ChatRunStatus.self, forKey: .runStatus) ?? .idle
+        statusText = try container.decodeIfPresent(String.self, forKey: .statusText) ?? "就绪"
+        queuedRequests = try container.decodeIfPresent([QueuedChatRequest].self, forKey: .queuedRequests) ?? []
+        lastCompletedAt = try container.decodeIfPresent(Date.self, forKey: .lastCompletedAt)
+        activeRunStartedAt = try container.decodeIfPresent(Date.self, forKey: .activeRunStartedAt)
+        activeRunRequest = try container.decodeIfPresent(QueuedChatRequest.self, forKey: .activeRunRequest)
+        if runStatus.isRunning || activeRunRequest != nil {
+            runStatus = .failed
+            statusText = "上次运行已中断"
+            activeRunStartedAt = nil
+            activeRunRequest = nil
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -377,6 +461,12 @@ struct ChatSessionRecord: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(externalSessionID, forKey: .externalSessionID)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encode(runStatus, forKey: .runStatus)
+        try container.encode(statusText, forKey: .statusText)
+        try container.encode(queuedRequests, forKey: .queuedRequests)
+        try container.encodeIfPresent(lastCompletedAt, forKey: .lastCompletedAt)
+        try container.encodeIfPresent(activeRunStartedAt, forKey: .activeRunStartedAt)
+        try container.encodeIfPresent(activeRunRequest, forKey: .activeRunRequest)
     }
 }
 

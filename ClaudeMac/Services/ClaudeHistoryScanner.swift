@@ -1,6 +1,26 @@
 import Foundation
 
 struct CLIHistoryScanner {
+    static func claudeTranscriptExists(sessionID: String, projectPath: String?) -> Bool {
+        let fileName = "\(sessionID).jsonl"
+        let projectsRoot = claudeProjectsRoot()
+        if let projectPath {
+            let direct = projectsRoot
+                .appendingPathComponent(claudeStorageKey(for: projectPath), isDirectory: true)
+                .appendingPathComponent(fileName)
+            if FileManager.default.fileExists(atPath: direct.path) { return true }
+        }
+        guard let enumerator = FileManager.default.enumerator(
+            at: projectsRoot,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return false }
+        for case let url as URL in enumerator where url.lastPathComponent == fileName {
+            if !url.pathComponents.contains("subagents") { return true }
+        }
+        return false
+    }
+
     func scan(projectPath: String?) -> [CLIHistorySession] {
         let sessions = scanClaude(projectPath: projectPath) + scanCodex(projectPath: projectPath)
         return deduplicated(sessions).sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
@@ -24,8 +44,12 @@ struct CLIHistoryScanner {
             }
         }
 
+        let availableSessionIDs = Set(sessions.map(\.sessionId))
         let historyURL = home.appendingPathComponent(".claude", isDirectory: true).appendingPathComponent("history.jsonl")
-        sessions.append(contentsOf: parseClaudeHistoryJSONL(url: historyURL).filter { matches(session: $0, projectPath: projectPath) })
+        sessions.append(contentsOf: parseClaudeHistoryJSONL(url: historyURL).filter { session in
+            matches(session: session, projectPath: projectPath)
+                && (availableSessionIDs.contains(session.sessionId) || Self.claudeTranscriptExists(sessionID: session.sessionId, projectPath: session.projectPath))
+        })
         return sessions
     }
 
@@ -305,7 +329,17 @@ struct CLIHistoryScanner {
     }
 
     private func storageKey(for projectPath: String) -> String {
-        "-" + normalizedPath(projectPath).trimmingCharacters(in: CharacterSet(charactersIn: "/")).replacingOccurrences(of: "/", with: "-")
+        Self.claudeStorageKey(for: normalizedPath(projectPath))
+    }
+
+    private static func claudeProjectsRoot() -> URL {
+        URL(fileURLWithPath: ChatCLIEnvironment.realHomeDirectory, isDirectory: true)
+            .appendingPathComponent(".claude", isDirectory: true)
+            .appendingPathComponent("projects", isDirectory: true)
+    }
+
+    private static func claudeStorageKey(for projectPath: String) -> String {
+        "-" + (projectPath as NSString).standardizingPath.trimmingCharacters(in: CharacterSet(charactersIn: "/")).replacingOccurrences(of: "/", with: "-")
     }
 
     private func projectPath(fromStorageKey storageKey: String) -> String? {

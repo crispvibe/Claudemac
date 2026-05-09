@@ -38,6 +38,8 @@
 		B00000000000000000000029 /* ChatCLICapabilityProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000032 /* ChatCLICapabilityProbe.swift */; };
 		B00000000000000000000030 /* SettingsPageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000033 /* SettingsPageView.swift */; };
 		B00000000000000000000031 /* ChatModelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000034 /* ChatModelService.swift */; };
+		B00000000000000000000032 /* ChatRuntimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000035 /* ChatRuntimeStore.swift */; };
+		B00000000000000000000033 /* SubagentTranscriptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000036 /* SubagentTranscriptStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -75,6 +77,8 @@
 		F00000000000000000000032 /* ChatCLICapabilityProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatCLICapabilityProbe.swift; sourceTree = "<group>"; };
 		F00000000000000000000033 /* SettingsPageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPageView.swift; sourceTree = "<group>"; };
 		F00000000000000000000034 /* ChatModelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModelService.swift; sourceTree = "<group>"; };
+		F00000000000000000000035 /* ChatRuntimeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatRuntimeStore.swift; sourceTree = "<group>"; };
+		F00000000000000000000036 /* SubagentTranscriptStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubagentTranscriptStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -188,6 +192,8 @@
 				F00000000000000000000031 /* ChatSessionStore.swift */,
 				F00000000000000000000032 /* ChatCLICapabilityProbe.swift */,
 				F00000000000000000000034 /* ChatModelService.swift */,
+				F00000000000000000000035 /* ChatRuntimeStore.swift */,
+				F00000000000000000000036 /* SubagentTranscriptStore.swift */,
 			);
 			path = Chat;
 			sourceTree = "<group>";
@@ -291,6 +297,8 @@
 				B00000000000000000000029 /* ChatCLICapabilityProbe.swift in Sources */,
 				B00000000000000000000030 /* SettingsPageView.swift in Sources */,
 				B00000000000000000000031 /* ChatModelService.swift in Sources */,
+				B00000000000000000000032 /* ChatRuntimeStore.swift in Sources */,
+				B00000000000000000000033 /* SubagentTranscriptStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

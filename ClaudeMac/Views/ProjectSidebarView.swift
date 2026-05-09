@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ProjectSidebarView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var chatRuntimeStore: ChatRuntimeStore
     @State private var projectToRemove: ProjectItem?
     @State private var historyToRemove: CLIHistorySession?
 
@@ -31,6 +32,7 @@ struct ProjectSidebarView: View {
                     .padding(.vertical, 10)
             }
         }
+        .onAppear { chatRuntimeStore.refreshPersistedActivities() }
         .alert("移除项目？", isPresented: Binding(
             get: { projectToRemove != nil },
             set: { if !$0 { projectToRemove = nil } }
@@ -54,6 +56,7 @@ struct ProjectSidebarView: View {
                 let session = historyToRemove
                 historyToRemove = nil
                 if let session {
+                    chatRuntimeStore.removeRuntime(for: session)
                     appState.deleteCLIHistory(session)
                 }
             }
@@ -99,6 +102,7 @@ struct ProjectSidebarView: View {
                                 sessions: sessions(for: project),
                                 selectedSessionID: appState.selectedCLIHistoryID,
                                 isSelected: project.id == appState.selectedProjectID,
+                                activityForSession: { chatRuntimeStore.activity(for: $0) },
                                 onSelect: { appState.selectProject(project) },
                                 onRemove: { projectToRemove = project },
                                 onSelectSession: { appState.selectCLIHistory($0) },
@@ -194,6 +198,7 @@ private struct ProjectRow: View {
     let sessions: [CLIHistorySession]
     let selectedSessionID: String?
     let isSelected: Bool
+    let activityForSession: (CLIHistorySession) -> ChatSessionActivity?
     let onSelect: () -> Void
     let onRemove: () -> Void
     let onSelectSession: (CLIHistorySession) -> Void
@@ -234,6 +239,7 @@ private struct ProjectRow: View {
                     ForEach(sessions) { session in
                         HistorySessionRow(
                             session: session,
+                            activity: activityForSession(session),
                             isSelected: selectedSessionID == session.id,
                             onSelect: { onSelectSession(session) },
                             onRemove: { onRemoveSession(session) }
@@ -261,6 +267,7 @@ private struct ProjectRow: View {
 
 private struct HistorySessionRow: View {
     let session: CLIHistorySession
+    let activity: ChatSessionActivity?
     let isSelected: Bool
     let onSelect: () -> Void
     let onRemove: () -> Void
@@ -286,6 +293,8 @@ private struct HistorySessionRow: View {
             }
             .buttonStyle(.plain)
 
+            statusIndicator
+
             Button(action: onRemove) {
                 Image(systemName: "trash")
                     .font(.system(size: 9, weight: .medium))
@@ -299,5 +308,36 @@ private struct HistorySessionRow: View {
         .padding(.trailing, 6)
         .background(isSelected ? AppTheme.selectedSurface.opacity(0.78) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var statusIndicator: some View {
+        if let activity, activity.status.isRunning {
+            ProgressView()
+                .controlSize(.mini)
+                .scaleEffect(0.55)
+                .frame(width: 16, height: 16)
+                .help(activity.statusText)
+        } else if activity?.status == .completed {
+            Circle()
+                .fill(Color.green)
+                .frame(width: 6, height: 6)
+                .frame(width: 16, height: 16)
+                .help("完成")
+        } else if activity?.status == .failed {
+            Circle()
+                .fill(Color.orange)
+                .frame(width: 6, height: 6)
+                .frame(width: 16, height: 16)
+                .help(activity?.statusText ?? "失败")
+        } else if let activity, activity.queuedCount > 0 {
+            Text("\(activity.queuedCount)")
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
+                .help("队列中 \(activity.queuedCount) 条")
+        } else {
+            Color.clear.frame(width: 16, height: 16)
+        }
     }
 }

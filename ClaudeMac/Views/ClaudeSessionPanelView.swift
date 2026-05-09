@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 struct ChatPanelView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var modelService: ChatModelService
-    @StateObject private var chatState = ChatPanelState()
+    @EnvironmentObject private var chatRuntimeStore: ChatRuntimeStore
     @State private var draftMessage = ""
     @State private var editingMessageID: UUID?
     @State private var selectedModelID = ChatModelCatalog.defaultClaudeModelID
@@ -22,7 +22,19 @@ struct ChatPanelView: View {
     @State private var suggestedCommand: ComposerSuggestedCommand?
     @State private var lastSuggestedAssistantMessageID: UUID?
     @State private var lastTranscriptScrollAt = Date.distantPast
+    @State private var shouldFollowTranscriptBottom = true
+    @State private var composerTextHeight: CGFloat = 42
+    @State private var selectedSubagentDetail: SubagentDetailRequest?
     private let transcriptBottomID = "chat-transcript-bottom"
+
+    private var chatState: ChatPanelState {
+        chatRuntimeStore.state(
+            for: appState,
+            modelID: selectedModelID,
+            permissionMode: permissionMode,
+            reasoningEffort: reasoningEffort
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -59,15 +71,14 @@ struct ChatPanelView: View {
             applyPersistedChatSelection()
             resetReasoningEffortToConfiguredDefault()
             syncSelectedContextWindow()
-            chatState.loadFromAppState(appState, modelID: selectedModelID, permissionMode: permissionMode, reasoningEffort: reasoningEffort)
         }
         .onChange(of: appState.chatConversationSerial) { _, _ in
             applyPersistedChatSelection()
             normalizeReasoningEffort()
             syncSelectedContextWindow()
             clearSuggestedCommand()
+            shouldFollowTranscriptBottom = true
             lastSuggestedAssistantMessageID = nil
-            chatState.loadFromAppState(appState, modelID: selectedModelID, permissionMode: permissionMode, reasoningEffort: reasoningEffort)
         }
         .onChange(of: appState.selectedCLI) { _, _ in
             selectedModelID = persistedModelID(for: appState.selectedCLI)
@@ -75,6 +86,7 @@ struct ChatPanelView: View {
             resetReasoningEffortToConfiguredDefault()
             syncSelectedContextWindow()
             persistChatSelection()
+            shouldFollowTranscriptBottom = true
             activePicker = nil
         }
         .onChange(of: selectedModelID) { _, _ in
@@ -83,6 +95,9 @@ struct ChatPanelView: View {
         }
         .onChange(of: chatState.transcriptRevision) { _, _ in
             installSuggestedCommandIfNeeded()
+        }
+        .sheet(item: $selectedSubagentDetail) { request in
+            SubagentTranscriptSheet(request: request)
         }
     }
 
@@ -174,14 +189,18 @@ struct ChatPanelView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
             }
             .scrollIndicators(.hidden)
             .background(Color.white)
+            .background(
+                TranscriptScrollObserver { isAtBottom in
+                    shouldFollowTranscriptBottom = isAtBottom
+                }
+            )
             .onAppear { scrollTranscriptToBottom(proxy, force: true) }
             .onChange(of: chatState.transcriptRevision) { _, _ in scrollTranscriptToBottom(proxy, animated: false) }
-            .onChange(of: chatState.isAwaitingFirstModelOutput) { _, _ in scrollTranscriptToBottom(proxy, force: true) }
-            .onChange(of: chatState.queuedRequests.count) { _, _ in scrollTranscriptToBottom(proxy, force: true) }
+            .onChange(of: chatState.isAwaitingFirstModelOutput) { _, _ in scrollTranscriptToBottom(proxy) }
+            .onChange(of: chatState.queuedRequests.count) { _, _ in scrollTranscriptToBottom(proxy) }
         }
     }
 
@@ -203,9 +222,11 @@ struct ChatPanelView: View {
     }
 
     private func scrollTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool = true, force: Bool = false) {
+        guard force || shouldFollowTranscriptBottom else { return }
         let now = Date()
-        if !force, now.timeIntervalSince(lastTranscriptScrollAt) < 0.12 { return }
+        if !force, now.timeIntervalSince(lastTranscriptScrollAt) < 0.25 { return }
         lastTranscriptScrollAt = now
+        shouldFollowTranscriptBottom = true
         DispatchQueue.main.async {
             if animated {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -411,6 +432,10 @@ struct ChatPanelView: View {
                 toolFileButton(path: filePath)
             }
 
+            if message.isAgentTool {
+                subagentDetailButton(message)
+            }
+
             toolStatusPill(message)
             Spacer(minLength: 0)
         }
@@ -422,6 +447,28 @@ struct ChatPanelView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(message.toolTint.opacity(0.14), lineWidth: 1)
         )
+    }
+
+    private func subagentDetailButton(_ message: ChatMessage) -> some View {
+        Button {
+            guard let request = message.subagentDetailRequest(projectPath: appState.selectedProject?.path) else { return }
+            selectedSubagentDetail = request
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(message.subagentID == nil ? "等待详情" : "查看对话")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(message.subagentID == nil ? Color.secondary.opacity(0.55) : Color.blue)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background((message.subagentID == nil ? Color.secondary : Color.blue).opacity(0.08))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(message.subagentID == nil)
+        .help(message.subagentID == nil ? "子代理完成后可查看完整对话" : "打开子代理完整对话")
     }
 
     private func toolFileButton(path: String) -> some View {
@@ -472,6 +519,9 @@ struct ChatPanelView: View {
                     }
                 }
 
+                if message.isAgentTool {
+                    subagentSummaryCard(message)
+                }
                 if let preview = message.toolCodePreview {
                     toolCodePreviewCard(preview)
                 }
@@ -486,6 +536,41 @@ struct ChatPanelView: View {
                     .stroke(AppTheme.hairline, lineWidth: 1)
             )
         }
+    }
+
+    private func subagentSummaryCard(_ message: ChatMessage) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.2.wave.2")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.blue)
+                Text(message.subagentDisplayTitle)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.82))
+                Spacer(minLength: 0)
+                if let agentID = message.subagentID {
+                    Text("agent-\(agentID.prefix(8))")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            if let prompt = message.subagentPrompt {
+                Text(prompt)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(5)
+                    .textSelection(.enabled)
+            } else if let summary = message.subagentResultSummary {
+                Text(summary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(5)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(8)
+        .background(Color.blue.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private func toolCodePreviewCard(_ preview: ToolCodePreview) -> some View {
@@ -849,8 +934,14 @@ struct ChatPanelView: View {
     private var composerCard: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
-                ChatComposerTextView(text: $draftMessage, hasMarkedText: $composerHasMarkedText, suggestedCommand: $suggestedCommand, onSubmit: sendMessage)
-                    .frame(minHeight: 42, maxHeight: 60)
+                ChatComposerTextView(
+                    text: $draftMessage,
+                    hasMarkedText: $composerHasMarkedText,
+                    suggestedCommand: $suggestedCommand,
+                    measuredHeight: $composerTextHeight,
+                    onSubmit: sendMessage
+                )
+                    .frame(height: composerTextHeight)
                     .padding(.horizontal, 14)
                     .padding(.top, 9)
                     .padding(.bottom, 1)
@@ -1510,6 +1601,89 @@ private enum ChatTranscriptItem: Identifiable {
     }
 }
 
+private struct TranscriptScrollObserver: NSViewRepresentable {
+    let onBottomStateChanged: (Bool) -> Void
+
+    func makeNSView(context: Context) -> ObserverView {
+        let view = ObserverView()
+        view.onBottomStateChanged = onBottomStateChanged
+        return view
+    }
+
+    func updateNSView(_ nsView: ObserverView, context: Context) {
+        nsView.onBottomStateChanged = onBottomStateChanged
+        nsView.attachIfNeeded()
+        nsView.publishBottomState()
+    }
+
+    final class ObserverView: NSView {
+        var onBottomStateChanged: ((Bool) -> Void)?
+        private weak var observedScrollView: NSScrollView?
+        private var boundsObserver: NSObjectProtocol?
+        private var lastIsAtBottom: Bool?
+        private let bottomTolerance: CGFloat = 48
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            attachIfNeeded()
+            publishBottomState()
+        }
+
+        deinit {
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+            }
+        }
+
+        func attachIfNeeded() {
+            guard observedScrollView == nil else { return }
+            guard let scrollView = nearestScrollView() else { return }
+            observedScrollView = scrollView
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.publishBottomState()
+            }
+        }
+
+        func publishBottomState() {
+            guard let scrollView = observedScrollView ?? nearestScrollView() else { return }
+            observedScrollView = scrollView
+            guard let documentView = scrollView.documentView else { return }
+            let visibleRect = documentView.visibleRect
+            let documentBounds = documentView.bounds
+            let distanceFromBottom: CGFloat
+            if documentView.isFlipped {
+                distanceFromBottom = documentBounds.maxY - visibleRect.maxY
+            } else {
+                distanceFromBottom = visibleRect.minY - documentBounds.minY
+            }
+            let isAtBottom = documentBounds.height <= visibleRect.height + bottomTolerance
+                || distanceFromBottom <= bottomTolerance
+            guard lastIsAtBottom != isAtBottom else { return }
+            lastIsAtBottom = isAtBottom
+            onBottomStateChanged?(isAtBottom)
+        }
+
+        private func nearestScrollView() -> NSScrollView? {
+            if let enclosingScrollView {
+                return enclosingScrollView
+            }
+            var current = superview
+            while let view = current {
+                if let scrollView = view as? NSScrollView {
+                    return scrollView
+                }
+                current = view.superview
+            }
+            return nil
+        }
+    }
+}
+
 private struct ToolCodePreview {
     struct Line: Identifiable {
         let id = UUID()
@@ -1811,7 +1985,17 @@ private enum FileReferenceDetector {
     }
 }
 
+private final class AssistantMessageBlockBox {
+    let blocks: [AssistantMessageBlock]
+
+    init(_ blocks: [AssistantMessageBlock]) {
+        self.blocks = blocks
+    }
+}
+
 private struct AssistantMessageContent: View {
+    private static let blockCache = NSCache<NSString, AssistantMessageBlockBox>()
+
     let text: String
     let isStreaming: Bool
     let onOpenFile: (FileReference) -> Void
@@ -1829,7 +2013,14 @@ private struct AssistantMessageContent: View {
     }
 
     private var blocks: [AssistantMessageBlock] {
-        AssistantMessageBlock.parse(text)
+        guard !isStreaming else { return AssistantMessageBlock.parse(text) }
+        let key = "\(text.count):\(text.hashValue)" as NSString
+        if let cached = Self.blockCache.object(forKey: key) {
+            return cached.blocks
+        }
+        let parsed = AssistantMessageBlock.parse(text)
+        Self.blockCache.setObject(AssistantMessageBlockBox(parsed), forKey: key)
+        return parsed
     }
 
     var body: some View {
@@ -2194,14 +2385,200 @@ private struct ComposerSuggestedCommand: Equatable {
     let text: String
 }
 
+private struct SubagentDetailRequest: Identifiable, Equatable {
+    let agentID: String
+    let agentType: String
+    let description: String
+    let projectPath: String?
+
+    var id: String { agentID }
+}
+
+private struct SubagentTranscriptSheet: View {
+    let request: SubagentDetailRequest
+    @Environment(\.dismiss) private var dismiss
+    @State private var transcript: SubagentTranscript?
+    @State private var isPaused = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "person.2.wave.2")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("子代理对话")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(headerSubtitle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button(isPaused ? "继续刷新" : "暂停可视化") {
+                    isPaused.toggle()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                Button("刷新") { refreshTranscript() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Button("关闭") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+            .padding(14)
+
+            Divider().opacity(0.28)
+
+            if let transcript {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(transcript.messages) { message in
+                            SubagentTranscriptMessageRow(message: message)
+                        }
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.tertiary)
+                    Text("还没有找到子代理对话日志")
+                        .font(.system(size: 12, weight: .medium))
+                    Text("子代理完成或写入日志后刷新即可查看；这不会影响后台运行。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(24)
+            }
+        }
+        .frame(minWidth: 760, minHeight: 560)
+        .onAppear { refreshTranscript() }
+        .onReceive(Timer.publish(every: 1.2, on: .main, in: .common).autoconnect()) { _ in
+            guard !isPaused else { return }
+            refreshTranscript()
+        }
+    }
+
+    private var headerSubtitle: String {
+        let transcriptType = transcript?.agentType.nonEmptyTrimmed
+        let type = transcriptType ?? request.agentType
+        let description = transcript?.description.nonEmptyTrimmed ?? request.description
+        return "\(type) · \(description) · agent-\(request.agentID.prefix(8))"
+    }
+
+    private func refreshTranscript() {
+        transcript = SubagentTranscriptStore.load(agentID: request.agentID, projectPath: request.projectPath)
+    }
+}
+
+private struct SubagentTranscriptMessageRow: View {
+    let message: SubagentTranscriptMessage
+
+    var body: some View {
+        switch message.kind {
+        case .user:
+            HStack(alignment: .top) {
+                Spacer(minLength: 60)
+                Text(message.text)
+                    .font(.system(size: 12))
+                    .lineSpacing(2)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.05))
+                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            }
+        case .assistant:
+            AssistantMessageContent(text: message.text, isStreaming: false, onOpenFile: { _ in })
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .reasoning:
+            SubagentSmallCard(message: message, tint: .indigo, icon: "brain.head.profile")
+        case .toolCall:
+            SubagentSmallCard(message: message, tint: .purple, icon: "hammer")
+        case .toolResult:
+            SubagentSmallCard(message: message, tint: message.status == "failed" ? .red : .green, icon: message.status == "failed" ? "xmark.seal" : "checkmark.seal")
+        case .raw:
+            SubagentSmallCard(message: message, tint: .secondary, icon: "doc.text")
+        }
+    }
+}
+
+private struct SubagentSmallCard: View {
+    let message: SubagentTranscriptMessage
+    let tint: Color
+    let icon: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(message.title.isEmpty ? message.kind.rawValue : message.title)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .lineLimit(1)
+                if !message.subtitle.isEmpty {
+                    Text(message.subtitle)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Text(statusText)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+            .foregroundStyle(tint)
+
+            if !message.text.isEmpty {
+                ScrollView(.horizontal, showsIndicators: true) {
+                    Text(previewText)
+                        .font(.system(size: 10, design: message.kind == .toolCall || message.kind == .toolResult ? .monospaced : .default))
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(9)
+        .background(tint.opacity(0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(tint.opacity(0.14), lineWidth: 1)
+        )
+    }
+
+    private var previewText: String {
+        guard message.text.count > 18_000 else { return message.text }
+        return String(message.text.prefix(18_000)) + "\n\n…内容过长，已暂停完整渲染。"
+    }
+
+    private var statusText: String {
+        message.status == "failed" ? "失败" : "完成"
+    }
+}
+
 private struct ChatComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var hasMarkedText: Bool
     @Binding var suggestedCommand: ComposerSuggestedCommand?
+    @Binding var measuredHeight: CGFloat
     let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, hasMarkedText: $hasMarkedText, suggestedCommand: $suggestedCommand, onSubmit: onSubmit)
+        Coordinator(
+            text: $text,
+            hasMarkedText: $hasMarkedText,
+            suggestedCommand: $suggestedCommand,
+            measuredHeight: $measuredHeight,
+            onSubmit: onSubmit
+        )
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -2234,6 +2611,7 @@ private struct ChatComposerTextView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
 
         scrollView.documentView = textView
+        context.coordinator.updateMeasuredHeight(for: textView)
         return scrollView
     }
 
@@ -2260,18 +2638,27 @@ private struct ChatComposerTextView: NSViewRepresentable {
             }
         }
         textView.refreshSuggestedCommandHighlight()
+        context.coordinator.updateMeasuredHeight(for: textView)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding var text: String
         @Binding var hasMarkedText: Bool
         @Binding var suggestedCommand: ComposerSuggestedCommand?
+        @Binding var measuredHeight: CGFloat
         let onSubmit: () -> Void
 
-        init(text: Binding<String>, hasMarkedText: Binding<Bool>, suggestedCommand: Binding<ComposerSuggestedCommand?>, onSubmit: @escaping () -> Void) {
+        init(
+            text: Binding<String>,
+            hasMarkedText: Binding<Bool>,
+            suggestedCommand: Binding<ComposerSuggestedCommand?>,
+            measuredHeight: Binding<CGFloat>,
+            onSubmit: @escaping () -> Void
+        ) {
             _text = text
             _hasMarkedText = hasMarkedText
             _suggestedCommand = suggestedCommand
+            _measuredHeight = measuredHeight
             self.onSubmit = onSubmit
         }
 
@@ -2286,6 +2673,15 @@ private struct ChatComposerTextView: NSViewRepresentable {
                 textView.suggestedCommand = nil
             }
             textView.refreshSuggestedCommandHighlight()
+            updateMeasuredHeight(for: textView)
+        }
+
+        func updateMeasuredHeight(for textView: NSTextView) {
+            guard let layoutManager = textView.layoutManager, let textContainer = textView.textContainer else { return }
+            textContainer.containerSize = NSSize(width: max(textView.bounds.width, 1), height: CGFloat.greatestFiniteMagnitude)
+            layoutManager.ensureLayout(for: textContainer)
+            let contentHeight = ceil(layoutManager.usedRect(for: textContainer).height)
+            measuredHeight = min(160, max(42, contentHeight + 10))
         }
     }
 
@@ -2477,6 +2873,51 @@ private extension ChatMessage {
         if normalized == "stopped" { return "已停止" }
         if normalized == "done" || normalized == "success" || normalized == "completed" { return "完成" }
         return normalized.isEmpty ? "完成" : status
+    }
+
+    var isAgentTool: Bool {
+        toolName.lowercased() == "agent" || subagentID != nil
+    }
+
+    var subagentID: String? {
+        if let value = firstToolStringValue(keys: ["agentId", "agent_id"], in: text) {
+            return Self.normalizedAgentID(value)
+        }
+        return Self.agentID(from: text)
+    }
+
+    var subagentDisplayTitle: String {
+        let type = subagentType ?? "Agent"
+        if let description = subagentDescription {
+            return "\(type) · \(description)"
+        }
+        return type
+    }
+
+    var subagentPrompt: String? {
+        firstToolStringValue(keys: ["prompt", "instruction", "instructions"], in: text).map { Self.previewSnippet($0, limit: 420) }
+    }
+
+    var subagentResultSummary: String? {
+        Self.firstUsefulLine(toolDetailText).map { Self.previewSnippet($0, limit: 420) }
+    }
+
+    func subagentDetailRequest(projectPath: String?) -> SubagentDetailRequest? {
+        guard let agentID = subagentID else { return nil }
+        return SubagentDetailRequest(
+            agentID: agentID,
+            agentType: subagentType ?? "Agent",
+            description: subagentDescription ?? subagentResultSummary ?? "子代理",
+            projectPath: projectPath
+        )
+    }
+
+    private var subagentType: String? {
+        firstToolStringValue(keys: ["subagent_type", "subagentType", "agentType", "agent_type"], in: text)
+    }
+
+    private var subagentDescription: String? {
+        firstToolStringValue(keys: ["description", "summary", "title"], in: text)
     }
 
     var toolExecutionSummary: String? {
@@ -2956,6 +3397,35 @@ private extension ChatMessage {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty && !$0.isInternalToolNoiseLine }
+    }
+
+    private static func normalizedAgentID(_ value: String) -> String? {
+        let trimmed = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "agent-", with: "")
+        let id = trimmed.prefix { character in
+            character.isLetter || character.isNumber || character == "_" || character == "-"
+        }
+        return id.isEmpty ? nil : String(id)
+    }
+
+    private static func agentID(from body: String) -> String? {
+        let patterns = [
+            #"agentId:\s*([A-Za-z0-9_-]+)"#,
+            #"agent_id:\s*([A-Za-z0-9_-]+)"#,
+            #"\"agentId\"\s*:\s*\"([^\"]+)\""#,
+            #"\"agent_id\"\s*:\s*\"([^\"]+)\""#
+        ]
+        let range = NSRange(body.startIndex..<body.endIndex, in: body)
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            guard let match = regex.firstMatch(in: body, range: range), match.numberOfRanges > 1 else { continue }
+            guard let valueRange = Range(match.range(at: 1), in: body) else { continue }
+            if let id = normalizedAgentID(String(body[valueRange])) {
+                return id
+            }
+        }
+        return nil
     }
 
     private static func previewSnippet(_ value: String, limit: Int = 72) -> String {
