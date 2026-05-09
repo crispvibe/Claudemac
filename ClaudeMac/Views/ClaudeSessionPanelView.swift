@@ -324,17 +324,13 @@ struct ChatPanelView: View {
 
     private func toolInvocationRow(_ message: ChatMessage) -> some View {
         let isExpanded = expandedTranscriptMessageIDs.contains(message.id)
-        return VStack(alignment: .leading, spacing: 7) {
+        return VStack(alignment: .leading, spacing: 6) {
             Button {
                 toggleTranscriptMessage(message.id)
             } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: message.kind.toolIcon)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(message.kind.toolTint)
-                        .frame(width: 14)
+                HStack(spacing: 6) {
                     Text(message.toolDisplayTitle)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
@@ -348,10 +344,10 @@ struct ChatPanelView: View {
 
             if isExpanded {
                 toolDetailView(message)
-                    .padding(.leading, 22)
+                    .padding(.leading, 12)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 1)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -558,7 +554,7 @@ struct ChatPanelView: View {
     }
 
     private var composer: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 3) {
             if !chatState.queuedRequests.isEmpty {
                 queuedRequestsView
             }
@@ -573,28 +569,25 @@ struct ChatPanelView: View {
                 }
             }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
+        .padding(.bottom, 12)
         .background(Color.white)
     }
 
     private var queuedRequestsView: some View {
         ScrollView {
-            VStack(spacing: 6) {
+            VStack(spacing: 4) {
                 ForEach(Array(chatState.queuedRequests.enumerated()), id: \.element.id) { index, request in
-                    HStack(spacing: 8) {
+                    HStack(spacing: 7) {
                         Text("#\(index + 1)")
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             .foregroundStyle(.tertiary)
-                            .frame(width: 24, alignment: .leading)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("队列中")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(Color.accentColor)
-                            Text(request.text.components(separatedBy: .newlines).first ?? request.text)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
+                            .frame(width: 22, alignment: .leading)
+                        Text(request.text.components(separatedBy: .newlines).first ?? request.text)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                         Spacer(minLength: 0)
                         Button {
                             chatState.cancelQueuedRequest(request.id)
@@ -606,14 +599,14 @@ struct ChatPanelView: View {
                         .buttonStyle(.plain)
                         .foregroundStyle(.tertiary)
                     }
-                    .padding(.horizontal, 10)
-                    .frame(height: 34)
+                    .padding(.horizontal, 9)
+                    .frame(height: 28)
                     .background(Color.black.opacity(0.035))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
             }
         }
-        .frame(maxHeight: 34 * 3 + 12)
+        .frame(maxHeight: 28 * 3 + 8)
     }
 
     private var composerCard: some View {
@@ -1367,34 +1360,6 @@ private struct ChatComposerTextView: NSViewRepresentable {
 }
 
 private extension ChatMessageKind {
-    var toolIcon: String {
-        switch self {
-        case .toolCall, .toolResult:
-            "gearshape"
-        case .command:
-            "play.circle"
-        case .commandOutput:
-            "doc.text"
-        case .diff:
-            "pencil"
-        default:
-            "circle"
-        }
-    }
-
-    var toolTint: Color {
-        switch self {
-        case .toolCall, .toolResult:
-            .blue
-        case .command, .commandOutput:
-            .orange
-        case .diff:
-            .green
-        default:
-            .secondary
-        }
-    }
-
     var isToolDetailMonospaced: Bool {
         switch self {
         case .toolCall, .toolResult, .command, .commandOutput:
@@ -1416,19 +1381,18 @@ private extension ChatMessageKind {
 
 private extension ChatMessage {
     var toolDisplayTitle: String {
+        if !toolName.isEmpty { return toolName }
         switch kind {
-        case .toolCall:
-            return namedToolTitle(prefix: isStreaming ? "正在调用工具" : "调用工具")
-        case .toolResult:
-            return namedToolTitle(prefix: "工具结果")
+        case .toolCall, .toolResult:
+            return "tool"
         case .command:
-            return "执行命令"
+            return "command"
         case .commandOutput:
-            return "命令输出"
+            return "command output"
         case .diff:
-            return "文件变更"
+            return "diff"
         default:
-            return "工具调用"
+            return "tool"
         }
     }
 
@@ -1450,11 +1414,6 @@ private extension ChatMessage {
         return normalizedStatus == "start"
             || body.contains(" --output-format stream-json")
             || body.contains(" app-server")
-    }
-
-    private func namedToolTitle(prefix: String) -> String {
-        let name = toolName
-        return name.isEmpty ? prefix : "\(prefix)：\(name)"
     }
 
     private var toolName: String {

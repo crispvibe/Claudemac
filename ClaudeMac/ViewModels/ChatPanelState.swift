@@ -87,6 +87,7 @@ final class ChatPanelState: ObservableObject {
     }
 
     private var isUserStopping = false
+    private var shouldStartQueuedRequestAfterBackendEnds = false
     private var activeAssistantMessageID: UUID?
     private var activeStreamingMessageIDs: [StreamingMessageKey: UUID] = [:]
     private var activeParentUserMessageID: UUID?
@@ -118,6 +119,7 @@ final class ChatPanelState: ObservableObject {
         activeStreamingMessageIDs.removeAll()
         activeParentUserMessageID = nil
         isUserStopping = false
+        shouldStartQueuedRequestAfterBackendEnds = false
         queuedRequests.removeAll()
         setAwaitingFirstModelOutput(false)
         bumpTranscriptRevision()
@@ -279,6 +281,7 @@ final class ChatPanelState: ObservableObject {
         let backend: ChatProcessBackend = visibleCLI == .codex ? CodexAppServerBackend() : ClaudeCodeProcessBackend()
         activeBackend = backend
         isUserStopping = false
+        shouldStartQueuedRequestAfterBackendEnds = false
         status = .starting
         statusText = "启动 \(visibleCLI.displayName)"
 
@@ -311,6 +314,9 @@ final class ChatPanelState: ObservableObject {
                         self.apply(event)
                     }
                 }
+                await MainActor.run {
+                    self.backendStreamDidEnd()
+                }
             } catch {
                 await MainActor.run {
                     self.appendError(error.localizedDescription)
@@ -318,8 +324,8 @@ final class ChatPanelState: ObservableObject {
                     self.statusText = "失败"
                     self.finishStreamingMessages(status: "failed")
                     self.setAwaitingFirstModelOutput(false)
+                    self.shouldStartQueuedRequestAfterBackendEnds = false
                     self.persistCurrentSession()
-                    self.startNextQueuedRequestIfNeeded()
                 }
             }
         }
@@ -344,6 +350,7 @@ final class ChatPanelState: ObservableObject {
     func interrupt() {
         guard status.isRunning else { return }
         isUserStopping = true
+        shouldStartQueuedRequestAfterBackendEnds = false
         status = .stopping
         statusText = "正在停止"
         activeBackend?.interrupt()
@@ -500,6 +507,7 @@ final class ChatPanelState: ObservableObject {
             }
             checkAutoCompact()
         case .finished:
+            shouldStartQueuedRequestAfterBackendEnds = !isUserStopping
             finishStreamingMessages(status: isUserStopping ? "stopped" : "done")
             setAwaitingFirstModelOutput(false)
             currentSession?.updatedAt = Date()
@@ -507,7 +515,6 @@ final class ChatPanelState: ObservableObject {
             statusText = isUserStopping ? "已停止" : "完成"
             isUserStopping = false
             persistCurrentSession()
-            startNextQueuedRequestIfNeeded()
         case .failed(let message):
             if isUserStopping {
                 finishStreamingMessages(status: "stopped")
@@ -516,8 +523,8 @@ final class ChatPanelState: ObservableObject {
                 status = .completed
                 statusText = "已停止"
                 isUserStopping = false
+                shouldStartQueuedRequestAfterBackendEnds = false
                 persistCurrentSession()
-                startNextQueuedRequestIfNeeded()
                 return
             }
             finishStreamingMessages(status: "failed")
@@ -526,7 +533,24 @@ final class ChatPanelState: ObservableObject {
             currentSession?.updatedAt = Date()
             status = .failed
             statusText = "失败"
+            shouldStartQueuedRequestAfterBackendEnds = false
             persistCurrentSession()
+        }
+    }
+
+    private func backendStreamDidEnd() {
+        let shouldStartQueuedRequest = shouldStartQueuedRequestAfterBackendEnds
+        shouldStartQueuedRequestAfterBackendEnds = false
+        if status.isRunning {
+            finishStreamingMessages(status: isUserStopping ? "stopped" : "done")
+            setAwaitingFirstModelOutput(false)
+            currentSession?.updatedAt = Date()
+            status = .completed
+            statusText = isUserStopping ? "已停止" : "完成"
+            isUserStopping = false
+            persistCurrentSession()
+        }
+        if shouldStartQueuedRequest {
             startNextQueuedRequestIfNeeded()
         }
     }
@@ -536,7 +560,8 @@ final class ChatPanelState: ObservableObject {
         let key = StreamingMessageKey(kind: kind, requestID: requestID)
         let status = itemStatus.nonEmptyTrimmed ?? "streaming"
         if let activeMessageID = activeStreamingMessageIDs[key],
-           let index = messages.firstIndex(where: { $0.id == activeMessageID }) {
+           let index = messages.firstIndex(where: { $0.id == activeMessageID }),
+           shouldAppendDeltaToExistingMessage(kind: kind, requestID: requestID, activeMessageID: activeMessageID) {
             messages[index].text += text
             messages[index].isStreaming = true
             messages[index].status = status
@@ -597,6 +622,20 @@ final class ChatPanelState: ObservableObject {
         let request = queuedRequests.removeFirst()
         bumpTranscriptRevision()
         _ = startRun(request)
+    }
+
+    private func shouldAppendDeltaToExistingMessage(kind: ChatMessageKind, requestID: String?, activeMessageID: UUID) -> Bool {
+        switch kind {
+        case .assistant, .reasoning:
+            guard lastVisibleMessageID == activeMessageID else { return false }
+            return true
+        default:
+            return true
+        }
+    }
+
+    private var lastVisibleMessageID: UUID? {
+        messages.last(where: { isVisibleModelOutput($0.kind) || $0.kind == .user })?.id
     }
 
     private func setAwaitingFirstModelOutput(_ value: Bool) {
