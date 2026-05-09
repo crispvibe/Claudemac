@@ -4,8 +4,8 @@ import Foundation
 protocol ChatProcessBackend: AnyObject {
     func start(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?) -> AsyncThrowingStream<ChatBackendEvent, Error>
     func interrupt()
-    func respondToPermission(requestID: String, decision: ChatPermissionDecision)
-    func sendCompact()
+    func respondToPermission(requestID: String, decision: ChatPermissionDecision) -> Bool
+    func sendCompact() -> Bool
 }
 
 struct ChatProcessOutput: Equatable {

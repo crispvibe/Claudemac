@@ -33,9 +33,19 @@ final class ChatPanelState: ObservableObject {
     private var currentSession: ChatSessionRecord?
     private var currentTask: Task<Void, Never>?
     private var activeBackend: ChatProcessBackend?
+    private struct StreamingMessageKey: Hashable {
+        let kind: ChatMessageKind
+        let requestID: String?
+
+        init(kind: ChatMessageKind, requestID: String?) {
+            self.kind = kind
+            self.requestID = requestID?.nonEmptyTrimmed
+        }
+    }
+
     private var isUserStopping = false
     private var activeAssistantMessageID: UUID?
-    private var activeStreamingMessageIDs: [ChatMessageKind: UUID] = [:]
+    private var activeStreamingMessageIDs: [StreamingMessageKey: UUID] = [:]
     private var activeParentUserMessageID: UUID?
 
     init() {
@@ -111,6 +121,7 @@ final class ChatPanelState: ObservableObject {
         statusText = "历史会话"
     }
 
+    @discardableResult
     func send(
         text rawText: String,
         project: ProjectItem?,
@@ -121,34 +132,42 @@ final class ChatPanelState: ObservableObject {
         reasoningEffort: ChatReasoningEffort,
         sessionMode: SessionMode,
         resumeSessionID: String?
-    ) {
+    ) -> Bool {
         if status.isRunning {
             interrupt()
-            return
+            return true
         }
 
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty else { return false }
         guard let project else {
             appendError("请先选择项目。")
-            return
+            return false
         }
 
         let visibleCLI = cli.visibleValue
         guard let capability = capabilities[visibleCLI] else {
             appendError("正在检测 \(visibleCLI.displayName)，请稍后重试。")
             refreshCapabilities()
-            return
+            return false
         }
         guard let executable = capability.executablePath, capability.errorMessage == nil else {
             status = .unsupportedVersion
             appendError(capability.errorMessage ?? "\(visibleCLI.displayName) 不可用。")
-            return
+            return false
         }
         if visibleCLI == .codex, !capability.supportsAppServer {
             status = .unsupportedVersion
             appendError("当前 Codex 版本不支持 app-server，无法在内嵌对话中启动。")
-            return
+            return false
+        }
+        if visibleCLI == .claude, permissionMode == .ask {
+            status = .unsupportedVersion
+            let reason = capability.supportsStreamJSONInput
+                ? "当前 Claude Code CLI 未公开 stdin 权限 allow/deny 回写协议。"
+                : "当前 Claude Code 版本不支持 stream-json stdin 输入。"
+            appendError("\(reason)请改用自动编辑/完全访问权限后重试，避免工具调用时出现无法响应的假权限按钮。")
+            return false
         }
 
         let effectiveContextModelID = contextModelID?.nonEmptyTrimmed ?? modelID
@@ -231,6 +250,7 @@ final class ChatPanelState: ObservableObject {
                 }
             }
         }
+        return true
     }
 
     func removeMessageThread(_ id: UUID) {
@@ -262,7 +282,16 @@ final class ChatPanelState: ObservableObject {
     }
 
     func respondToPermission(requestID: String, decision: ChatPermissionDecision) {
-        activeBackend?.respondToPermission(requestID: requestID, decision: decision)
+        guard activeBackend?.respondToPermission(requestID: requestID, decision: decision) == true else {
+            if let index = messages.firstIndex(where: { $0.requestID == requestID }) {
+                messages[index].status = "failed"
+            }
+            appendError("权限响应写回失败。当前 CLI 模式不支持内嵌权限交互，请改用自动编辑/完全访问权限后重试。")
+            status = .failed
+            statusText = "权限写回失败"
+            persistCurrentSession()
+            return
+        }
         if let index = messages.firstIndex(where: { $0.requestID == requestID }) {
             messages[index].status = decision.statusText
         }
@@ -320,17 +349,17 @@ final class ChatPanelState: ObservableObject {
             )
             messages.append(message)
             if itemStatus == "streaming" {
-                activeStreamingMessageIDs[kind] = message.id
+                activeStreamingMessageIDs[StreamingMessageKey(kind: kind, requestID: requestID)] = message.id
                 if kind == .assistant {
                     activeAssistantMessageID = message.id
                 }
             }
             if kind != .system && kind != .command { status = .streaming }
             statusText = itemStatus
-        case .appendDelta(let kind, let text):
-            appendDelta(kind: kind, text: text)
+        case .appendDelta(let kind, let title, let subtitle, let text, let itemStatus, let requestID):
+            appendDelta(kind: kind, title: title, subtitle: subtitle, text: text, status: itemStatus, requestID: requestID)
             status = .streaming
-            statusText = "streaming"
+            statusText = itemStatus.nonEmptyTrimmed ?? "streaming"
         case .updateStreamingStatus(let value):
             statusText = value
         case .sessionID(let externalID):
@@ -383,25 +412,33 @@ final class ChatPanelState: ObservableObject {
         }
     }
 
-    private func appendDelta(kind: ChatMessageKind, text: String) {
+    private func appendDelta(kind: ChatMessageKind, title: String, subtitle: String, text: String, status itemStatus: String, requestID: String?) {
         guard !text.isEmpty, let sessionID = currentSession?.id else { return }
-        if let activeMessageID = activeStreamingMessageIDs[kind],
+        let key = StreamingMessageKey(kind: kind, requestID: requestID)
+        let status = itemStatus.nonEmptyTrimmed ?? "streaming"
+        if let activeMessageID = activeStreamingMessageIDs[key],
            let index = messages.firstIndex(where: { $0.id == activeMessageID }) {
             messages[index].text += text
             messages[index].isStreaming = true
-            messages[index].status = "streaming"
+            messages[index].status = status
+            if messages[index].requestID == nil {
+                messages[index].requestID = requestID?.nonEmptyTrimmed
+            }
             return
         }
 
         let message = ChatMessage(
             sessionID: sessionID,
             kind: kind,
+            title: title,
+            subtitle: subtitle,
             text: text,
-            status: "streaming",
+            status: status,
             parentUserMessageID: activeParentUserMessageID,
+            requestID: requestID?.nonEmptyTrimmed,
             isStreaming: true
         )
-        activeStreamingMessageIDs[kind] = message.id
+        activeStreamingMessageIDs[key] = message.id
         if kind == .assistant {
             activeAssistantMessageID = message.id
         }
@@ -450,8 +487,11 @@ final class ChatPanelState: ObservableObject {
         let usage = Double(tokensUsed) / Double(tokensTotal)
         if usage >= Self.compactThreshold {
             didAutoCompact = true
-            activeBackend?.sendCompact()
-            statusText = "自动压缩上下文"
+            if activeBackend?.sendCompact() == true {
+                statusText = "自动压缩上下文"
+            } else {
+                statusText = "上下文接近上限"
+            }
         }
     }
 }

@@ -352,7 +352,7 @@ struct ChatRunOptions: Equatable {
 
 enum ChatBackendEvent: Equatable {
     case appendMessage(kind: ChatMessageKind, title: String, subtitle: String, text: String, status: String, requestID: String?)
-    case appendDelta(kind: ChatMessageKind, text: String)
+    case appendDelta(kind: ChatMessageKind, title: String, subtitle: String, text: String, status: String, requestID: String?)
     case updateStreamingStatus(String)
     case sessionID(String)
     case permissionRequest(id: String, title: String, text: String)

@@ -46,6 +46,15 @@ final class AppState: ObservableObject {
         projects.first { $0.id == selectedProjectID }
     }
 
+    private func project(matching path: String?) -> ProjectItem? {
+        guard let normalizedPath = Self.normalizedProjectPath(path) else { return nil }
+        return projects.first { Self.normalizedProjectPath($0.path) == normalizedPath }
+    }
+
+    nonisolated private static func normalizedProjectPath(_ path: String?) -> String? {
+        path?.nonEmptyTrimmed.map { ($0 as NSString).standardizingPath }
+    }
+
     var selectedTab: EditorTab? {
         openTabs.first { $0.id == selectedTabID }
     }
@@ -350,6 +359,17 @@ final class AppState: ObservableObject {
     }
 
     func selectCLIHistory(_ session: CLIHistorySession) {
+        let matchingProject = project(matching: session.projectPath)
+        if selectedProjectID != matchingProject?.id {
+            guard confirmDiscardUnsavedChangesIfNeeded() else { return }
+            selectedProjectID = matchingProject?.id
+            if let matchingProject, let index = projects.firstIndex(where: { $0.id == matchingProject.id }) {
+                projects[index].lastOpenedAt = Date()
+                projects[index].updatedAt = Date()
+                try? ProjectStore.saveProjects(projects)
+            }
+            refreshProjectContext()
+        }
         selectedCLI = session.cli.visibleValue
         selectedMode = .resume
         resumeSessionId = session.sessionId

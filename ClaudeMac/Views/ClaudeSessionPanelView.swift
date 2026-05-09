@@ -192,7 +192,7 @@ struct ChatPanelView: View {
     }
 
     private var emptyProjectState: some View {
-        Text("先选择一个项目。")
+        Text(appState.selectedHistoryProjectPath?.nonEmptyTrimmed == nil ? "先选择一个项目。" : "该历史会话属于未添加项目，请先添加项目目录以继续内嵌对话。")
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
             .padding(10)
@@ -357,7 +357,7 @@ struct ChatPanelView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    ForEach(group.detailMessages.prefix(8)) { message in
+                    ForEach(group.detailMessages) { message in
                         activityDetailRow(message)
                     }
                 }
@@ -624,6 +624,37 @@ struct ChatPanelView: View {
                 }
             }
 
+            if !attachedPaths.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(attachedPaths, id: \.self) { path in
+                            Button {
+                                attachedPaths.removeAll { $0 == path }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "paperclip")
+                                        .font(.system(size: 9))
+                                    Text(URL(fileURLWithPath: path).lastPathComponent)
+                                        .lineLimit(1)
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 8, weight: .semibold))
+                                }
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 4)
+                                .background(Color.black.opacity(0.04))
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .help(path)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+                }
+            }
+
             HStack(spacing: 4) {
                 iconOnlyButton(systemImage: "plus", tint: .secondary, action: openFilesForComposer)
 
@@ -863,11 +894,15 @@ struct ChatPanelView: View {
     }
 
     private var projectName: String {
-        appState.selectedProject?.name ?? "未选择项目"
+        if let project = appState.selectedProject { return project.name }
+        if appState.selectedHistoryProjectPath?.nonEmptyTrimmed != nil { return "未添加项目历史" }
+        return "未选择项目"
     }
 
     private var projectPath: String {
-        appState.selectedProject?.path ?? "请选择项目目录"
+        if let project = appState.selectedProject { return project.path }
+        if let historyPath = appState.selectedHistoryProjectPath?.nonEmptyTrimmed { return "请先添加项目：\(historyPath)" }
+        return "请选择项目目录"
     }
 
     private var selectedModelTitle: String {
@@ -908,8 +943,8 @@ struct ChatPanelView: View {
             chatState.removeMessageThread(editingMessageID)
             self.editingMessageID = nil
         }
-        chatState.send(
-            text: draftMessage,
+        let didStart = chatState.send(
+            text: composedPrompt,
             project: appState.selectedProject,
             cli: appState.selectedCLI,
             modelID: selectedModelID,
@@ -919,7 +954,22 @@ struct ChatPanelView: View {
             sessionMode: appState.selectedMode,
             resumeSessionID: appState.resumeSessionId
         )
-        draftMessage = ""
+        if didStart {
+            draftMessage = ""
+            attachedPaths.removeAll()
+        }
+    }
+
+    private var composedPrompt: String {
+        var parts = [draftMessage.trimmingCharacters(in: .whitespacesAndNewlines)]
+        if let tab = appState.selectedTab {
+            parts.append("Current file: \(tab.url.path)\nCursor: line \(appState.cursorLine), column \(appState.cursorColumn)")
+        }
+        let paths = attachedPaths.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if !paths.isEmpty {
+            parts.append("Attached paths:\n" + paths.joined(separator: "\n"))
+        }
+        return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
     private func openFilesForComposer() {
@@ -976,11 +1026,6 @@ struct ChatPanelView: View {
             guard !trimmed.isEmpty else { return }
             if !attachedPaths.contains(trimmed) {
                 attachedPaths.append(trimmed)
-            }
-            if draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                draftMessage = trimmed
-            } else {
-                draftMessage += "\n\(trimmed)"
             }
         }
     }
@@ -1116,7 +1161,7 @@ private struct ChatActivityGroup: Identifiable {
         messages.contains { message in
             switch message.kind {
             case .commandOutput, .rawOutput, .result:
-                false
+                !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             default:
                 true
             }
@@ -1150,7 +1195,7 @@ private struct ChatActivityGroup: Identifiable {
         messages.filter { message in
             switch message.kind {
             case .commandOutput, .rawOutput, .result:
-                false
+                !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             default:
                 true
             }
@@ -1303,9 +1348,9 @@ private extension ChatMessageKind {
 
     var isGroupedActivityEvent: Bool {
         switch self {
-        case .reasoning, .toolCall, .toolResult, .command, .commandOutput, .result, .rawOutput:
+        case .toolCall, .toolResult, .command, .commandOutput, .result, .rawOutput:
             true
-        case .user, .assistant, .permissionRequest, .diff, .error, .system:
+        case .user, .assistant, .reasoning, .permissionRequest, .diff, .error, .system:
             false
         }
     }

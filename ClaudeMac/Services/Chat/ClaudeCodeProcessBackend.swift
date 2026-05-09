@@ -26,8 +26,15 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         }
     }
 
+    private struct ClaudeContentBlock {
+        let id: String?
+        let type: String
+        let name: String?
+    }
+
     private struct ClaudeStreamState {
         var didReceiveAssistantTextDelta = false
+        var activeBlocks: [Int: ClaudeContentBlock] = [:]
     }
 
     private var process: Process?
@@ -206,7 +213,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         }
     }
 
-    func respondToPermission(requestID: String, decision: ChatPermissionDecision) {
+    func respondToPermission(requestID: String, decision: ChatPermissionDecision) -> Bool {
         var response: [String: Any] = ["allowed": decision.isAllowed]
         if decision == .allowForSession {
             response["scope"] = "session"
@@ -216,15 +223,11 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             "request_id": requestID,
             "response": response
         ]
-        ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+        return ChatPipeWriter.writeJSONObject(object, to: inputPipe)
     }
 
-    func sendCompact() {
-        let object: [String: Any] = [
-            "type": "command",
-            "command": "/compact"
-        ]
-        ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+    func sendCompact() -> Bool {
+        false
     }
 
     private func displayCommand(executablePath: String, arguments: [String]) -> String {
@@ -284,7 +287,9 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
 
         let type = object["type"] as? String ?? object["event"] as? String ?? "raw"
         if type == "system" {
-            if let subtype = object["subtype"] as? String, subtype != "init" {
+            if let subtype = object["subtype"] as? String, subtype == "init" {
+                events.append(.appendMessage(kind: .rawOutput, title: "Claude init", subtitle: "tools", text: initSummary(from: object), status: "done", requestID: nil))
+            } else if let subtype = object["subtype"] as? String {
                 events.append(.appendMessage(kind: .system, title: "system", subtitle: subtype, text: compactText(from: object), status: "done", requestID: nil))
             }
             return events
@@ -296,8 +301,8 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         }
 
         if type == "assistant" {
-            if !streamState.didReceiveAssistantTextDelta, let text = assistantText(from: object), !text.isEmpty {
-                events.append(.appendDelta(kind: .assistant, text: text))
+            if !streamState.didReceiveAssistantTextDelta {
+                events.append(contentsOf: assistantEvents(from: object))
             }
             return events
         }
@@ -315,7 +320,8 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         }
 
         if type.contains("tool") {
-            events.append(.appendMessage(kind: .toolCall, title: type, subtitle: stringValue(object["name"]) ?? "", text: compactText(from: object), status: "done", requestID: nil))
+            let kind: ChatMessageKind = type.contains("result") ? .toolResult : .toolCall
+            events.append(.appendMessage(kind: kind, title: type, subtitle: stringValue(object["name"]) ?? "", text: compactText(from: object), status: "done", requestID: stringValue(object["id"])))
             return events
         }
 
@@ -324,8 +330,12 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
     }
 
     private static func streamEvents(from object: [String: Any], streamState: inout ClaudeStreamState) -> [ChatBackendEvent] {
-        guard let event = object["event"] as? [String: Any] else { return [] }
+        guard let event = object["event"] as? [String: Any] else {
+            return [.appendMessage(kind: .rawOutput, title: "stream_event", subtitle: "Claude Code", text: compactText(from: object), status: "stream", requestID: nil)]
+        }
         let type = stringValue(event["type"]) ?? "stream_event"
+        let blockIndex = intValue(event["index"])
+        let activeBlock = blockIndex.flatMap { streamState.activeBlocks[$0] }
 
         if let usageEvent = extractTokenUsage(from: event) {
             return [usageEvent]
@@ -333,34 +343,56 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
 
         if type == "content_block_start", let contentBlock = event["content_block"] as? [String: Any] {
             let blockType = stringValue(contentBlock["type"]) ?? "content_block"
-            if blockType == "tool_use" {
-                return [.appendMessage(
-                    kind: .toolCall,
-                    title: "tool_use",
-                    subtitle: stringValue(contentBlock["name"]) ?? "",
-                    text: compactText(from: contentBlock),
-                    status: "streaming",
-                    requestID: stringValue(contentBlock["id"])
-                )]
+            let block = ClaudeContentBlock(
+                id: stringValue(contentBlock["id"]),
+                type: blockType,
+                name: stringValue(contentBlock["name"])
+            )
+            if let blockIndex {
+                streamState.activeBlocks[blockIndex] = block
             }
-            return []
+            guard blockType != "text" && blockType != "thinking" else { return [] }
+            let kind = kindForClaudeBlockType(blockType)
+            return [.appendMessage(
+                kind: kind,
+                title: blockType,
+                subtitle: block.name ?? "",
+                text: compactText(from: contentBlock),
+                status: "streaming",
+                requestID: block.id
+            )]
         }
 
         if type == "content_block_delta", let delta = event["delta"] as? [String: Any] {
             let deltaType = stringValue(delta["type"]) ?? ""
             if deltaType == "text_delta", let text = stringValue(delta["text"]), !text.isEmpty {
-                streamState.didReceiveAssistantTextDelta = true
-                return [.appendDelta(kind: .assistant, text: text)]
+                let kind = kindForClaudeDelta(block: activeBlock, defaultKind: .assistant)
+                if kind == .assistant {
+                    streamState.didReceiveAssistantTextDelta = true
+                }
+                return [.appendDelta(kind: kind, title: activeBlock?.type ?? "", subtitle: activeBlock?.name ?? "Claude Code", text: text, status: "streaming", requestID: activeBlock?.id)]
             }
             if deltaType == "thinking_delta", let text = stringValue(delta["thinking"]) ?? stringValue(delta["text"]), !text.isEmpty {
-                return [.appendDelta(kind: .reasoning, text: text)]
+                return [.appendDelta(kind: .reasoning, title: "thinking", subtitle: "Claude Code", text: text, status: "streaming", requestID: activeBlock?.id)]
             }
             if deltaType == "input_json_delta", let text = stringValue(delta["partial_json"]), !text.isEmpty {
-                return [.appendDelta(kind: .toolCall, text: text)]
+                return [.appendDelta(kind: .toolCall, title: activeBlock?.type ?? "tool_use", subtitle: activeBlock?.name ?? "", text: text, status: "streaming", requestID: activeBlock?.id)]
             }
+            return [.appendMessage(kind: .rawOutput, title: deltaType.isEmpty ? "content_block_delta" : deltaType, subtitle: "Claude Code", text: compactText(from: delta), status: "stream", requestID: activeBlock?.id)]
         }
 
-        return []
+        if type == "content_block_stop" {
+            if let blockIndex {
+                streamState.activeBlocks.removeValue(forKey: blockIndex)
+            }
+            return []
+        }
+
+        if type == "message_delta" || type == "message_stop" {
+            return [.appendMessage(kind: .rawOutput, title: type, subtitle: "Claude Code", text: compactText(from: event), status: type == "message_stop" ? "done" : "stream", requestID: activeBlock?.id)]
+        }
+
+        return [.appendMessage(kind: .rawOutput, title: type, subtitle: "Claude Code", text: compactText(from: event), status: "stream", requestID: activeBlock?.id)]
     }
 
     private static func isVisibleOutput(_ event: ChatBackendEvent) -> Bool {
@@ -372,6 +404,55 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         case .sessionID, .updateStreamingStatus, .finished, .tokenUsage:
             false
         }
+    }
+
+    private static func assistantEvents(from object: [String: Any]) -> [ChatBackendEvent] {
+        if let message = object["message"] as? [String: Any], let content = message["content"] as? [[String: Any]] {
+            return content.flatMap { contentItemEvents(from: $0) }
+        }
+        if let text = assistantText(from: object), !text.isEmpty {
+            return [.appendDelta(kind: .assistant, title: "assistant", subtitle: "Claude Code", text: text, status: "streaming", requestID: nil)]
+        }
+        return []
+    }
+
+    private static func contentItemEvents(from item: [String: Any]) -> [ChatBackendEvent] {
+        let type = stringValue(item["type"]) ?? "content"
+        let id = stringValue(item["id"])
+        switch type {
+        case "text":
+            guard let text = stringValue(item["text"]), !text.isEmpty else { return [] }
+            return [.appendDelta(kind: .assistant, title: "assistant", subtitle: "Claude Code", text: text, status: "streaming", requestID: nil)]
+        case "thinking":
+            guard let text = stringValue(item["thinking"]) ?? stringValue(item["text"]), !text.isEmpty else { return [] }
+            return [.appendDelta(kind: .reasoning, title: "thinking", subtitle: "Claude Code", text: text, status: "streaming", requestID: id)]
+        case "tool_result":
+            return [.appendMessage(kind: .toolResult, title: type, subtitle: stringValue(item["name"]) ?? "", text: compactText(from: item), status: "done", requestID: id)]
+        case "tool_use":
+            return [.appendMessage(kind: .toolCall, title: type, subtitle: stringValue(item["name"]) ?? "", text: compactText(from: item), status: "done", requestID: id)]
+        default:
+            return [.appendMessage(kind: .rawOutput, title: type, subtitle: "Claude Code", text: compactText(from: item), status: "done", requestID: id)]
+        }
+    }
+
+    private static func kindForClaudeBlockType(_ blockType: String) -> ChatMessageKind {
+        let lowercased = blockType.lowercased()
+        if lowercased.contains("result") { return .toolResult }
+        if lowercased.contains("diff") || lowercased.contains("edit") || lowercased.contains("patch") { return .diff }
+        if lowercased.contains("command") || lowercased.contains("bash") { return .command }
+        if lowercased.contains("tool") || lowercased.contains("mcp") || lowercased.contains("server") { return .toolCall }
+        return .rawOutput
+    }
+
+    private static func kindForClaudeDelta(block: ClaudeContentBlock?, defaultKind: ChatMessageKind) -> ChatMessageKind {
+        guard let block else { return defaultKind }
+        let lowercased = block.type.lowercased()
+        if lowercased == "text" { return .assistant }
+        if lowercased.contains("result") { return .toolResult }
+        if lowercased.contains("diff") || lowercased.contains("edit") || lowercased.contains("patch") { return .diff }
+        if lowercased.contains("command") || lowercased.contains("bash") { return .commandOutput }
+        if lowercased.contains("tool") || lowercased.contains("mcp") || lowercased.contains("server") { return .toolCall }
+        return .rawOutput
     }
 
     private static func assistantText(from object: [String: Any]) -> String? {
@@ -394,6 +475,34 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
               let value = String(data: data, encoding: .utf8) else { return "" }
         return value
+    }
+
+    private static func initSummary(from object: [String: Any]) -> String {
+        var lines: [String] = []
+        if let model = stringValue(object["model"]) {
+            lines.append("model: \(model)")
+        }
+        if let permissionMode = stringValue(object["permissionMode"]) {
+            lines.append("permission: \(permissionMode)")
+        }
+        if let tools = object["tools"] as? [Any] {
+            lines.append("tools: \(tools.count)")
+            let names = tools.compactMap { stringValue($0) }.prefix(12)
+            if !names.isEmpty { lines.append("tool names: \(names.joined(separator: ", "))") }
+        }
+        if let servers = object["mcp_servers"] as? [[String: Any]] {
+            lines.append("mcp servers: \(servers.count)")
+            let serverLines = servers.prefix(12).map { server in
+                let name = stringValue(server["name"]) ?? "unknown"
+                let status = stringValue(server["status"]) ?? "unknown"
+                return "- \(name): \(status)"
+            }
+            lines.append(contentsOf: serverLines)
+        }
+        if let commands = object["slash_commands"] as? [Any] {
+            lines.append("slash commands: \(commands.count)")
+        }
+        return lines.isEmpty ? compactText(from: object) : lines.joined(separator: "\n")
     }
 
     private static func extractTokenUsage(from object: [String: Any]) -> ChatBackendEvent? {
@@ -425,6 +534,13 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
     private static func stringValue(_ value: Any?) -> String? {
         if let string = value as? String { return string }
         if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String { return Int(string) }
         return nil
     }
 }

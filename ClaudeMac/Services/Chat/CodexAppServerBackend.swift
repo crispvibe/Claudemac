@@ -152,8 +152,8 @@ final class CodexAppServerBackend: ChatProcessBackend {
         }
     }
 
-    func respondToPermission(requestID: String, decision: ChatPermissionDecision) {
-        guard let approval = pendingApprovals.removeValue(forKey: requestID) else { return }
+    func respondToPermission(requestID: String, decision: ChatPermissionDecision) -> Bool {
+        guard let approval = pendingApprovals.removeValue(forKey: requestID) else { return false }
 
         let result: [String: Any]
         switch approval.method {
@@ -172,11 +172,12 @@ final class CodexAppServerBackend: ChatProcessBackend {
             result = ["decision": codexApprovalDecision(from: decision)]
         }
 
-        sendResponse(id: approval.id, result: result)
+        return sendResponse(id: approval.id, result: result)
     }
 
-    func sendCompact() {
+    func sendCompact() -> Bool {
         _ = sendRequest(method: "compact", params: [:])
+        return inputPipe != nil
     }
 
     private func codexApprovalDecision(from decision: ChatPermissionDecision) -> String {
@@ -262,8 +263,11 @@ final class CodexAppServerBackend: ChatProcessBackend {
             return [.appendMessage(kind: .rawOutput, title: "response", subtitle: "Codex", text: Self.compactText(from: object), status: "stream", requestID: nil)]
         }
 
-        if let id = object["id"], Self.isApprovalRequest(method) {
-            return events(fromServerRequest: object, id: id, method: method)
+        if let id = object["id"] {
+            if Self.isApprovalRequest(method) {
+                return events(fromServerRequest: object, id: id, method: method)
+            }
+            return events(fromServerRequest: object, id: id, method: method, options: options)
         }
 
         return events(fromNotification: object, method: method)
@@ -334,6 +338,52 @@ final class CodexAppServerBackend: ChatProcessBackend {
         )]
     }
 
+    private func events(fromServerRequest object: [String: Any], id: Any, method: String, options: ChatRunOptions) -> [ChatBackendEvent] {
+        if Self.isReadFileRequest(method) {
+            return events(fromReadFileRequest: object, id: id, method: method, projectPath: options.projectPath)
+        }
+        return events(fromUnsupportedServerRequest: object, id: id, method: method)
+    }
+
+    private func events(fromReadFileRequest object: [String: Any], id: Any, method: String, projectPath: String) -> [ChatBackendEvent] {
+        let params = object["params"] as? [String: Any] ?? [:]
+        guard let rawPath = Self.pathValue(from: params) else {
+            let message = "Codex readFile request missing path"
+            let didWrite = sendErrorResponse(id: id, code: -32602, message: message)
+            return [.appendMessage(kind: .toolResult, title: method, subtitle: didWrite ? "invalid request" : "response failed", text: message, status: "failed", requestID: Self.requestKey(from: id))]
+        }
+        do {
+            let fileURL = try Self.projectFileURL(rawPath: rawPath, projectPath: projectPath)
+            let data = try Data(contentsOf: fileURL)
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw ChatProcessError.unsupported("Codex readFile 仅支持 UTF-8 文本文件：\(fileURL.path)")
+            }
+            let didWrite = sendResponse(id: id, result: [
+                "content": text,
+                "text": text,
+                "path": fileURL.path
+            ])
+            return [.appendMessage(kind: .toolResult, title: method, subtitle: didWrite ? fileURL.lastPathComponent : "response failed", text: "read \(fileURL.path)", status: didWrite ? "done" : "failed", requestID: Self.requestKey(from: id))]
+        } catch {
+            let message = error.localizedDescription
+            let didWrite = sendErrorResponse(id: id, code: -32000, message: message)
+            return [.appendMessage(kind: .toolResult, title: method, subtitle: didWrite ? "read failed" : "response failed", text: message, status: "failed", requestID: Self.requestKey(from: id))]
+        }
+    }
+
+    private func events(fromUnsupportedServerRequest object: [String: Any], id: Any, method: String) -> [ChatBackendEvent] {
+        let message = "Acode embedded Codex client does not support server request method: \(method)"
+        let didWrite = sendErrorResponse(id: id, code: -32601, message: message)
+        return [.appendMessage(
+            kind: .rawOutput,
+            title: method,
+            subtitle: didWrite ? "unsupported request" : "response failed",
+            text: Self.compactText(from: object),
+            status: didWrite ? "unsupported" : "failed",
+            requestID: Self.requestKey(from: id)
+        )]
+    }
+
     private func events(fromNotification object: [String: Any], method: String) -> [ChatBackendEvent] {
         let params = object["params"] as? [String: Any] ?? [:]
 
@@ -349,19 +399,19 @@ final class CodexAppServerBackend: ChatProcessBackend {
             }
             return [.updateStreamingStatus("streaming")]
         case "item/agentMessage/delta":
-            return [.appendDelta(kind: .assistant, text: Self.deltaText(from: params))]
+            return [.appendDelta(kind: .assistant, title: "assistant", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: Self.itemID(from: params))]
         case "item/reasoning/textDelta", "item/reasoning/summaryTextDelta":
-            return [.appendDelta(kind: .reasoning, text: Self.deltaText(from: params))]
+            return [.appendDelta(kind: .reasoning, title: "reasoning", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: Self.itemID(from: params))]
         case "item/plan/delta":
-            return [.appendMessage(kind: .reasoning, title: "plan", subtitle: "Codex", text: Self.compactText(from: params), status: "stream", requestID: nil)]
+            return [.appendMessage(kind: .reasoning, title: "plan", subtitle: "Codex", text: Self.compactText(from: params), status: "stream", requestID: Self.itemID(from: params))]
         case "command/exec/outputDelta", "item/commandExecution/outputDelta":
-            return [.appendDelta(kind: .commandOutput, text: Self.deltaText(from: params))]
+            return [.appendDelta(kind: .commandOutput, title: "command output", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: Self.itemID(from: params) ?? activeTurnID)]
         case "item/fileChange/outputDelta", "turn/diff/updated":
-            return [.appendDelta(kind: .diff, text: Self.deltaText(from: params))]
+            return [.appendDelta(kind: .diff, title: "diff", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: Self.itemID(from: params) ?? activeTurnID)]
         case "item/started":
-            return [.appendMessage(kind: .toolCall, title: "item started", subtitle: "Codex", text: Self.compactText(from: params), status: "start", requestID: nil)]
+            return [.appendMessage(kind: Self.kindForCodexItem(params, completed: false), title: Self.itemTitle(from: params, fallback: "item started"), subtitle: "Codex", text: Self.compactText(from: params), status: "streaming", requestID: Self.itemID(from: params))]
         case "item/completed":
-            return [.appendMessage(kind: .toolResult, title: "item completed", subtitle: "Codex", text: Self.compactText(from: params), status: "done", requestID: nil)]
+            return [.appendMessage(kind: Self.kindForCodexItem(params, completed: true), title: Self.itemTitle(from: params, fallback: "item completed"), subtitle: "Codex", text: Self.compactText(from: params), status: "done", requestID: Self.itemID(from: params))]
         case "turn/completed":
             didFinishTurn = true
             process?.terminate()
@@ -395,11 +445,24 @@ final class CodexAppServerBackend: ChatProcessBackend {
         writeJSONObject(object)
     }
 
-    private func sendResponse(id: Any, result: [String: Any]) {
+    @discardableResult
+    private func sendResponse(id: Any, result: [String: Any]) -> Bool {
         writeJSONObject(["id": id, "result": result])
     }
 
-    private func writeJSONObject(_ object: [String: Any]) {
+    @discardableResult
+    private func sendErrorResponse(id: Any, code: Int, message: String) -> Bool {
+        writeJSONObject([
+            "id": id,
+            "error": [
+                "code": code,
+                "message": message
+            ]
+        ])
+    }
+
+    @discardableResult
+    private func writeJSONObject(_ object: [String: Any]) -> Bool {
         ChatPipeWriter.writeJSONObject(object, to: inputPipe)
     }
 
@@ -409,6 +472,40 @@ final class CodexAppServerBackend: ChatProcessBackend {
             || method == "item/permissions/requestApproval"
             || method == "applyPatchApproval"
             || method == "execCommandApproval"
+    }
+
+    private static func isReadFileRequest(_ method: String) -> Bool {
+        let normalized = method.lowercased().replacingOccurrences(of: "_", with: "")
+        return normalized.contains("readfile") || normalized == "fs/read" || normalized.hasSuffix("/read")
+    }
+
+    private static func pathValue(from params: [String: Any]) -> String? {
+        if let value = stringValue(params["path"]) ?? stringValue(params["filePath"]) ?? stringValue(params["filepath"]) ?? stringValue(params["uri"]) {
+            return value.hasPrefix("file://") ? URL(string: value)?.path : value
+        }
+        if let file = params["file"] as? [String: Any] {
+            return pathValue(from: file)
+        }
+        return nil
+    }
+
+    private static func projectFileURL(rawPath: String, projectPath: String) throws -> URL {
+        let projectURL = URL(fileURLWithPath: projectPath, isDirectory: true).standardizedFileURL
+        let fileURL: URL
+        if rawPath.hasPrefix("/") {
+            fileURL = URL(fileURLWithPath: rawPath).standardizedFileURL
+        } else {
+            fileURL = projectURL.appendingPathComponent(rawPath).standardizedFileURL
+        }
+        let projectPrefix = projectURL.path.hasSuffix("/") ? projectURL.path : projectURL.path + "/"
+        guard fileURL.path == projectURL.path || fileURL.path.hasPrefix(projectPrefix) else {
+            throw ChatProcessError.unsupported("Codex readFile 越过项目目录：\(fileURL.path)")
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            throw ChatProcessError.unsupported("Codex readFile 找不到文本文件：\(fileURL.path)")
+        }
+        return fileURL
     }
 
     private static func title(forApprovalMethod method: String) -> String {
@@ -506,6 +603,44 @@ final class CodexAppServerBackend: ChatProcessBackend {
         if let string = value as? String { return string }
         if let number = value as? NSNumber { return number.stringValue }
         return "\(value)"
+    }
+
+    private static func itemID(from object: [String: Any]) -> String? {
+        if let value = stringValue(object["itemId"]) ?? stringValue(object["item_id"]) ?? stringValue(object["id"]) {
+            return value
+        }
+        if let item = object["item"] as? [String: Any] {
+            return stringValue(item["id"]) ?? stringValue(item["itemId"])
+        }
+        return nil
+    }
+
+    private static func itemTitle(from object: [String: Any], fallback: String) -> String {
+        if let value = stringValue(object["title"]) ?? stringValue(object["name"]) ?? stringValue(object["type"]) {
+            return value
+        }
+        if let item = object["item"] as? [String: Any] {
+            return stringValue(item["title"]) ?? stringValue(item["name"]) ?? stringValue(item["type"]) ?? fallback
+        }
+        return fallback
+    }
+
+    private static func kindForCodexItem(_ object: [String: Any], completed: Bool) -> ChatMessageKind {
+        let haystack = [
+            stringValue(object["type"]),
+            stringValue(object["name"]),
+            stringValue((object["item"] as? [String: Any])?["type"]),
+            stringValue((object["item"] as? [String: Any])?["name"])
+        ]
+        .compactMap { $0?.lowercased() }
+        .joined(separator: " ")
+        if haystack.contains("diff") || haystack.contains("patch") || haystack.contains("filechange") || haystack.contains("file_change") {
+            return .diff
+        }
+        if haystack.contains("command") || haystack.contains("exec") || haystack.contains("shell") {
+            return completed ? .commandOutput : .command
+        }
+        return completed ? .toolResult : .toolCall
     }
 
     private static func deltaText(from object: [String: Any]) -> String {

@@ -5,6 +5,7 @@ struct ChatCLICapability: Codable, Equatable {
     let executablePath: String?
     let version: String?
     let supportsStreamJSON: Bool
+    let supportsStreamJSONInput: Bool
     let supportsPermissionPromptTool: Bool
     let supportsResume: Bool
     let supportsContinue: Bool
@@ -30,6 +31,7 @@ enum ChatCLICapabilityProbe {
                 executablePath: nil,
                 version: nil,
                 supportsStreamJSON: false,
+                supportsStreamJSONInput: false,
                 supportsPermissionPromptTool: false,
                 supportsResume: false,
                 supportsContinue: false,
@@ -56,6 +58,7 @@ enum ChatCLICapabilityProbe {
                 executablePath: executable,
                 version: version,
                 supportsStreamJSON: launchError == nil && help.contains("stream-json"),
+                supportsStreamJSONInput: launchError == nil && help.contains("--input-format") && help.contains("stream-json"),
                 supportsPermissionPromptTool: help.contains("permission-prompt-tool"),
                 supportsResume: launchError == nil && help.contains("--resume"),
                 supportsContinue: launchError == nil && help.contains("--continue"),
@@ -70,6 +73,7 @@ enum ChatCLICapabilityProbe {
                 executablePath: executable,
                 version: version,
                 supportsStreamJSON: launchError == nil,
+                supportsStreamJSONInput: false,
                 supportsPermissionPromptTool: false,
                 supportsResume: launchError == nil && help.contains("resume"),
                 supportsContinue: launchError == nil && help.contains("resume"),
