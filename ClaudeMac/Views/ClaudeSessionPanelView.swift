@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct ChatPanelView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var modelService: ChatModelService
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var chatState = ChatPanelState()
     @State private var draftMessage = ""
     @State private var editingMessageID: UUID?
@@ -18,6 +19,7 @@ struct ChatPanelView: View {
     @State private var showResumePopover = false
     @State private var resumeInput = ""
     @State private var expandedTranscriptMessageIDs: Set<UUID> = []
+    @State private var activityPulse = false
     private let transcriptBottomID = "chat-transcript-bottom"
 
     var body: some View {
@@ -324,6 +326,9 @@ struct ChatPanelView: View {
 
     private func toolInvocationRow(_ message: ChatMessage) -> some View {
         let isExpanded = expandedTranscriptMessageIDs.contains(message.id)
+        let isActive = message.isStreaming && lastVisibleTranscriptMessageID == message.id
+        let activeOpacity = reduceMotion ? 0.10 : (activityPulse ? 0.14 : 0.035)
+        let activeTextOpacity = reduceMotion ? 0.95 : (activityPulse ? 1 : 0.52)
         return VStack(alignment: .leading, spacing: 6) {
             Button {
                 toggleTranscriptMessage(message.id)
@@ -331,13 +336,17 @@ struct ChatPanelView: View {
                 HStack(spacing: 6) {
                     Text(message.toolDisplayTitle)
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(isActive ? Color.accentColor.opacity(activeTextOpacity) : Color.secondary)
                         .lineLimit(1)
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.tertiary)
                     Spacer(minLength: 0)
                 }
+                .padding(.horizontal, isActive ? 8 : 0)
+                .padding(.vertical, isActive ? 5 : 0)
+                .background(isActive ? Color.accentColor.opacity(activeOpacity) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -349,6 +358,8 @@ struct ChatPanelView: View {
         }
         .padding(.vertical, 1)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { startActivityPulseIfNeeded() }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.72).repeatForever(autoreverses: true), value: activityPulse)
     }
 
     @ViewBuilder
@@ -378,8 +389,8 @@ struct ChatPanelView: View {
     }
 
     private func reasoningMessageRow(_ message: ChatMessage) -> some View {
-        let isAutoExpanded = chatState.status.isRunning
-        let isExpanded = isAutoExpanded || expandedTranscriptMessageIDs.contains(message.id)
+        let isThinking = message.isStreaming && lastVisibleTranscriptMessageID == message.id
+        let isExpanded = isThinking || expandedTranscriptMessageIDs.contains(message.id)
 
         return VStack(alignment: .leading, spacing: 5) {
             Button {
@@ -390,8 +401,8 @@ struct ChatPanelView: View {
                         .font(.system(size: 9, weight: .semibold))
                         .frame(width: 12)
 
-                    Text(isAutoExpanded ? "正在思考" : "思考已完成")
-                        .font(.system(size: 11, weight: .medium))
+                    Text("thinking")
+                        .font(.system(size: 12, weight: .medium))
 
                     Spacer(minLength: 0)
                 }
@@ -405,16 +416,25 @@ struct ChatPanelView: View {
 
             if isExpanded && !message.text.isEmpty {
                 Text(message.text)
-                    .font(.system(size: 10))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .lineSpacing(2)
+                    .lineSpacing(3)
                     .textSelection(.enabled)
-                    .padding(.leading, 24)
+                    .padding(.leading, 19)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.vertical, 1)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var lastVisibleTranscriptMessageID: UUID? {
+        chatState.messages.last(where: shouldShowInTranscript)?.id
+    }
+
+    private func startActivityPulseIfNeeded() {
+        guard !reduceMotion, !activityPulse else { return }
+        activityPulse = true
     }
 
     private func toggleTranscriptMessage(_ id: UUID) {
