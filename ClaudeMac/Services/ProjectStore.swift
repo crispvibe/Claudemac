@@ -34,12 +34,28 @@ struct ProjectStore {
             }
             let directory = base.appendingPathComponent("Acode", isDirectory: true)
             let legacyDirectory = base.appendingPathComponent("ClaudeMac", isDirectory: true)
-            if !FileManager.default.fileExists(atPath: directory.path), FileManager.default.fileExists(atPath: legacyDirectory.path) {
-                try? FileManager.default.copyItem(at: legacyDirectory, to: directory)
+            let sandboxDirectory = sandboxAppSupportDirectory(named: "Acode")
+                ?? sandboxAppSupportDirectory(named: "ClaudeMac")
+            if !FileManager.default.fileExists(atPath: directory.path) {
+                if let sandboxDirectory, FileManager.default.fileExists(atPath: sandboxDirectory.path) {
+                    try? FileManager.default.copyItem(at: sandboxDirectory, to: directory)
+                } else if FileManager.default.fileExists(atPath: legacyDirectory.path) {
+                    try? FileManager.default.copyItem(at: legacyDirectory, to: directory)
+                }
             }
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             return directory
         }
+    }
+
+    private static func sandboxAppSupportDirectory(named name: String) -> URL? {
+        guard let identifier = Bundle.main.bundleIdentifier,
+              let home = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first?.deletingLastPathComponent() else { return nil }
+        return home
+            .appendingPathComponent("Containers", isDirectory: true)
+            .appendingPathComponent(identifier, isDirectory: true)
+            .appendingPathComponent("Data/Library/Application Support", isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true)
     }
 
     private static var projectsURL: URL { get throws { try appSupportDirectory.appendingPathComponent("projects.json") } }
