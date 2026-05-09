@@ -102,6 +102,15 @@ struct ChatPanelView: View {
             }
             .buttonStyle(.plain)
 
+            Button(action: startNewChat) {
+                Image(systemName: "plus.message")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(appState.selectedProject == nil)
+            .help("新建对话")
+
             Button {
                 showResumePopover = true
             } label: {
@@ -299,10 +308,14 @@ struct ChatPanelView: View {
 
     private func assistantMessageRow(_ message: ChatMessage) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            AssistantMessageContent(text: message.text, isStreaming: message.isStreaming)
+            AssistantMessageContent(text: message.text, isStreaming: message.isStreaming, onOpenFile: openFileReference)
 
             messageActionBar(message, alignment: .leading)
         }
+    }
+
+    private func openFileReference(_ reference: FileReference) {
+        appState.openFile(path: reference.path)
     }
 
     private var loadingMessageRow: some View {
@@ -349,15 +362,43 @@ struct ChatPanelView: View {
     }
 
     private func toolInvocationHeader(_ message: ChatMessage, isExpanded: Bool) -> some View {
-        HStack(spacing: 7) {
+        HStack(alignment: .center, spacing: 9) {
             Button {
                 toggleTranscriptMessage(message.id)
             } label: {
-                HStack(spacing: 6) {
-                    Text(message.toolPrimaryTitle)
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color.secondary)
-                        .lineLimit(1)
+                HStack(alignment: .center, spacing: 9) {
+                    ZStack {
+                        Circle()
+                            .fill(message.toolTint.opacity(0.13))
+                            .frame(width: 24, height: 24)
+                        Image(systemName: message.toolSystemImage)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(message.toolTint)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(message.toolPrimaryTitle)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(.primary.opacity(0.82))
+                                .lineLimit(1)
+                            Text(message.toolActionSummary)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        HStack(spacing: 5) {
+                            if let execution = message.toolExecutionSummary {
+                                toolInfoPill(execution, systemImage: message.toolExecutionSystemImage, tint: .secondary)
+                                    .help(execution)
+                            }
+                            if let metrics = message.toolMetricsSummary {
+                                toolInfoPill(metrics, systemImage: "chart.bar.doc.horizontal", tint: .secondary)
+                            }
+                        }
+                    }
+
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Color.secondary.opacity(0.45))
@@ -366,42 +407,52 @@ struct ChatPanelView: View {
             }
             .buttonStyle(.plain)
 
-            if let command = message.toolExecutedCommand {
-                Text("$ \(command)")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.primary.opacity(0.72))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .help(command)
-            }
-
             if let filePath = message.toolFilePath {
                 toolFileButton(path: filePath)
             }
 
+            toolStatusPill(message)
             Spacer(minLength: 0)
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(message.toolTint.opacity(0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(message.toolTint.opacity(0.14), lineWidth: 1)
+        )
     }
 
     private func toolFileButton(path: String) -> some View {
-        Button {
-            appState.openFile(path: path)
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "doc.text")
-                    .font(.system(size: 9, weight: .medium))
-                Text(URL(fileURLWithPath: path).lastPathComponent)
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(.secondary)
+        let reference = FileReference(path: path)
+        return FileReferenceButton(reference: reference, onOpenFile: openFileReference)
+    }
+
+    private func toolInfoPill(_ text: String, systemImage: String, tint: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.system(size: 9, weight: .medium))
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(tint.opacity(0.08))
+        .clipShape(Capsule())
+    }
+
+    private func toolStatusPill(_ message: ChatMessage) -> some View {
+        Text(message.toolStatusLabel)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(message.toolTint)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Color.black.opacity(0.035))
+            .background(message.toolTint.opacity(0.1))
             .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .help(path)
     }
 
     @ViewBuilder
@@ -421,6 +472,10 @@ struct ChatPanelView: View {
                     }
                 }
 
+                if let preview = message.toolCodePreview {
+                    toolCodePreviewCard(preview)
+                }
+                FileReferenceChips(text: detailText, onOpenFile: openFileReference)
                 toolDetailView(message)
             }
             .padding(9)
@@ -431,6 +486,52 @@ struct ChatPanelView: View {
                     .stroke(AppTheme.hairline, lineWidth: 1)
             )
         }
+    }
+
+    private func toolCodePreviewCard(_ preview: ToolCodePreview) -> some View {
+        let style = FileLanguageStyle.forPath(preview.path)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                Image(systemName: style.symbol)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(style.tint)
+                Text(preview.title)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.primary.opacity(0.78))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text(preview.stats)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(style.tint.opacity(0.07))
+
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(preview.lines.enumerated()), id: \.offset) { _, line in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(line.marker)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(line.tint)
+                            .frame(width: 10, alignment: .center)
+                        Text(line.text)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(line.tint)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(8)
+            .background(Color.black.opacity(0.035))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(style.tint.opacity(0.16), lineWidth: 1)
+        )
     }
 
     @ViewBuilder
@@ -455,23 +556,31 @@ struct ChatPanelView: View {
             terminalDetailView(message)
         } else if !message.toolDetailText.isEmpty {
             ScrollView(.horizontal, showsIndicators: true) {
-                Text(message.toolDetailPreviewText)
-                    .font(.system(size: 10, design: message.kind.isToolDetailMonospaced ? .monospaced : .default))
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                FileReferenceText(
+                    text: message.toolDetailPreviewText,
+                    font: .system(size: 10, design: message.kind.isToolDetailMonospaced ? .monospaced : .default),
+                    baseColor: .secondary,
+                    lineSpacing: 2,
+                    parseMarkdown: false,
+                    onOpenFile: openFileReference
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
     private func terminalDetailView(_ message: ChatMessage) -> some View {
         ScrollView(.horizontal, showsIndicators: true) {
-            Text(message.terminalDetailPreviewText)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.primary.opacity(0.78))
-                .lineSpacing(2)
-                .padding(9)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            FileReferenceText(
+                text: message.terminalDetailPreviewText,
+                font: .system(size: 10, design: .monospaced),
+                baseColor: .primary.opacity(0.78),
+                lineSpacing: 2,
+                parseMarkdown: false,
+                onOpenFile: openFileReference
+            )
+            .padding(9)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color.black.opacity(0.045))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1066,6 +1175,10 @@ struct ChatPanelView: View {
         return "\(cli.displayName) · \(capability.version ?? "未知版本") · \(capability.executablePath ?? cli.executable)"
     }
 
+    private func startNewChat() {
+        appState.startNewChat(for: appState.selectedProject)
+    }
+
     private func copyProjectPath() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(projectPath, forType: .string)
@@ -1397,9 +1510,311 @@ private enum ChatTranscriptItem: Identifiable {
     }
 }
 
+private struct ToolCodePreview {
+    struct Line: Identifiable {
+        let id = UUID()
+        let marker: String
+        let text: String
+        let tint: Color
+    }
+
+    let title: String
+    let path: String
+    let stats: String
+    let lines: [Line]
+}
+
+private struct FileReference: Identifiable, Hashable {
+    let raw: String
+    let path: String
+    let line: Int?
+    let column: Int?
+
+    init(raw: String? = nil, path: String, line: Int? = nil, column: Int? = nil) {
+        self.raw = raw ?? path
+        self.path = path
+        self.line = line
+        self.column = column
+    }
+
+    var id: String { "\(path):\(line ?? 0):\(column ?? 0)" }
+
+    var displayName: String {
+        let fileName = (path as NSString).lastPathComponent
+        guard let line else { return fileName }
+        if let column { return "\(fileName):\(line):\(column)" }
+        return "\(fileName):\(line)"
+    }
+
+    var openURL: URL? {
+        var components = URLComponents()
+        components.scheme = "acode-file"
+        components.host = "open"
+        var items = [URLQueryItem(name: "path", value: path)]
+        if let line { items.append(URLQueryItem(name: "line", value: String(line))) }
+        if let column { items.append(URLQueryItem(name: "column", value: String(column))) }
+        components.queryItems = items
+        return components.url
+    }
+
+    init?(openURL: URL) {
+        guard openURL.scheme == "acode-file" else { return nil }
+        let components = URLComponents(url: openURL, resolvingAgainstBaseURL: false)
+        guard let path = components?.queryItems?.first(where: { $0.name == "path" })?.value, !path.isEmpty else { return nil }
+        let line = components?.queryItems?.first(where: { $0.name == "line" })?.value.flatMap(Int.init)
+        let column = components?.queryItems?.first(where: { $0.name == "column" })?.value.flatMap(Int.init)
+        self.init(path: path, line: line, column: column)
+    }
+}
+
+private struct FileLanguageStyle {
+    let label: String
+    let symbol: String
+    let tint: Color
+
+    static func forPath(_ path: String) -> FileLanguageStyle {
+        let key = languageKey(for: path)
+        switch key {
+        case "swift", "xib", "storyboard", "xcconfig", "entitlements", "xcprivacy", "pbxproj":
+            return FileLanguageStyle(label: "Swift", symbol: "chevron.left.forwardslash.chevron.right", tint: .orange)
+        case "js", "jsx", "mjs", "cjs":
+            return FileLanguageStyle(label: "JS", symbol: "curlybraces", tint: .yellow)
+        case "ts", "tsx":
+            return FileLanguageStyle(label: "TS", symbol: "curlybraces", tint: .blue)
+        case "py", "pyw", "ipynb":
+            return FileLanguageStyle(label: "Python", symbol: "chevron.left.forwardslash.chevron.right", tint: .blue)
+        case "go":
+            return FileLanguageStyle(label: "Go", symbol: "network", tint: .cyan)
+        case "rs":
+            return FileLanguageStyle(label: "Rust", symbol: "gearshape.2", tint: .brown)
+        case "java", "kt", "kts", "scala", "gradle":
+            return FileLanguageStyle(label: "JVM", symbol: "cup.and.saucer", tint: .red)
+        case "c", "h", "m", "mm", "cc", "cpp", "cxx", "hpp", "cs", "fs", "vb":
+            return FileLanguageStyle(label: "Native", symbol: "hammer", tint: .indigo)
+        case "rb":
+            return FileLanguageStyle(label: "Ruby", symbol: "diamond", tint: .red)
+        case "php":
+            return FileLanguageStyle(label: "PHP", symbol: "globe", tint: .indigo)
+        case "r":
+            return FileLanguageStyle(label: "R", symbol: "chart.xyaxis.line", tint: .blue)
+        case "lua":
+            return FileLanguageStyle(label: "Lua", symbol: "moon", tint: .blue)
+        case "dart":
+            return FileLanguageStyle(label: "Dart", symbol: "paperplane", tint: .cyan)
+        case "ex", "exs":
+            return FileLanguageStyle(label: "Elixir", symbol: "hexagon", tint: .purple)
+        case "erl", "hrl":
+            return FileLanguageStyle(label: "Erlang", symbol: "antenna.radiowaves.left.and.right", tint: .red)
+        case "clj", "cljs":
+            return FileLanguageStyle(label: "Clojure", symbol: "leaf", tint: .green)
+        case "zig":
+            return FileLanguageStyle(label: "Zig", symbol: "bolt", tint: .orange)
+        case "html", "htm", "css", "scss", "sass", "less", "vue", "svelte":
+            return FileLanguageStyle(label: "Web", symbol: "safari", tint: .pink)
+        case "json", "jsonc", "plist", "xml", "yaml", "yml", "toml", "properties", "ini", "conf", "config", "gitignore", "editorconfig":
+            return FileLanguageStyle(label: "Config", symbol: "slider.horizontal.3", tint: .purple)
+        case "md", "markdown", "txt", "rtf":
+            return FileLanguageStyle(label: "Doc", symbol: "doc.richtext", tint: .blue)
+        case "sh", "bash", "zsh", "fish", "ps1", "makefile", "dockerfile", "env":
+            return FileLanguageStyle(label: "Shell", symbol: "terminal", tint: .green)
+        case "sql", "graphql", "gql", "proto", "csv", "tsv":
+            return FileLanguageStyle(label: "Data", symbol: "tablecells", tint: .mint)
+        case "png", "jpg", "jpeg", "gif", "webp", "heic", "svg", "pdf":
+            return FileLanguageStyle(label: "Asset", symbol: "photo", tint: .teal)
+        case "diff", "patch":
+            return FileLanguageStyle(label: "Diff", symbol: "plus.forwardslash.minus", tint: .orange)
+        case "lock", "log":
+            return FileLanguageStyle(label: "Log", symbol: "doc.text.magnifyingglass", tint: .secondary)
+        default:
+            return FileLanguageStyle(label: "File", symbol: "doc.text", tint: .secondary)
+        }
+    }
+
+    private static func languageKey(for path: String) -> String {
+        let name = (path as NSString).lastPathComponent.lowercased()
+        let ext = (path as NSString).pathExtension.lowercased()
+        if !ext.isEmpty { return ext }
+        if name == "dockerfile" || name.hasPrefix("dockerfile.") { return "dockerfile" }
+        if name == "makefile" || name.hasPrefix("makefile.") { return "makefile" }
+        if name.hasPrefix(".env") { return "env" }
+        return name
+    }
+}
+
+private struct FileReferenceText: View {
+    let text: String
+    let font: Font
+    let baseColor: Color
+    let lineSpacing: CGFloat
+    let parseMarkdown: Bool
+    let onOpenFile: (FileReference) -> Void
+
+    var body: some View {
+        Text(FileReferenceDetector.attributedString(from: text, parseMarkdown: parseMarkdown, baseColor: baseColor))
+            .font(font)
+            .lineSpacing(lineSpacing)
+            .environment(\.openURL, OpenURLAction { url in
+                guard let reference = FileReference(openURL: url) else { return .systemAction }
+                onOpenFile(reference)
+                return .handled
+            })
+    }
+}
+
+private struct FileReferenceChips: View {
+    let text: String
+    let onOpenFile: (FileReference) -> Void
+
+    private var references: [FileReference] {
+        FileReferenceDetector.references(in: text)
+    }
+
+    var body: some View {
+        let visibleReferences = Array(references.prefix(8))
+        if !visibleReferences.isEmpty {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 118), spacing: 6)], alignment: .leading, spacing: 6) {
+                ForEach(visibleReferences) { reference in
+                    FileReferenceButton(reference: reference, onOpenFile: onOpenFile)
+                }
+                if references.count > visibleReferences.count {
+                    Text("+\(references.count - visibleReferences.count)")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.035))
+                        .clipShape(Capsule())
+                }
+            }
+        }
+    }
+}
+
+private struct FileReferenceButton: View {
+    let reference: FileReference
+    let onOpenFile: (FileReference) -> Void
+
+    private var style: FileLanguageStyle { .forPath(reference.path) }
+
+    var body: some View {
+        Button {
+            onOpenFile(reference)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: style.symbol)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(reference.displayName)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .foregroundStyle(style.tint)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(style.tint.opacity(0.1))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(reference.path)
+    }
+}
+
+private enum FileReferenceDetector {
+    private static let maxScanLength = 40_000
+    private static let maxReferences = 24
+    private static let pathPattern = #"(?:(?:file://)?/(?:[^\s`\"'<>|])+|(?:[A-Za-z0-9_@.+~%-]+/)+(?:[A-Za-z0-9_@.+~%-]+)|[A-Za-z0-9_@.+~%-]+\.[A-Za-z0-9]{1,12})(?::\d+){0,2}"#
+    private static let knownKeys: Set<String> = [
+        "swift", "xib", "storyboard", "xcconfig", "entitlements", "xcprivacy", "pbxproj",
+        "js", "jsx", "mjs", "cjs", "ts", "tsx", "py", "pyw", "ipynb", "go", "rs",
+        "java", "kt", "kts", "scala", "gradle", "c", "h", "m", "mm", "cc", "cpp", "cxx", "hpp", "cs", "fs", "vb",
+        "rb", "php", "r", "lua", "dart", "ex", "exs", "erl", "hrl", "clj", "cljs", "zig",
+        "html", "htm", "css", "scss", "sass", "less", "vue", "svelte",
+        "json", "jsonc", "plist", "xml", "yaml", "yml", "toml", "properties", "ini", "conf", "config", "md", "markdown", "txt", "rtf",
+        "sh", "bash", "zsh", "fish", "ps1", "makefile", "dockerfile", "env",
+        "sql", "graphql", "gql", "proto", "csv", "tsv", "png", "jpg", "jpeg", "gif", "webp", "heic", "svg", "pdf",
+        "diff", "patch", "lock", "log", "gitignore", "editorconfig"
+    ]
+
+    static func references(in text: String) -> [FileReference] {
+        let scanText = String(text.prefix(maxScanLength))
+        guard let regex = try? NSRegularExpression(pattern: pathPattern) else { return [] }
+        let range = NSRange(scanText.startIndex..<scanText.endIndex, in: scanText)
+        var references: [FileReference] = []
+        var seen: Set<String> = []
+
+        for match in regex.matches(in: scanText, range: range) {
+            guard references.count < maxReferences,
+                  let swiftRange = Range(match.range, in: scanText),
+                  let reference = reference(from: String(scanText[swiftRange])),
+                  seen.insert(reference.id).inserted else { continue }
+            references.append(reference)
+        }
+        return references
+    }
+
+    static func attributedString(from text: String, parseMarkdown: Bool, baseColor: Color) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        var attributed = parseMarkdown
+            ? ((try? AttributedString(markdown: text, options: options)) ?? AttributedString(text))
+            : AttributedString(text)
+        attributed.foregroundColor = baseColor
+
+        for reference in references(in: text) {
+            guard let url = reference.openURL, let range = attributed.range(of: reference.raw) else { continue }
+            attributed[range].link = url
+            attributed[range].foregroundColor = FileLanguageStyle.forPath(reference.path).tint
+        }
+        return attributed
+    }
+
+    private static func reference(from rawValue: String) -> FileReference? {
+        let raw = rawValue.trimmingCharacters(in: CharacterSet(charactersIn: "`\"'()[]{}<>，。；；、,.;"))
+        guard !raw.isEmpty else { return nil }
+        if raw.contains("://"), !raw.hasPrefix("file://") { return nil }
+
+        var parts = raw.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        var line: Int?
+        var column: Int?
+        if let last = parts.last, let value = Int(last) {
+            column = value
+            parts.removeLast()
+        }
+        if let last = parts.last, let value = Int(last) {
+            line = value
+            parts.removeLast()
+        }
+        if line == nil, let columnValue = column {
+            line = columnValue
+            column = nil
+        }
+
+        var path = parts.joined(separator: ":")
+        if path.hasPrefix("file://"), let url = URL(string: path) {
+            path = url.path
+        }
+        if path.hasPrefix("a/") || path.hasPrefix("b/") {
+            path = String(path.dropFirst(2))
+        }
+        path = path.trimmingCharacters(in: CharacterSet(charactersIn: "`\"'()[]{}<>，。；；、,.;"))
+        guard !path.isEmpty, path != "/dev/null", isKnownFilePath(path) else { return nil }
+        return FileReference(raw: raw, path: path, line: line, column: column)
+    }
+
+    private static func isKnownFilePath(_ path: String) -> Bool {
+        let name = (path as NSString).lastPathComponent.lowercased()
+        let ext = (path as NSString).pathExtension.lowercased()
+        if !ext.isEmpty { return knownKeys.contains(ext) }
+        if name == "dockerfile" || name.hasPrefix("dockerfile.") { return true }
+        if name == "makefile" || name.hasPrefix("makefile.") { return true }
+        if name.hasPrefix(".env") { return true }
+        return knownKeys.contains(name)
+    }
+}
+
 private struct AssistantMessageContent: View {
     let text: String
     let isStreaming: Bool
+    let onOpenFile: (FileReference) -> Void
 
     private let lightweightThreshold = 12_000
     private let previewLimit = 20_000
@@ -1420,10 +1835,16 @@ private struct AssistantMessageContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if shouldUseLightweightRender {
-                Text(previewText)
-                    .font(.system(size: 12))
-                    .lineSpacing(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                FileReferenceText(
+                    text: previewText,
+                    font: .system(size: 12),
+                    baseColor: .primary,
+                    lineSpacing: 3,
+                    parseMarkdown: false,
+                    onOpenFile: onOpenFile
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                FileReferenceChips(text: previewText, onOpenFile: onOpenFile)
             } else {
                 ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                     blockView(block)
@@ -1437,11 +1858,17 @@ private struct AssistantMessageContent: View {
     private func blockView(_ block: AssistantMessageBlock) -> some View {
         switch block {
         case .text(let value):
-            Text(inlineMarkdown(value))
-                .font(.system(size: 12))
-                .lineSpacing(3)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            FileReferenceText(
+                text: value,
+                font: .system(size: 12),
+                baseColor: .primary,
+                lineSpacing: 3,
+                parseMarkdown: true,
+                onOpenFile: onOpenFile
+            )
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            FileReferenceChips(text: value, onOpenFile: onOpenFile)
         case .code(let language, let code):
             AssistantCodeBlockView(language: language, code: code)
         case .table(let value):
@@ -1995,6 +2422,180 @@ private extension ChatMessage {
         return "details"
     }
 
+    var toolActionSummary: String {
+        switch toolName.lowercased() {
+        case "read": return "读取文件内容"
+        case "grep": return "搜索代码匹配"
+        case "glob": return "匹配文件列表"
+        case "edit": return "修改已有文件"
+        case "write": return "写入文件内容"
+        case "bash": return "执行终端命令"
+        default:
+            if kind == .diff { return "代码变更预览" }
+            if isTerminalTool { return "执行终端任务" }
+            if kind == .toolResult { return "工具返回结果" }
+            return "调用工具"
+        }
+    }
+
+    var toolSystemImage: String {
+        switch toolName.lowercased() {
+        case "read": return "doc.text.magnifyingglass"
+        case "grep": return "magnifyingglass"
+        case "glob": return "folder"
+        case "edit": return "pencil.line"
+        case "write": return "square.and.pencil"
+        case "bash": return "terminal"
+        default:
+            if kind == .diff { return "plus.forwardslash.minus" }
+            if isTerminalTool { return "terminal" }
+            if kind == .toolResult { return "checkmark.seal" }
+            return "hammer"
+        }
+    }
+
+    var toolTint: Color {
+        let normalizedStatus = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalizedStatus.contains("fail") || normalizedStatus.contains("error") { return .red }
+        if normalizedStatus == "stopped" { return .secondary }
+        switch toolName.lowercased() {
+        case "read", "grep", "glob": return .blue
+        case "edit": return .orange
+        case "write": return .green
+        case "bash": return .purple
+        default:
+            if kind == .diff { return .orange }
+            if kind == .toolResult { return .green }
+            return .secondary
+        }
+    }
+
+    var toolStatusLabel: String {
+        if isStreaming { return "运行中" }
+        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.contains("fail") || normalized.contains("error") { return "失败" }
+        if normalized == "stopped" { return "已停止" }
+        if normalized == "done" || normalized == "success" || normalized == "completed" { return "完成" }
+        return normalized.isEmpty ? "完成" : status
+    }
+
+    var toolExecutionSummary: String? {
+        switch toolName.lowercased() {
+        case "read":
+            if let path = toolFilePath { return "读取 \(Self.displayFileName(path))" }
+            return "读取文件内容"
+        case "grep":
+            if let pattern = firstToolStringValue(keys: ["pattern", "query", "regex"], in: text) {
+                return "搜索 \(Self.previewSnippet(pattern))"
+            }
+            return "搜索代码匹配"
+        case "glob":
+            if let pattern = firstToolStringValue(keys: ["pattern", "glob", "path"], in: text) {
+                return "匹配 \(Self.previewSnippet(pattern))"
+            }
+            return "匹配文件列表"
+        case "edit":
+            if let path = toolFilePath { return "编辑 \(Self.displayFileName(path))" }
+            if let replacement = firstToolStringValue(keys: ["new_string", "newString", "replacement"], in: text) {
+                return "替换为 \(Self.previewSnippet(replacement))"
+            }
+            return "编辑文件"
+        case "write":
+            if let path = toolFilePath { return "写入 \(Self.displayFileName(path))" }
+            return "写入文件"
+        case "bash":
+            if let command = toolExecutedCommand { return "$ \(Self.previewSnippet(command, limit: 86))" }
+            return "执行终端命令"
+        default:
+            if kind == .diff, let path = toolFilePath { return "变更 \(Self.displayFileName(path))" }
+            if let command = toolExecutedCommand { return "$ \(Self.previewSnippet(command, limit: 86))" }
+            if let path = toolFilePath { return Self.displayFileName(path) }
+            return Self.firstUsefulLine(toolDetailText).map { Self.previewSnippet($0) }
+        }
+    }
+
+    var toolExecutionSystemImage: String {
+        switch toolName.lowercased() {
+        case "read": return "doc.text.magnifyingglass"
+        case "grep": return "magnifyingglass"
+        case "glob": return "folder.badge.gearshape"
+        case "edit": return "text.cursor"
+        case "write": return "square.and.pencil"
+        case "bash": return "terminal"
+        default:
+            if kind == .diff { return "plus.forwardslash.minus" }
+            if isTerminalTool { return "terminal" }
+            return "info.circle"
+        }
+    }
+
+    var toolMetricsSummary: String? {
+        if kind == .diff, let stats = diffStatsSummary { return stats }
+        let detail = toolDetailText
+        let byteCount = text.utf8.count
+        let lineCount = detail.split(separator: "\n", omittingEmptySubsequences: false).count
+        if lineCount > 1 {
+            return "返回 \(lineCount) 行 · \(Self.formattedByteCount(byteCount))"
+        }
+        if byteCount > 0 {
+            return "返回 \(Self.formattedByteCount(byteCount))"
+        }
+        return nil
+    }
+
+    private var diffStatsSummary: String? {
+        let added = diffLines.filter { $0.hasPrefix("+") && !$0.hasPrefix("+++") }.count
+        let removed = diffLines.filter { $0.hasPrefix("-") && !$0.hasPrefix("---") }.count
+        guard added > 0 || removed > 0 else { return nil }
+        return "变更 +\(added) / -\(removed)"
+    }
+
+    var toolCodePreview: ToolCodePreview? {
+        if kind == .diff {
+            return diffCodePreview
+        }
+        switch toolName.lowercased() {
+        case "edit":
+            return editCodePreview
+        case "write":
+            return writeCodePreview
+        default:
+            return nil
+        }
+    }
+
+    private var diffCodePreview: ToolCodePreview? {
+        let path = toolFilePath ?? "changes.diff"
+        let lines = diffLines
+            .filter { !$0.hasPrefix("diff --git") && !$0.hasPrefix("+++") && !$0.hasPrefix("---") && !$0.hasPrefix("@@") }
+            .prefix(10)
+            .map(Self.previewLine(from:))
+        guard !lines.isEmpty else { return nil }
+        return ToolCodePreview(title: Self.displayFileName(path), path: path, stats: diffStatsSummary ?? "代码变更", lines: lines)
+    }
+
+    private var editCodePreview: ToolCodePreview? {
+        guard let path = toolFilePath else { return nil }
+        var lines: [ToolCodePreview.Line] = []
+        if let oldValue = firstToolStringValue(keys: ["old_string", "oldString", "old", "before"], in: text) {
+            lines.append(contentsOf: Self.previewContentLines(oldValue, marker: "-", tint: .red, limit: 3))
+        }
+        if let newValue = firstToolStringValue(keys: ["new_string", "newString", "replacement", "after"], in: text) {
+            lines.append(contentsOf: Self.previewContentLines(newValue, marker: "+", tint: .green, limit: 5))
+        }
+        guard !lines.isEmpty else { return nil }
+        return ToolCodePreview(title: Self.displayFileName(path), path: path, stats: diffStatsSummary ?? "编辑预览", lines: Array(lines.prefix(8)))
+    }
+
+    private var writeCodePreview: ToolCodePreview? {
+        guard let path = toolFilePath,
+              let content = firstToolStringValue(keys: ["content", "text", "source", "new_string", "newString"], in: text) else { return nil }
+        let lines = Self.previewContentLines(content, marker: "+", tint: .green, limit: 8)
+        guard !lines.isEmpty else { return nil }
+        let lineCount = content.split(separator: "\n", omittingEmptySubsequences: false).count
+        return ToolCodePreview(title: Self.displayFileName(path), path: path, stats: "写入 \(lineCount) 行", lines: lines)
+    }
+
     var isTerminalTool: Bool {
         if kind == .command || kind == .commandOutput { return true }
         let values = [title, subtitle, toolPrimaryTitle].map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
@@ -2064,6 +2665,10 @@ private extension ChatMessage {
 
     var toolFilePath: String? {
         if let path = jsonToolFilePath(from: text) {
+            return path
+        }
+        if let loosePath = firstToolStringValue(keys: ["file_path", "filePath", "filepath", "path", "filename", "notebook_path"], in: text),
+           let path = normalizedToolPath(loosePath) {
             return path
         }
         for value in [title, subtitle, text] {
@@ -2339,6 +2944,57 @@ private extension ChatMessage {
         case "filePath", "file_path": return "path"
         default: return key
         }
+    }
+
+    private static func displayFileName(_ path: String) -> String {
+        let name = (path as NSString).lastPathComponent
+        return name.isEmpty ? path : name
+    }
+
+    private static func firstUsefulLine(_ value: String) -> String? {
+        value
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty && !$0.isInternalToolNoiseLine }
+    }
+
+    private static func previewSnippet(_ value: String, limit: Int = 72) -> String {
+        let normalized = value
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > limit else { return normalized }
+        return String(normalized.prefix(limit)) + "…"
+    }
+
+    private static func previewContentLines(_ value: String, marker: String, tint: Color, limit: Int) -> [ToolCodePreview.Line] {
+        value
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .prefix(limit)
+            .map { line in
+                ToolCodePreview.Line(marker: marker, text: line.isEmpty ? " " : line, tint: tint)
+            }
+    }
+
+    private static func previewLine(from rawLine: String) -> ToolCodePreview.Line {
+        if rawLine.hasPrefix("+") {
+            return ToolCodePreview.Line(marker: "+", text: String(rawLine.dropFirst()), tint: .green)
+        }
+        if rawLine.hasPrefix("-") {
+            return ToolCodePreview.Line(marker: "-", text: String(rawLine.dropFirst()), tint: .red)
+        }
+        let text = rawLine.hasPrefix(" ") ? String(rawLine.dropFirst()) : rawLine
+        return ToolCodePreview.Line(marker: " ", text: text.isEmpty ? " " : text, tint: .secondary)
+    }
+
+    private static func formattedByteCount(_ bytes: Int) -> String {
+        if bytes >= 1_048_576 {
+            return String(format: "%.1f MB", Double(bytes) / 1_048_576)
+        }
+        if bytes >= 1024 {
+            return String(format: "%.1f KB", Double(bytes) / 1024)
+        }
+        return "\(bytes) B"
     }
 }
 

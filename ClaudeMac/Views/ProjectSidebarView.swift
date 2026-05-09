@@ -100,7 +100,6 @@ struct ProjectSidebarView: View {
                                 selectedSessionID: appState.selectedCLIHistoryID,
                                 isSelected: project.id == appState.selectedProjectID,
                                 onSelect: { appState.selectProject(project) },
-                                onNewChat: { appState.startNewChat(for: project) },
                                 onRemove: { projectToRemove = project },
                                 onSelectSession: { appState.selectCLIHistory($0) },
                                 onRemoveSession: { historyToRemove = $0 }
@@ -196,7 +195,6 @@ private struct ProjectRow: View {
     let selectedSessionID: String?
     let isSelected: Bool
     let onSelect: () -> Void
-    let onNewChat: () -> Void
     let onRemove: () -> Void
     let onSelectSession: (CLIHistorySession) -> Void
     let onRemoveSession: (CLIHistorySession) -> Void
@@ -221,7 +219,6 @@ private struct ProjectRow: View {
                 }
                 .buttonStyle(.plain)
 
-                sidebarIconButton(systemImage: "plus", help: "新建会话", action: onNewChat)
                 sidebarIconButton(systemImage: "trash", help: "从列表移除项目，不删除文件夹", action: onRemove)
                     .padding(.trailing, 8)
             }
@@ -232,7 +229,7 @@ private struct ProjectRow: View {
                     .stroke(AppTheme.weakHairline, lineWidth: 1)
             )
 
-            if !sessions.isEmpty {
+            if isSelected && !sessions.isEmpty {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(sessions) { session in
                         HistorySessionRow(
