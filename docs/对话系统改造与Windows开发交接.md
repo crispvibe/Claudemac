@@ -627,6 +627,7 @@ Windows 复刻建议：
 | ActionButton | status + draft | macOS 当前非运行时发送/入队，运行时停止 | send / interrupt | Windows 建议拆分为 SendButton + StopButton |
 | StopButton | status.isRunning | Windows 目标控件 | interrupt | 独立于 send，避免运行态按钮语义跳变 |
 | Composer | draft text | 占位文案“输入你的需求” | IME 候选确认、Shift+Enter 换行 | marked text 时隐藏 placeholder，避免叠字 |
+| PickerOverlay | activePicker | 根级浮层，不参与 composer 布局 | 点击 CLI/权限/模型按钮打开，点击空白关闭 | 用 Window/Popup/Adorner/Portal 顶层承载，不能挤占输入框或 transcript 空间 |
 | SendButton | draft nonempty | Windows 目标控件 | send / enqueue | 不承担 stop 语义 |
 | AgentProcessSheet | Agent tool row | process 入口，默认自动刷新 | pause/resume/refresh/close | 读取 subagents JSONL，展示子代理真实过程 |
 
@@ -634,8 +635,23 @@ Windows 复刻建议：
 
 - UI row 分发：`ClaudeMac/Views/ClaudeSessionPanelView.swift:253`
 - interactive card：`ClaudeMac/Views/ClaudeSessionPanelView.swift:1186`
+- selector buttons：`ClaudeMac/Views/ClaudeSessionPanelView.swift:1032`
+- root picker layer：`ClaudeMac/Views/ClaudeSessionPanelView.swift:68`
+- picker layer implementation：`ClaudeMac/Views/ClaudeSessionPanelView.swift:1117`
 - send button：`ClaudeMac/Views/ClaudeSessionPanelView.swift:925`
 - workbench split：`ClaudeMac/Views/RootView.swift:59`
+
+### 11.1 全局浮层层级规则
+
+CLI、权限、模型等选择弹层属于页面级 overlay，而不是 composer 内部内容。macOS 当前通过根 `ZStack` 的 `globalPickerLayer` 承载，`composer` 只保留输入框、附件、队列和按钮本体；弹层打开后不改变 composer 高度、不推挤 transcript、不导致页面重新分配空间。
+
+Windows 复刻要求：
+
+1. 使用窗口级或页面级 `Popup` / `Flyout` / `AdornerLayer` / `Portal` 承载选择弹层，z-index 高于 chat card、composer、toast 和滚动内容。
+2. 弹层定位锚定触发按钮附近，但布局计算不能把弹层计入 composer measure/arrange。
+3. 点击弹层外部关闭；关闭不应清空草稿、不应触发发送、不应改变队列。
+4. 模型弹层包含自定义 model id 输入框时，输入焦点仍在浮层内，Esc/外部点击需要明确关闭策略。
+5. 多窗口或分屏场景下，浮层只能覆盖当前 chat panel，不能漂到其他项目/窗口。
 
 ## 12. 自动滚动与 loading
 
