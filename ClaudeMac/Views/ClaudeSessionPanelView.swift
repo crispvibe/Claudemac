@@ -18,6 +18,7 @@ struct ChatPanelView: View {
     @State private var showResumePopover = false
     @State private var resumeInput = ""
     @State private var expandedTranscriptMessageIDs: Set<UUID> = []
+    private let transcriptBottomID = "chat-transcript-bottom"
 
     var body: some View {
         ZStack {
@@ -136,60 +137,75 @@ struct ChatPanelView: View {
 
     private var transcript: some View {
         let items = transcriptItems
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                if appState.selectedProject == nil {
-                    emptyProjectState
-                } else if items.isEmpty {
-                    emptyChatState
-                } else {
-                    ForEach(items) { item in
-                        transcriptItemRow(item)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if appState.selectedProject == nil {
+                        emptyProjectState
+                    } else if items.isEmpty {
+                        emptyChatState
+                    } else {
+                        ForEach(items) { item in
+                            transcriptItemRow(item)
+                        }
                     }
+                    Color.clear
+                        .frame(height: 1)
+                        .id(transcriptBottomID)
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .textSelection(.enabled)
+            .scrollIndicators(.hidden)
+            .background(Color.white)
+            .onAppear { scrollTranscriptToBottom(proxy) }
+            .onChange(of: chatState.transcriptRevision) { _, _ in scrollTranscriptToBottom(proxy) }
+            .onChange(of: chatState.isAwaitingFirstModelOutput) { _, _ in scrollTranscriptToBottom(proxy) }
+            .onChange(of: chatState.queuedRequests.count) { _, _ in scrollTranscriptToBottom(proxy) }
         }
-        .scrollIndicators(.hidden)
-        .background(Color.white)
     }
 
     private var transcriptItems: [ChatTranscriptItem] {
         var items: [ChatTranscriptItem] = []
-        var activityMessages: [ChatMessage] = []
-
-        func flushActivity() {
-            guard !activityMessages.isEmpty else { return }
-            let group = ChatActivityGroup(messages: activityMessages)
-            if group.isMeaningful {
-                items.append(.activity(group))
+        var seenErrorMessages = Set<String>()
+        for message in chatState.messages {
+            guard shouldShowInTranscript(message) else { continue }
+            if message.kind == .error {
+                let key = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard seenErrorMessages.insert(key).inserted else { continue }
             }
-            activityMessages.removeAll()
+            items.append(.message(message))
         }
-
-        for message in chatState.messages where shouldShowInTranscript(message) {
-            if message.kind.isGroupedActivityEvent {
-                activityMessages.append(message)
-            } else {
-                flushActivity()
-                items.append(.message(message))
-            }
+        if chatState.isAwaitingFirstModelOutput && appState.selectedProject != nil {
+            items.append(.loading)
         }
-        flushActivity()
         return items
+    }
+
+    private func scrollTranscriptToBottom(_ proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.16)) {
+                proxy.scrollTo(transcriptBottomID, anchor: .bottom)
+            }
+        }
     }
 
     private func shouldShowInTranscript(_ message: ChatMessage) -> Bool {
         guard !message.isBackendLaunchCommand else { return false }
         guard message.kind.isVisibleInTranscript else { return false }
-        guard message.kind.isGroupedActivityEvent else { return true }
-        return message.isStreaming
-            || !message.title.isEmpty
-            || !message.subtitle.isEmpty
-            || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        switch message.kind {
+        case .assistant, .reasoning, .error:
+            return message.isStreaming || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .toolCall, .toolResult, .command, .commandOutput, .diff:
+            return message.isStreaming
+                || !message.title.isEmpty
+                || !message.subtitle.isEmpty
+                || !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        default:
+            return true
+        }
     }
 
     private var emptyProjectState: some View {
@@ -209,12 +225,6 @@ struct ChatPanelView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
-            if appState.settings.showCommandPreview {
-                Text(appState.commandPreview)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .textSelection(.enabled)
-            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -225,8 +235,8 @@ struct ChatPanelView: View {
         switch item {
         case .message(let message):
             messageRow(message)
-        case .activity(let group):
-            activityGroupRow(group)
+        case .loading:
+            loadingMessageRow
         }
     }
 
@@ -239,12 +249,16 @@ struct ChatPanelView: View {
             assistantMessageRow(message)
         case .reasoning:
             reasoningMessageRow(message)
-        case .diff:
-            fileEditRow(message)
+        case .toolCall, .toolResult, .command, .commandOutput, .diff:
+            toolInvocationRow(message)
         case .permissionRequest:
             permissionRequestRow(message)
-        case .error, .toolCall, .toolResult, .command, .commandOutput, .system, .result, .rawOutput:
-            streamActivityRow(message)
+        case .interactiveRequest:
+            interactiveRequestRow(message)
+        case .error:
+            errorMessageRow(message)
+        case .system, .result, .rawOutput:
+            EmptyView()
         }
     }
 
@@ -269,8 +283,6 @@ struct ChatPanelView: View {
 
     private func assistantMessageRow(_ message: ChatMessage) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            processedHeader(message)
-
             Text(message.text)
                 .font(.system(size: 12))
                 .lineSpacing(3)
@@ -281,69 +293,53 @@ struct ChatPanelView: View {
         }
     }
 
-    private func streamActivityRow(_ message: ChatMessage) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(message.kind.streamPrefix)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(message.kind.streamTint)
-                    .frame(width: 54, alignment: .leading)
-
-                Text(message.title.isEmpty ? message.kind.defaultTitle : message.title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(message.kind == .error ? .red : .primary)
-                    .lineLimit(1)
-
-                if !message.subtitle.isEmpty {
-                    Text(message.subtitle)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 0)
-
-                Text(message.status)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(message.kind.streamTint)
-            }
-
-            if !message.text.isEmpty {
-                Text(message.text)
-                    .font(.system(size: 10, design: message.kind.isMonospaced ? .monospaced : .default))
-                    .foregroundStyle(message.kind == .error ? .red : .secondary)
-                    .lineSpacing(2)
-                    .textSelection(.enabled)
-                    .padding(.leading, 60)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+    private var loadingMessageRow: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .scaleEffect(0.55)
+                .frame(width: 14, height: 14)
+            Text("正在生成…")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.black.opacity(0.035))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func activityGroupRow(_ group: ChatActivityGroup) -> some View {
-        let isAutoExpanded = group.isStreaming
-        let isExpanded = isAutoExpanded || expandedTranscriptMessageIDs.contains(group.id)
+    private func errorMessageRow(_ message: ChatMessage) -> some View {
+        Text(message.text)
+            .font(.system(size: 12))
+            .lineSpacing(2)
+            .foregroundStyle(.red)
+            .textSelection(.enabled)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.red.opacity(0.07))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
-        return VStack(alignment: .leading, spacing: 8) {
+    private func toolInvocationRow(_ message: ChatMessage) -> some View {
+        let isExpanded = expandedTranscriptMessageIDs.contains(message.id)
+        return VStack(alignment: .leading, spacing: 7) {
             Button {
-                toggleTranscriptMessage(group.id)
+                toggleTranscriptMessage(message.id)
             } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Image(systemName: "gearshape")
+                HStack(spacing: 7) {
+                    Image(systemName: message.kind.toolIcon)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 13)
-
-                    Text(group.title)
+                        .foregroundStyle(message.kind.toolTint)
+                        .frame(width: 14)
+                    Text(message.toolDisplayTitle)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
-
+                        .lineLimit(1)
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.tertiary)
-
                     Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
@@ -351,50 +347,38 @@ struct ChatPanelView: View {
             .buttonStyle(.plain)
 
             if isExpanded {
-                VStack(alignment: .leading, spacing: 5) {
-                    if let summary = group.summaryText {
-                        Text(summary)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    ForEach(group.detailMessages) { message in
-                        activityDetailRow(message)
-                    }
-                }
-                .padding(.leading, 22)
+                toolDetailView(message)
+                    .padding(.leading, 22)
             }
         }
         .padding(.vertical, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func activityDetailRow(_ message: ChatMessage) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Image(systemName: message.kind.activityIcon)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 12)
-
-                Text(message.activityTitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+    @ViewBuilder
+    private func toolDetailView(_ message: ChatMessage) -> some View {
+        if message.kind == .diff {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(message.diffLines.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(line.diffTint)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-
-            if !message.activityBody.isEmpty {
-                Text(message.activityBody)
-                    .font(.system(size: 10, design: message.kind.isMonospaced ? .monospaced : .default))
-                    .foregroundStyle(.tertiary)
-                    .lineSpacing(2)
-                    .lineLimit(message.kind == .reasoning ? nil : 3)
-                    .textSelection(.enabled)
-                    .padding(.leading, 19)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+        } else if !message.toolDetailText.isEmpty {
+            Text(message.toolDetailText)
+                .font(.system(size: 10, design: message.kind.isToolDetailMonospaced ? .monospaced : .default))
+                .foregroundStyle(.secondary)
+                .lineSpacing(2)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func interactiveRequestRow(_ message: ChatMessage) -> some View {
+        ChatInteractiveRequestCard(message: message, chatState: chatState)
     }
 
     private func reasoningMessageRow(_ message: ChatMessage) -> some View {
@@ -414,10 +398,6 @@ struct ChatPanelView: View {
                         .font(.system(size: 11, weight: .medium))
 
                     Spacer(minLength: 0)
-
-                    Text(isAutoExpanded ? "进行中" : (isExpanded ? "展开" : "已折叠"))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
                 }
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 9)
@@ -442,7 +422,6 @@ struct ChatPanelView: View {
     }
 
     private func toggleTranscriptMessage(_ id: UUID) {
-        guard !chatState.status.isRunning else { return }
         if expandedTranscriptMessageIDs.contains(id) {
             expandedTranscriptMessageIDs.remove(id)
         } else {
@@ -486,63 +465,54 @@ struct ChatPanelView: View {
     }
 
     private func permissionRequestRow(_ message: ChatMessage) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Text("allow")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "hand.raised")
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.orange)
-                    .frame(width: 54, alignment: .leading)
-
-                Text(message.title)
-                    .font(.system(size: 11, weight: .medium))
-
+                    .frame(width: 14)
+                Text(message.title.isEmpty ? "需要权限" : message.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
-
-                Text(message.status)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.orange)
             }
 
             Text(message.text)
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-                .padding(.leading, 60)
                 .textSelection(.enabled)
 
             if message.status == "waiting" {
                 HStack(spacing: 8) {
-                    Spacer().frame(width: 52)
-
                     Button("拒绝") {
                         if let requestID = message.requestID {
                             chatState.respondToPermission(requestID: requestID, decision: .deny)
                         }
                     }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
 
                     Button("允许") {
                         if let requestID = message.requestID {
                             chatState.respondToPermission(requestID: requestID, decision: .allow)
                         }
                     }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
 
                     Button("本会话允许") {
                         if let requestID = message.requestID {
                             chatState.respondToPermission(requestID: requestID, decision: .allowForSession)
                         }
                     }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.accentColor.opacity(0.85))
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(10)
+        .background(Color.orange.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -581,11 +551,6 @@ struct ChatPanelView: View {
                 }
             }
 
-            if message.kind == .assistant {
-                iconAction("hand.thumbsup", help: "赞") {}
-                iconAction("hand.thumbsdown", help: "踩") {}
-            }
-
             if alignment == .leading {
                 Spacer(minLength: 0)
             }
@@ -593,17 +558,62 @@ struct ChatPanelView: View {
     }
 
     private var composer: some View {
-        ZStack(alignment: .bottomLeading) {
-            composerCard
+        VStack(spacing: 8) {
+            if !chatState.queuedRequests.isEmpty {
+                queuedRequestsView
+            }
 
-            if let activePicker {
-                pickerOverlay(activePicker)
-                    .padding(.bottom, 92)
-                    .zIndex(10)
+            ZStack(alignment: .bottomLeading) {
+                composerCard
+
+                if let activePicker {
+                    pickerOverlay(activePicker)
+                        .padding(.bottom, 92)
+                        .zIndex(10)
+                }
             }
         }
         .padding(12)
         .background(Color.white)
+    }
+
+    private var queuedRequestsView: some View {
+        ScrollView {
+            VStack(spacing: 6) {
+                ForEach(Array(chatState.queuedRequests.enumerated()), id: \.element.id) { index, request in
+                    HStack(spacing: 8) {
+                        Text("#\(index + 1)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 24, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("队列中")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                            Text(request.text.components(separatedBy: .newlines).first ?? request.text)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        Button {
+                            chatState.cancelQueuedRequest(request.id)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9, weight: .semibold))
+                                .frame(width: 18, height: 18)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 34)
+                    .background(Color.black.opacity(0.035))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+        }
+        .frame(maxHeight: 34 * 3 + 12)
     }
 
     private var composerCard: some View {
@@ -676,6 +686,9 @@ struct ChatPanelView: View {
 
                 selectorButton(title: selectedModelTitle, systemImage: "cpu", tint: .primary, picker: .model, maxTitleWidth: 118)
                 contextIcon
+                if chatState.status.isRunning {
+                    stopButton
+                }
                 sendButton
             }
             .padding(.horizontal, 10)
@@ -880,9 +893,25 @@ struct ChatPanelView: View {
         .buttonStyle(.plain)
     }
 
+    private var stopButton: some View {
+        Button {
+            chatState.interrupt()
+        } label: {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .frame(width: 20, height: 20)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .background(Color.orange)
+        .clipShape(Circle())
+        .contentShape(Circle())
+        .help("停止当前任务")
+    }
+
     private var sendButton: some View {
         Button(action: sendMessage) {
-            Image(systemName: chatState.status.isRunning ? "stop.fill" : "arrow.up")
+            Image(systemName: "arrow.up")
                 .font(.system(size: 10, weight: .semibold))
                 .frame(width: 20, height: 20)
         }
@@ -892,6 +921,7 @@ struct ChatPanelView: View {
         .clipShape(Circle())
         .contentShape(Circle())
         .disabled(!canSend)
+        .help(chatState.status.isRunning ? "加入队列" : "发送")
     }
 
     private var projectName: String {
@@ -911,8 +941,7 @@ struct ChatPanelView: View {
     }
 
     private var canSend: Bool {
-        if chatState.status.isRunning { return true }
-        return appState.selectedProject != nil && !draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        appState.selectedProject != nil && !draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var capabilityText: String {
@@ -936,11 +965,7 @@ struct ChatPanelView: View {
     }
 
     private func sendMessage() {
-        if chatState.status.isRunning {
-            chatState.interrupt()
-            return
-        }
-        if let editingMessageID {
+        if let editingMessageID, !chatState.status.isRunning {
             chatState.removeMessageThread(editingMessageID)
             self.editingMessageID = nil
         }
@@ -1133,108 +1158,138 @@ struct ChatPanelView: View {
 
 private enum ChatTranscriptItem: Identifiable {
     case message(ChatMessage)
-    case activity(ChatActivityGroup)
+    case loading
 
     var id: String {
         switch self {
         case .message(let message):
             "message-\(message.id.uuidString)"
-        case .activity(let group):
-            "activity-\(group.id.uuidString)"
+        case .loading:
+            "loading"
         }
     }
 }
 
-private struct ChatActivityGroup: Identifiable {
-    let id: UUID
-    let messages: [ChatMessage]
+private struct ChatInteractiveRequestCard: View {
+    let message: ChatMessage
+    @ObservedObject var chatState: ChatPanelState
+    @State private var selectedOptionIDs: Set<String> = []
+    @State private var customText = ""
 
-    init(messages: [ChatMessage]) {
-        self.messages = messages
-        id = messages.first?.id ?? UUID()
-    }
+    private var request: ChatInteractiveRequest? { message.interactiveRequest }
+    private var isWaiting: Bool { request?.status == .waiting || message.status == ChatInteractiveStatus.waiting.rawValue }
 
-    var isStreaming: Bool {
-        messages.contains { $0.isStreaming }
-    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "questionmark.circle")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 14)
+                Text(request?.title.nonEmptyTrimmed ?? message.title.nonEmptyTrimmed ?? "需要选择")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
 
-    var isMeaningful: Bool {
-        messages.contains { message in
-            switch message.kind {
-            case .commandOutput, .rawOutput, .result:
-                !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            default:
-                true
+            Text(request?.prompt.nonEmptyTrimmed ?? message.text)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            if let request, isWaiting {
+                switch request.mode {
+                case .singleChoice:
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(request.options) { option in
+                            Button {
+                                submit(selectedIDs: [option.id], customText: nil)
+                            } label: {
+                                optionRow(option, selected: false)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                case .multipleChoice:
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(request.options) { option in
+                            Button {
+                                if selectedOptionIDs.contains(option.id) {
+                                    selectedOptionIDs.remove(option.id)
+                                } else {
+                                    selectedOptionIDs.insert(option.id)
+                                }
+                            } label: {
+                                optionRow(option, selected: selectedOptionIDs.contains(option.id))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        Button("提交选择") {
+                            submit(selectedIDs: Array(selectedOptionIDs), customText: nil)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(selectedOptionIDs.isEmpty)
+                    }
+                case .text:
+                    textInput(request)
+                }
+
+                if request.allowCustomInput && request.mode != .text {
+                    textInput(request)
+                }
             }
         }
+        .padding(10)
+        .background(Color.accentColor.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    var title: String {
-        "\(activityLabel)\(isStreaming ? "进行中" : "完成") · \(durationText)"
-    }
-
-    var summaryText: String? {
-        var parts: [String] = []
-        let toolCallCount = messages.filter { $0.kind == .toolCall }.count
-        let toolResultCount = messages.filter { $0.kind == .toolResult }.count
-        let operationCount = messages.filter { $0.kind == .command }.count
-        let outputCount = messages.filter { $0.kind == .commandOutput }.count
-        let rawEventCount = messages.filter { $0.kind == .rawOutput }.count
-
-        if toolCallCount > 0 {
-            parts.append("调用 \(toolCallCount) 个工具")
-        }
-        if toolResultCount > 0 {
-            parts.append("收到 \(toolResultCount) 个工具结果")
-        }
-        if operationCount > 0 {
-            parts.append("执行 \(operationCount) 个操作")
-        }
-        if outputCount > 0 {
-            parts.append("收到输出")
-        }
-        if rawEventCount > 0 {
-            parts.append("保留 \(rawEventCount) 条运行事件")
-        }
-
-        return parts.isEmpty ? nil : parts.joined(separator: "，")
-    }
-
-    var detailMessages: [ChatMessage] {
-        messages.filter { message in
-            switch message.kind {
-            case .commandOutput, .rawOutput, .result:
-                !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            default:
-                true
+    private func optionRow(_ option: ChatInteractiveOption, selected: Bool) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.45))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(option.label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                if !option.detail.isEmpty {
+                    Text(option.detail)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
             }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.black.opacity(0.035))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func textInput(_ request: ChatInteractiveRequest) -> some View {
+        HStack(spacing: 6) {
+            TextField(request.placeholder.isEmpty ? "输入回复" : request.placeholder, text: $customText)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11))
+            Button("发送") {
+                submit(selectedIDs: [], customText: customText)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(customText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
 
-    private var activityLabel: String {
-        if messages.contains(where: { $0.kind == .toolCall || $0.kind == .toolResult }) {
-            return "工具调用"
-        }
-        if messages.contains(where: { $0.kind == .command || $0.kind == .commandOutput }) {
-            return "操作"
-        }
-        if messages.contains(where: { $0.kind == .rawOutput }) {
-            return "运行事件"
-        }
-        return "处理"
-    }
-
-    private var durationText: String {
-        guard let start = messages.first?.createdAt, let end = messages.last?.createdAt else {
-            return "0s"
-        }
-        let seconds = max(1, Int(end.timeIntervalSince(start).rounded()))
-        if seconds < 60 {
-            return "\(seconds)s"
-        }
-        let minutes = seconds / 60
-        let rest = seconds % 60
-        return rest == 0 ? "\(minutes)m" : "\(minutes)m \(rest)s"
+    private func submit(selectedIDs: [String], customText: String?) {
+        guard let request else { return }
+        chatState.respondToInteractiveRequest(ChatInteractiveResponse(
+            requestID: request.id,
+            selectedOptionIDs: selectedIDs,
+            customText: customText?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmptyTrimmed
+        ))
     }
 }
 
@@ -1312,130 +1367,78 @@ private struct ChatComposerTextView: NSViewRepresentable {
 }
 
 private extension ChatMessageKind {
-    var streamPrefix: String {
+    var toolIcon: String {
         switch self {
-        case .reasoning: "think"
-        case .toolCall: "tool"
-        case .toolResult: "out"
-        case .command: "run"
-        case .commandOutput: "out"
-        case .system: "sys"
-        case .result: "done"
-        case .error: "err"
-        case .rawOutput: "raw"
-        case .diff: "edit"
-        case .permissionRequest: "allow"
-        case .user, .assistant: ""
-        }
-    }
-
-    var defaultTitle: String {
-        switch self {
-        case .reasoning: "思考"
-        case .toolCall: "工具调用"
-        case .toolResult: "工具结果"
-        case .command: "操作"
-        case .commandOutput: "操作输出"
-        case .system: "系统"
-        case .result: "结果"
-        case .error: "错误"
-        case .rawOutput: "原始输出"
-        case .diff: "文件修改"
-        case .permissionRequest: "权限请求"
-        case .user: "用户"
-        case .assistant: "助手"
-        }
-    }
-
-    var streamTint: Color {
-        switch self {
-        case .reasoning: .purple
-        case .toolCall, .toolResult: .blue
-        case .command, .commandOutput: .orange
-        case .system, .rawOutput: .secondary
-        case .result: .green
-        case .error: .red
-        case .diff: .green
-        case .permissionRequest: .orange
-        case .user, .assistant: .secondary
-        }
-    }
-
-    var isMonospaced: Bool {
-        switch self {
-        case .toolCall, .toolResult, .command, .commandOutput, .rawOutput, .system, .result: true
-        case .user, .assistant, .reasoning, .permissionRequest, .diff, .error: false
-        }
-    }
-
-    var isGroupedActivityEvent: Bool {
-        switch self {
-        case .toolCall, .toolResult, .command, .commandOutput, .result, .rawOutput:
-            true
-        case .user, .assistant, .reasoning, .permissionRequest, .diff, .error, .system:
-            false
-        }
-    }
-
-    var activityIcon: String {
-        switch self {
-        case .reasoning:
-            "lightbulb"
         case .toolCall, .toolResult:
             "gearshape"
         case .command:
             "play.circle"
         case .commandOutput:
             "doc.text"
-        case .result:
-            "checkmark.circle"
-        case .rawOutput:
-            "doc.text"
         case .diff:
             "pencil"
-        case .permissionRequest:
-            "hand.raised"
-        case .error:
-            "exclamationmark.triangle"
-        case .user, .assistant, .system:
+        default:
             "circle"
+        }
+    }
+
+    var toolTint: Color {
+        switch self {
+        case .toolCall, .toolResult:
+            .blue
+        case .command, .commandOutput:
+            .orange
+        case .diff:
+            .green
+        default:
+            .secondary
+        }
+    }
+
+    var isToolDetailMonospaced: Bool {
+        switch self {
+        case .toolCall, .toolResult, .command, .commandOutput:
+            true
+        case .user, .assistant, .reasoning, .permissionRequest, .interactiveRequest, .diff, .error, .system, .result, .rawOutput:
+            false
         }
     }
 
     var isVisibleInTranscript: Bool {
         switch self {
-        case .system, .result:
+        case .system, .result, .rawOutput:
             false
-        case .user, .assistant, .reasoning, .toolCall, .toolResult, .command, .commandOutput, .permissionRequest, .diff, .error, .rawOutput:
+        case .user, .assistant, .reasoning, .toolCall, .toolResult, .command, .commandOutput, .permissionRequest, .interactiveRequest, .diff, .error:
             true
         }
     }
 }
 
 private extension ChatMessage {
-    var activityTitle: String {
+    var toolDisplayTitle: String {
         switch kind {
-        case .reasoning:
-            isStreaming ? "正在思考" : "思考"
         case .toolCall:
-            compactActivityTitle(prefix: "已调用工具")
+            return namedToolTitle(prefix: isStreaming ? "正在调用工具" : "调用工具")
         case .toolResult:
-            compactActivityTitle(prefix: "工具已完成")
+            return namedToolTitle(prefix: "工具结果")
         case .command:
-            compactActivityTitle(prefix: "执行操作")
+            return "执行命令"
         case .commandOutput:
-            compactActivityTitle(prefix: "操作输出")
-        case .result:
-            compactActivityTitle(prefix: "结果")
-        case .rawOutput:
-            compactActivityTitle(prefix: "原始事件")
+            return "命令输出"
+        case .diff:
+            return "文件变更"
         default:
-            title.isEmpty ? kind.defaultTitle : title
+            return "工具调用"
         }
     }
 
-    var activityBody: String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    var toolDetailText: String {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return "" }
+        if let formatted = compactFormattedJSONObject(body) {
+            return formatted
+        }
+        return body
     }
 
     var isBackendLaunchCommand: Bool {
@@ -1449,11 +1452,27 @@ private extension ChatMessage {
             || body.contains(" app-server")
     }
 
-    private func compactActivityTitle(prefix: String) -> String {
-        let titleText = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let subtitleText = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let detail = titleText.isEmpty ? subtitleText : titleText
-        return detail.isEmpty ? prefix : "\(prefix) \(detail)"
+    private func namedToolTitle(prefix: String) -> String {
+        let name = toolName
+        return name.isEmpty ? prefix : "\(prefix)：\(name)"
+    }
+
+    private var toolName: String {
+        let candidates = [title, subtitle]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return candidates.first { value in
+            !value.contains("{") && !value.contains("}") && value != "tool_use" && !value.contains("json_delta")
+        } ?? ""
+    }
+
+    private func compactFormattedJSONObject(_ body: String) -> String? {
+        guard let data = body.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              JSONSerialization.isValidJSONObject(object),
+              let formattedData = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+              let formatted = String(data: formattedData, encoding: .utf8) else { return nil }
+        return formatted
     }
 }
 
@@ -1462,7 +1481,7 @@ private extension ChatRunStatus {
         switch self {
         case .idle, .completed: .secondary
         case .starting, .streaming: Color.accentColor
-        case .waitingPermission, .stopping: .orange
+        case .waitingPermission, .waitingInput, .stopping: .orange
         case .failed, .unsupportedVersion: .red
         }
     }

@@ -1,13 +1,56 @@
 import Foundation
 
+struct QueuedChatRequest: Identifiable, Equatable {
+    let id: UUID
+    let text: String
+    let project: ProjectItem
+    let cli: CLIType
+    let modelID: String
+    let contextModelID: String?
+    let permissionMode: ChatPermissionMode
+    let reasoningEffort: ChatReasoningEffort
+    let sessionMode: SessionMode
+    let resumeSessionID: String?
+    let createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        text: String,
+        project: ProjectItem,
+        cli: CLIType,
+        modelID: String,
+        contextModelID: String?,
+        permissionMode: ChatPermissionMode,
+        reasoningEffort: ChatReasoningEffort,
+        sessionMode: SessionMode,
+        resumeSessionID: String?,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.text = text
+        self.project = project
+        self.cli = cli
+        self.modelID = modelID
+        self.contextModelID = contextModelID
+        self.permissionMode = permissionMode
+        self.reasoningEffort = reasoningEffort
+        self.sessionMode = sessionMode
+        self.resumeSessionID = resumeSessionID
+        self.createdAt = createdAt
+    }
+}
+
 @MainActor
 final class ChatPanelState: ObservableObject {
     @Published var messages: [ChatMessage] = []
+    @Published var queuedRequests: [QueuedChatRequest] = []
     @Published var status: ChatRunStatus = .idle
     @Published var capabilities: [CLIType: ChatCLICapability] = [:]
     @Published var statusText = "就绪"
     @Published var tokensUsed: Int = 0
     @Published var tokensTotal: Int = 200_000
+    @Published var isAwaitingFirstModelOutput = false
+    @Published var transcriptRevision = 0
 
     private static let compactThreshold: Double = 0.90
     private var didAutoCompact = false
@@ -75,6 +118,9 @@ final class ChatPanelState: ObservableObject {
         activeStreamingMessageIDs.removeAll()
         activeParentUserMessageID = nil
         isUserStopping = false
+        queuedRequests.removeAll()
+        setAwaitingFirstModelOutput(false)
+        bumpTranscriptRevision()
 
         guard let historyID = appState.selectedCLIHistoryID,
               let history = appState.cliHistory.first(where: { $0.id == historyID }) else {
@@ -133,11 +179,6 @@ final class ChatPanelState: ObservableObject {
         sessionMode: SessionMode,
         resumeSessionID: String?
     ) -> Bool {
-        if status.isRunning {
-            interrupt()
-            return true
-        }
-
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
         guard let project else {
@@ -145,7 +186,34 @@ final class ChatPanelState: ObservableObject {
             return false
         }
 
-        let visibleCLI = cli.visibleValue
+        let request = QueuedChatRequest(
+            text: text,
+            project: project,
+            cli: cli,
+            modelID: modelID,
+            contextModelID: contextModelID,
+            permissionMode: permissionMode,
+            reasoningEffort: reasoningEffort,
+            sessionMode: sessionMode,
+            resumeSessionID: resumeSessionID
+        )
+        if status.isRunning {
+            queuedRequests.append(request)
+            statusText = "已加入队列"
+            bumpTranscriptRevision()
+            return true
+        }
+        return startRun(request)
+    }
+
+    func cancelQueuedRequest(_ id: UUID) {
+        queuedRequests.removeAll { $0.id == id }
+        bumpTranscriptRevision()
+    }
+
+    @discardableResult
+    private func startRun(_ request: QueuedChatRequest) -> Bool {
+        let visibleCLI = request.cli.visibleValue
         guard let capability = capabilities[visibleCLI] else {
             appendError("正在检测 \(visibleCLI.displayName)，请稍后重试。")
             refreshCapabilities()
@@ -161,7 +229,7 @@ final class ChatPanelState: ObservableObject {
             appendError("当前 Codex 版本不支持 app-server，无法在内嵌对话中启动。")
             return false
         }
-        if visibleCLI == .claude, permissionMode == .ask {
+        if visibleCLI == .claude, request.permissionMode == .ask {
             status = .unsupportedVersion
             let reason = capability.supportsStreamJSONInput
                 ? "当前 Claude Code CLI 未公开 stdin 权限 allow/deny 回写协议。"
@@ -170,41 +238,43 @@ final class ChatPanelState: ObservableObject {
             return false
         }
 
-        let effectiveContextModelID = contextModelID?.nonEmptyTrimmed ?? modelID
+        let effectiveContextModelID = request.contextModelID?.nonEmptyTrimmed ?? request.modelID
         var session = ensureSession(
-            project: project,
+            project: request.project,
             cli: visibleCLI,
             modelID: effectiveContextModelID,
-            permissionMode: permissionMode,
-            reasoningEffort: reasoningEffort,
-            firstPrompt: text
+            permissionMode: request.permissionMode,
+            reasoningEffort: request.reasoningEffort,
+            firstPrompt: request.text
         )
         session.cli = visibleCLI
         session.modelID = effectiveContextModelID
-        session.permissionMode = permissionMode
-        session.reasoningEffort = reasoningEffort
+        session.permissionMode = request.permissionMode
+        session.reasoningEffort = request.reasoningEffort
         session.updatedAt = Date()
         currentSession = session
 
         tokensTotal = Self.defaultContextWindow(for: effectiveContextModelID)
         didAutoCompact = false
 
-        let userMessage = ChatMessage(sessionID: session.id, kind: .user, text: text, status: "user")
+        let userMessage = ChatMessage(sessionID: session.id, kind: .user, text: request.text, status: "user")
         activeParentUserMessageID = userMessage.id
         activeAssistantMessageID = nil
         activeStreamingMessageIDs.removeAll()
         messages.append(userMessage)
+        setAwaitingFirstModelOutput(true)
+        bumpTranscriptRevision()
         persistCurrentSession()
 
         let options = ChatRunOptions(
             cli: visibleCLI,
             executablePath: executable,
-            projectPath: project.path,
-            modelID: modelID,
-            permissionMode: permissionMode,
-            reasoningEffort: reasoningEffort,
-            sessionMode: sessionMode,
-            resumeSessionID: effectiveResumeSessionID(resumeSessionID, for: session)
+            projectPath: request.project.path,
+            modelID: request.modelID,
+            permissionMode: request.permissionMode,
+            reasoningEffort: request.reasoningEffort,
+            sessionMode: request.sessionMode,
+            resumeSessionID: effectiveResumeSessionID(request.resumeSessionID, for: session)
         )
         let backend: ChatProcessBackend = visibleCLI == .codex ? CodexAppServerBackend() : ClaudeCodeProcessBackend()
         activeBackend = backend
@@ -217,13 +287,14 @@ final class ChatPanelState: ObservableObject {
             let scopedURL: URL
             let didStartAccessing: Bool
             do {
-                scopedURL = try ProjectStore.resolveURL(for: project)
+                scopedURL = try ProjectStore.resolveURL(for: request.project)
                 didStartAccessing = scopedURL.startAccessingSecurityScopedResource()
             } catch {
                 await MainActor.run {
                     self.appendError(error.localizedDescription)
                     self.status = .failed
                     self.statusText = "项目权限失效"
+                    self.setAwaitingFirstModelOutput(false)
                     self.persistCurrentSession()
                 }
                 return
@@ -235,7 +306,7 @@ final class ChatPanelState: ObservableObject {
             }
 
             do {
-                for try await event in backend.start(prompt: text, options: options, session: session) {
+                for try await event in backend.start(prompt: request.text, options: options, session: session) {
                     await MainActor.run {
                         self.apply(event)
                     }
@@ -245,8 +316,10 @@ final class ChatPanelState: ObservableObject {
                     self.appendError(error.localizedDescription)
                     self.status = .failed
                     self.statusText = "失败"
-                    self.finishStreamingMessages()
+                    self.finishStreamingMessages(status: "failed")
+                    self.setAwaitingFirstModelOutput(false)
                     self.persistCurrentSession()
+                    self.startNextQueuedRequestIfNeeded()
                 }
             }
         }
@@ -264,6 +337,7 @@ final class ChatPanelState: ObservableObject {
             activeAssistantMessageID = nil
             activeStreamingMessageIDs.removeAll()
         }
+        bumpTranscriptRevision()
         persistCurrentSession()
     }
 
@@ -289,6 +363,7 @@ final class ChatPanelState: ObservableObject {
             appendError("权限响应写回失败。当前 CLI 模式不支持内嵌权限交互，请改用自动编辑/完全访问权限后重试。")
             status = .failed
             statusText = "权限写回失败"
+            bumpTranscriptRevision()
             persistCurrentSession()
             return
         }
@@ -297,6 +372,22 @@ final class ChatPanelState: ObservableObject {
         }
         status = .streaming
         statusText = decision.displayText
+        bumpTranscriptRevision()
+        persistCurrentSession()
+    }
+
+    func respondToInteractiveRequest(_ response: ChatInteractiveResponse) {
+        guard activeBackend?.respondToInteractiveRequest(requestID: response.requestID, response: response) == true else {
+            updateInteractiveRequestStatus(response.requestID, status: .failed)
+            appendError("交互响应写回失败。当前 CLI 模式不支持此类选择题/输入回写。")
+            status = .failed
+            statusText = "交互写回失败"
+            persistCurrentSession()
+            return
+        }
+        updateInteractiveRequestStatus(response.requestID, status: .answered)
+        status = .streaming
+        statusText = "已回复选择"
         persistCurrentSession()
     }
 
@@ -354,11 +445,15 @@ final class ChatPanelState: ObservableObject {
                     activeAssistantMessageID = message.id
                 }
             }
-            if kind != .system && kind != .command { status = .streaming }
+            if isVisibleModelOutput(kind) {
+                setAwaitingFirstModelOutput(false)
+                status = .streaming
+            }
             statusText = itemStatus
+            bumpTranscriptRevision()
         case .appendDelta(let kind, let title, let subtitle, let text, let itemStatus, let requestID):
             appendDelta(kind: kind, title: title, subtitle: subtitle, text: text, status: itemStatus, requestID: requestID)
-            status = .streaming
+            if isVisibleModelOutput(kind) { status = .streaming }
             statusText = itemStatus.nonEmptyTrimmed ?? "streaming"
         case .updateStreamingStatus(let value):
             statusText = value
@@ -375,8 +470,26 @@ final class ChatPanelState: ObservableObject {
                 parentUserMessageID: activeParentUserMessageID,
                 requestID: id
             ))
+            setAwaitingFirstModelOutput(false)
             status = .waitingPermission
             statusText = "等待权限"
+            bumpTranscriptRevision()
+        case .interactiveRequest(let request):
+            guard let sessionID = currentSession?.id else { return }
+            messages.append(ChatMessage(
+                sessionID: sessionID,
+                kind: .interactiveRequest,
+                title: request.title,
+                text: request.prompt,
+                status: request.status.rawValue,
+                parentUserMessageID: activeParentUserMessageID,
+                requestID: request.id,
+                interactiveRequest: request
+            ))
+            setAwaitingFirstModelOutput(false)
+            status = .waitingInput
+            statusText = "等待输入"
+            bumpTranscriptRevision()
         case .tokenUsage(let used, let total):
             tokensUsed = used
             if total > 0 {
@@ -388,27 +501,33 @@ final class ChatPanelState: ObservableObject {
             checkAutoCompact()
         case .finished:
             finishStreamingMessages(status: isUserStopping ? "stopped" : "done")
+            setAwaitingFirstModelOutput(false)
             currentSession?.updatedAt = Date()
             status = .completed
             statusText = isUserStopping ? "已停止" : "完成"
             isUserStopping = false
             persistCurrentSession()
+            startNextQueuedRequestIfNeeded()
         case .failed(let message):
             if isUserStopping {
                 finishStreamingMessages(status: "stopped")
+                setAwaitingFirstModelOutput(false)
                 currentSession?.updatedAt = Date()
                 status = .completed
                 statusText = "已停止"
                 isUserStopping = false
                 persistCurrentSession()
+                startNextQueuedRequestIfNeeded()
                 return
             }
             finishStreamingMessages(status: "failed")
             appendError(message)
+            setAwaitingFirstModelOutput(false)
             currentSession?.updatedAt = Date()
             status = .failed
             statusText = "失败"
             persistCurrentSession()
+            startNextQueuedRequestIfNeeded()
         }
     }
 
@@ -424,6 +543,8 @@ final class ChatPanelState: ObservableObject {
             if messages[index].requestID == nil {
                 messages[index].requestID = requestID?.nonEmptyTrimmed
             }
+            if isVisibleModelOutput(kind) { setAwaitingFirstModelOutput(false) }
+            bumpTranscriptRevision()
             return
         }
 
@@ -443,6 +564,8 @@ final class ChatPanelState: ObservableObject {
             activeAssistantMessageID = message.id
         }
         messages.append(message)
+        if isVisibleModelOutput(kind) { setAwaitingFirstModelOutput(false) }
+        bumpTranscriptRevision()
     }
 
     private func appendError(_ text: String) {
@@ -455,6 +578,8 @@ final class ChatPanelState: ObservableObject {
             status: "failed",
             parentUserMessageID: activeParentUserMessageID
         ))
+        setAwaitingFirstModelOutput(false)
+        bumpTranscriptRevision()
     }
 
     private func finishStreamingMessages(status itemStatus: String = "done") {
@@ -464,6 +589,40 @@ final class ChatPanelState: ObservableObject {
         }
         activeAssistantMessageID = nil
         activeStreamingMessageIDs.removeAll()
+        bumpTranscriptRevision()
+    }
+
+    private func startNextQueuedRequestIfNeeded() {
+        guard !status.isRunning, !queuedRequests.isEmpty else { return }
+        let request = queuedRequests.removeFirst()
+        bumpTranscriptRevision()
+        _ = startRun(request)
+    }
+
+    private func setAwaitingFirstModelOutput(_ value: Bool) {
+        guard isAwaitingFirstModelOutput != value else { return }
+        isAwaitingFirstModelOutput = value
+        bumpTranscriptRevision()
+    }
+
+    private func bumpTranscriptRevision() {
+        transcriptRevision &+= 1
+    }
+
+    private func isVisibleModelOutput(_ kind: ChatMessageKind) -> Bool {
+        switch kind {
+        case .assistant, .reasoning, .toolCall, .toolResult, .command, .commandOutput, .permissionRequest, .interactiveRequest, .diff, .error:
+            true
+        case .user, .system, .result, .rawOutput:
+            false
+        }
+    }
+
+    private func updateInteractiveRequestStatus(_ requestID: String, status: ChatInteractiveStatus) {
+        guard let index = messages.firstIndex(where: { $0.requestID == requestID }) else { return }
+        messages[index].status = status.rawValue
+        messages[index].interactiveRequest?.status = status
+        bumpTranscriptRevision()
     }
 
     private func persistCurrentSession() {

@@ -5,7 +5,12 @@ protocol ChatProcessBackend: AnyObject {
     func start(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?) -> AsyncThrowingStream<ChatBackendEvent, Error>
     func interrupt()
     func respondToPermission(requestID: String, decision: ChatPermissionDecision) -> Bool
+    func respondToInteractiveRequest(requestID: String, response: ChatInteractiveResponse) -> Bool
     func sendCompact() -> Bool
+}
+
+extension ChatProcessBackend {
+    func respondToInteractiveRequest(requestID: String, response: ChatInteractiveResponse) -> Bool { false }
 }
 
 struct ChatProcessOutput: Equatable {

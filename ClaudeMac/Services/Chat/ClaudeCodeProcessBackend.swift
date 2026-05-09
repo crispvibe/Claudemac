@@ -218,6 +218,23 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         return ChatPipeWriter.writeJSONObject(object, to: inputPipe)
     }
 
+    func respondToInteractiveRequest(requestID: String, response: ChatInteractiveResponse) -> Bool {
+        var payload: [String: Any] = [
+            "selectedOptionIds": response.selectedOptionIDs,
+            "selected_option_ids": response.selectedOptionIDs
+        ]
+        if let customText = response.customText?.nonEmptyTrimmed {
+            payload["text"] = customText
+            payload["answer"] = customText
+        }
+        let object: [String: Any] = [
+            "type": "control_response",
+            "request_id": requestID,
+            "response": payload
+        ]
+        return ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+    }
+
     func sendCompact() -> Bool {
         false
     }
@@ -305,6 +322,11 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             return events
         }
 
+        if let request = interactiveRequest(from: object, fallbackID: stringValue(object["request_id"]) ?? stringValue(object["id"]), fallbackTitle: type) {
+            events.append(.interactiveRequest(request))
+            return events
+        }
+
         if type == "control_request" || type.contains("permission") || type.contains("approval") {
             let requestID = object["request_id"] as? String ?? object["id"] as? String ?? UUID().uuidString
             events.append(.permissionRequest(id: requestID, title: type, text: compactText(from: object)))
@@ -389,7 +411,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
 
     private static func isVisibleOutput(_ event: ChatBackendEvent) -> Bool {
         switch event {
-        case .appendDelta, .permissionRequest, .failed:
+        case .appendDelta, .permissionRequest, .interactiveRequest, .failed:
             true
         case .appendMessage(let kind, _, _, let text, _, _):
             kind != .system && !text.isEmpty
@@ -411,6 +433,9 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
     private static func contentItemEvents(from item: [String: Any]) -> [ChatBackendEvent] {
         let type = stringValue(item["type"]) ?? "content"
         let id = stringValue(item["id"])
+        if let request = interactiveRequest(from: item, fallbackID: id, fallbackTitle: stringValue(item["name"]) ?? type) {
+            return [.interactiveRequest(request)]
+        }
         switch type {
         case "text":
             guard let text = stringValue(item["text"]), !text.isEmpty else { return [] }
@@ -458,6 +483,68 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             }.joined()
         }
         return stringValue(object["text"]) ?? stringValue(object["content"])
+    }
+
+    private static func interactiveRequest(from object: [String: Any], fallbackID: String?, fallbackTitle: String) -> ChatInteractiveRequest? {
+        let input = object["input"] as? [String: Any]
+        let source = input ?? object
+        let name = [
+            stringValue(object["name"]),
+            stringValue(object["tool_name"]),
+            stringValue(object["type"]),
+            fallbackTitle
+        ]
+        .compactMap { $0 }
+        .joined(separator: " ")
+        .lowercased()
+        let hasChoiceShape = source["options"] != nil || source["choices"] != nil || source["questions"] != nil
+        guard hasChoiceShape || name.contains("askuserquestion") || name.contains("ask_user_question") || name.contains("question") || name.contains("choice") else {
+            return nil
+        }
+        guard !name.contains("permission"), !name.contains("approval") else { return nil }
+        let id = fallbackID ?? stringValue(source["id"]) ?? stringValue(source["request_id"]) ?? UUID().uuidString
+        let prompt = stringValue(source["prompt"])
+            ?? stringValue(source["question"])
+            ?? stringValue(source["message"])
+            ?? stringValue(source["text"])
+            ?? "请选择后继续。"
+        let options = interactiveOptions(from: source)
+        let mode: ChatInteractiveMode
+        if options.isEmpty {
+            mode = .text
+        } else if boolValue(source["multiple"]) == true || boolValue(source["multiSelect"]) == true || boolValue(source["multi_select"]) == true {
+            mode = .multipleChoice
+        } else {
+            mode = .singleChoice
+        }
+        return ChatInteractiveRequest(
+            id: id,
+            title: stringValue(source["title"]) ?? stringValue(object["name"]) ?? "需要选择",
+            prompt: prompt,
+            mode: mode,
+            options: options,
+            allowCustomInput: boolValue(source["allowCustomInput"]) ?? boolValue(source["allow_custom_input"]) ?? false,
+            placeholder: stringValue(source["placeholder"]) ?? "输入回复",
+            status: .waiting
+        )
+    }
+
+    private static func interactiveOptions(from object: [String: Any]) -> [ChatInteractiveOption] {
+        let rawOptions = object["options"] ?? object["choices"] ?? object["questions"]
+        guard let array = rawOptions as? [Any] else { return [] }
+        return array.enumerated().map { index, item in
+            if let text = stringValue(item) {
+                return ChatInteractiveOption(id: text, label: text, detail: "")
+            }
+            if let option = item as? [String: Any] {
+                let id = stringValue(option["id"]) ?? stringValue(option["value"]) ?? stringValue(option["label"]) ?? "option-\(index + 1)"
+                let label = stringValue(option["label"]) ?? stringValue(option["title"]) ?? stringValue(option["text"]) ?? id
+                let detail = stringValue(option["detail"]) ?? stringValue(option["description"]) ?? ""
+                return ChatInteractiveOption(id: id, label: label, detail: detail)
+            }
+            let label = "选项 \(index + 1)"
+            return ChatInteractiveOption(id: "option-\(index + 1)", label: label, detail: "")
+        }
     }
 
     private static func compactText(from object: [String: Any]) -> String {
@@ -526,6 +613,19 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
     private static func stringValue(_ value: Any?) -> String? {
         if let string = value as? String { return string }
         if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func boolValue(_ value: Any?) -> Bool? {
+        if let bool = value as? Bool { return bool }
+        if let number = value as? NSNumber { return number.boolValue }
+        if let string = value as? String {
+            switch string.lowercased() {
+            case "true", "1", "yes": return true
+            case "false", "0", "no": return false
+            default: return nil
+            }
+        }
         return nil
     }
 

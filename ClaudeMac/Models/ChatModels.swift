@@ -180,6 +180,7 @@ enum ChatMessageKind: String, Codable, Equatable, Hashable {
     case command
     case commandOutput
     case permissionRequest
+    case interactiveRequest
     case diff
     case error
     case system
@@ -187,11 +188,48 @@ enum ChatMessageKind: String, Codable, Equatable, Hashable {
     case rawOutput
 }
 
+enum ChatInteractiveMode: String, Codable, Equatable {
+    case singleChoice
+    case multipleChoice
+    case text
+}
+
+enum ChatInteractiveStatus: String, Codable, Equatable {
+    case waiting
+    case answered
+    case cancelled
+    case failed
+}
+
+struct ChatInteractiveOption: Identifiable, Codable, Equatable {
+    var id: String
+    var label: String
+    var detail: String
+}
+
+struct ChatInteractiveRequest: Identifiable, Codable, Equatable {
+    var id: String
+    var title: String
+    var prompt: String
+    var mode: ChatInteractiveMode
+    var options: [ChatInteractiveOption]
+    var allowCustomInput: Bool
+    var placeholder: String
+    var status: ChatInteractiveStatus
+}
+
+struct ChatInteractiveResponse: Codable, Equatable {
+    var requestID: String
+    var selectedOptionIDs: [String]
+    var customText: String?
+}
+
 enum ChatRunStatus: String, Codable, Equatable {
     case idle
     case starting
     case streaming
     case waitingPermission
+    case waitingInput
     case stopping
     case completed
     case failed
@@ -199,7 +237,7 @@ enum ChatRunStatus: String, Codable, Equatable {
 
     var isRunning: Bool {
         switch self {
-        case .starting, .streaming, .waitingPermission, .stopping: true
+        case .starting, .streaming, .waitingPermission, .waitingInput, .stopping: true
         case .idle, .completed, .failed, .unsupportedVersion: false
         }
     }
@@ -217,6 +255,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var parentUserMessageID: UUID?
     var requestID: String?
     var isStreaming: Bool
+    var interactiveRequest: ChatInteractiveRequest?
 
     init(
         id: UUID = UUID(),
@@ -229,7 +268,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         createdAt: Date = Date(),
         parentUserMessageID: UUID? = nil,
         requestID: String? = nil,
-        isStreaming: Bool = false
+        isStreaming: Bool = false,
+        interactiveRequest: ChatInteractiveRequest? = nil
     ) {
         self.id = id
         self.sessionID = sessionID
@@ -242,6 +282,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         self.parentUserMessageID = parentUserMessageID
         self.requestID = requestID
         self.isStreaming = isStreaming
+        self.interactiveRequest = interactiveRequest
     }
 
     var timestampText: String {
@@ -356,6 +397,7 @@ enum ChatBackendEvent: Equatable {
     case updateStreamingStatus(String)
     case sessionID(String)
     case permissionRequest(id: String, title: String, text: String)
+    case interactiveRequest(ChatInteractiveRequest)
     case tokenUsage(used: Int, total: Int)
     case finished
     case failed(String)

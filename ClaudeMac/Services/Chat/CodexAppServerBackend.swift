@@ -14,11 +14,18 @@ final class CodexAppServerBackend: ChatProcessBackend {
         let requestedPermissions: [String: Any]?
     }
 
+    private struct InteractiveRequest {
+        let id: Any
+        let method: String
+    }
+
     private var process: Process?
     private var inputPipe: Pipe?
     private var nextID = 1
     private var pendingRequests: [Int: PendingRequest] = [:]
     private var pendingApprovals: [String: ApprovalRequest] = [:]
+    private var pendingInteractiveRequests: [String: InteractiveRequest] = [:]
+    private var fallbackEventCounter = 0
     private var activeThreadID: String?
     private var activeTurnID: String?
     private var didFinishTurn = false
@@ -30,6 +37,8 @@ final class CodexAppServerBackend: ChatProcessBackend {
                 self.didFinishTurn = false
                 self.pendingRequests = [:]
                 self.pendingApprovals = [:]
+                self.pendingInteractiveRequests = [:]
+                self.fallbackEventCounter = 0
                 self.activeThreadID = nil
                 self.activeTurnID = nil
 
@@ -167,6 +176,21 @@ final class CodexAppServerBackend: ChatProcessBackend {
         return sendResponse(id: approval.id, result: result)
     }
 
+    func respondToInteractiveRequest(requestID: String, response: ChatInteractiveResponse) -> Bool {
+        guard let request = pendingInteractiveRequests.removeValue(forKey: requestID) else { return false }
+        var result: [String: Any] = [
+            "selectedOptionIds": response.selectedOptionIDs,
+            "selected_option_ids": response.selectedOptionIDs,
+            "answer": response.customText ?? response.selectedOptionIDs.joined(separator: ", ")
+        ]
+        if let customText = response.customText?.nonEmptyTrimmed {
+            result["text"] = customText
+            result["value"] = customText
+        }
+        result["method"] = request.method
+        return sendResponse(id: request.id, result: result)
+    }
+
     func sendCompact() -> Bool {
         _ = sendRequest(method: "compact", params: [:])
         return inputPipe != nil
@@ -259,6 +283,9 @@ final class CodexAppServerBackend: ChatProcessBackend {
             if Self.isApprovalRequest(method) {
                 return events(fromServerRequest: object, id: id, method: method)
             }
+            if Self.isInteractiveRequest(method, object: object) {
+                return events(fromInteractiveServerRequest: object, id: id, method: method)
+            }
             return events(fromServerRequest: object, id: id, method: method, options: options)
         }
 
@@ -330,6 +357,13 @@ final class CodexAppServerBackend: ChatProcessBackend {
         )]
     }
 
+    private func events(fromInteractiveServerRequest object: [String: Any], id: Any, method: String) -> [ChatBackendEvent] {
+        let requestID = Self.requestKey(from: id)
+        pendingInteractiveRequests[requestID] = InteractiveRequest(id: id, method: method)
+        let params = object["params"] as? [String: Any] ?? [:]
+        return [.interactiveRequest(Self.interactiveRequest(id: requestID, method: method, params: params))]
+    }
+
     private func events(fromServerRequest object: [String: Any], id: Any, method: String, options: ChatRunOptions) -> [ChatBackendEvent] {
         if Self.isReadFileRequest(method) {
             return events(fromReadFileRequest: object, id: id, method: method, projectPath: options.projectPath)
@@ -397,9 +431,9 @@ final class CodexAppServerBackend: ChatProcessBackend {
         case "item/plan/delta":
             return [.appendMessage(kind: .reasoning, title: "plan", subtitle: "Codex", text: Self.compactText(from: params), status: "stream", requestID: Self.itemID(from: params))]
         case "command/exec/outputDelta", "item/commandExecution/outputDelta":
-            return [.appendDelta(kind: .commandOutput, title: "command output", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: Self.itemID(from: params) ?? activeTurnID)]
+            return [.appendDelta(kind: .commandOutput, title: "command output", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: outputRequestID(method: method, params: params))]
         case "item/fileChange/outputDelta", "turn/diff/updated":
-            return [.appendDelta(kind: .diff, title: "diff", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: Self.itemID(from: params) ?? activeTurnID)]
+            return [.appendDelta(kind: .diff, title: "diff", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: outputRequestID(method: method, params: params))]
         case "item/started":
             return [.appendMessage(kind: Self.kindForCodexItem(params, completed: false), title: Self.itemTitle(from: params, fallback: "item started"), subtitle: "Codex", text: Self.compactText(from: params), status: "streaming", requestID: Self.itemID(from: params))]
         case "item/completed":
@@ -471,6 +505,84 @@ final class CodexAppServerBackend: ChatProcessBackend {
         return normalized.contains("readfile") || normalized == "fs/read" || normalized.hasSuffix("/read")
     }
 
+    private static func isInteractiveRequest(_ method: String, object: [String: Any]) -> Bool {
+        let params = object["params"] as? [String: Any] ?? [:]
+        let normalized = method.lowercased().replacingOccurrences(of: "_", with: "")
+        guard !normalized.contains("approval"), !normalized.contains("permission") else { return false }
+        return normalized.contains("ask")
+            || normalized.contains("question")
+            || normalized.contains("choice")
+            || normalized.contains("input")
+            || params["options"] != nil
+            || params["choices"] != nil
+            || params["questions"] != nil
+    }
+
+    private func outputRequestID(method: String, params: [String: Any]) -> String {
+        if let value = Self.outputID(from: params) {
+            return value
+        }
+        fallbackEventCounter += 1
+        let turnPrefix = activeTurnID ?? "turn"
+        return "\(turnPrefix)-\(method)-\(fallbackEventCounter)"
+    }
+
+    private static func outputID(from object: [String: Any]) -> String? {
+        let keys = ["itemId", "item_id", "callId", "call_id", "commandId", "command_id", "outputId", "output_id", "id"]
+        for key in keys {
+            if let value = stringValue(object[key]) {
+                return value
+            }
+        }
+        if let item = object["item"] as? [String: Any] {
+            return outputID(from: item)
+        }
+        return nil
+    }
+
+    private static func interactiveRequest(id: String, method: String, params: [String: Any]) -> ChatInteractiveRequest {
+        let options = interactiveOptions(from: params)
+        let mode: ChatInteractiveMode
+        if options.isEmpty {
+            mode = .text
+        } else if boolValue(params["multiple"]) == true || boolValue(params["multiSelect"]) == true || boolValue(params["multi_select"]) == true {
+            mode = .multipleChoice
+        } else {
+            mode = .singleChoice
+        }
+        return ChatInteractiveRequest(
+            id: id,
+            title: stringValue(params["title"]) ?? "需要选择",
+            prompt: stringValue(params["prompt"])
+                ?? stringValue(params["question"])
+                ?? stringValue(params["message"])
+                ?? stringValue(params["text"])
+                ?? "请选择后继续。",
+            mode: mode,
+            options: options,
+            allowCustomInput: boolValue(params["allowCustomInput"]) ?? boolValue(params["allow_custom_input"]) ?? false,
+            placeholder: stringValue(params["placeholder"]) ?? "输入回复",
+            status: .waiting
+        )
+    }
+
+    private static func interactiveOptions(from params: [String: Any]) -> [ChatInteractiveOption] {
+        let rawOptions = params["options"] ?? params["choices"] ?? params["questions"]
+        guard let array = rawOptions as? [Any] else { return [] }
+        return array.enumerated().map { index, item in
+            if let text = stringValue(item) {
+                return ChatInteractiveOption(id: text, label: text, detail: "")
+            }
+            if let option = item as? [String: Any] {
+                let id = stringValue(option["id"]) ?? stringValue(option["value"]) ?? stringValue(option["label"]) ?? "option-\(index + 1)"
+                let label = stringValue(option["label"]) ?? stringValue(option["title"]) ?? stringValue(option["text"]) ?? id
+                let detail = stringValue(option["detail"]) ?? stringValue(option["description"]) ?? ""
+                return ChatInteractiveOption(id: id, label: label, detail: detail)
+            }
+            return ChatInteractiveOption(id: "option-\(index + 1)", label: "选项 \(index + 1)", detail: "")
+        }
+    }
+
     private static func pathValue(from params: [String: Any]) -> String? {
         if let value = stringValue(params["path"]) ?? stringValue(params["filePath"]) ?? stringValue(params["filepath"]) ?? stringValue(params["uri"]) {
             return value.hasPrefix("file://") ? URL(string: value)?.path : value
@@ -536,7 +648,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
 
     private static func isVisibleOutput(_ event: ChatBackendEvent) -> Bool {
         switch event {
-        case .appendDelta, .permissionRequest, .failed:
+        case .appendDelta, .permissionRequest, .interactiveRequest, .failed:
             true
         case .appendMessage(let kind, _, _, let text, _, _):
             kind != .system && !text.isEmpty
