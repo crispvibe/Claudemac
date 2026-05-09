@@ -77,6 +77,9 @@ struct ChatPanelView: View {
             syncSelectedContextWindow()
             persistChatSelection()
         }
+        .onChange(of: reduceMotion) { _, enabled in
+            if enabled { activityPulse = false }
+        }
     }
 
     private var header: some View {
@@ -285,11 +288,7 @@ struct ChatPanelView: View {
 
     private func assistantMessageRow(_ message: ChatMessage) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(message.text)
-                .font(.system(size: 12))
-                .lineSpacing(3)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            AssistantMessageContent(text: message.text)
 
             messageActionBar(message, alignment: .leading)
         }
@@ -352,7 +351,7 @@ struct ChatPanelView: View {
             .buttonStyle(.plain)
 
             if isExpanded {
-                toolDetailView(message)
+                toolDetailCard(message)
                     .padding(.leading, 12)
             }
         }
@@ -363,24 +362,57 @@ struct ChatPanelView: View {
     }
 
     @ViewBuilder
+    private func toolDetailCard(_ message: ChatMessage) -> some View {
+        let detailText = message.toolDetailText
+        if message.kind == .diff || !detailText.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text(message.kind == .diff ? "diff" : "details")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 0)
+                    if !detailText.isEmpty {
+                        iconAction("doc.on.doc", help: "复制详情") {
+                            copyText(detailText)
+                        }
+                    }
+                }
+
+                toolDetailView(message)
+            }
+            .padding(9)
+            .background(Color.black.opacity(0.025))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(AppTheme.hairline, lineWidth: 1)
+            )
+        }
+    }
+
+    @ViewBuilder
     private func toolDetailView(_ message: ChatMessage) -> some View {
         if message.kind == .diff {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(message.diffLines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(line.diffTint)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            ScrollView(.horizontal, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(message.diffLines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(line.diffTint)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         } else if !message.toolDetailText.isEmpty {
-            Text(message.toolDetailText)
-                .font(.system(size: 10, design: message.kind.isToolDetailMonospaced ? .monospaced : .default))
-                .foregroundStyle(.secondary)
-                .lineSpacing(2)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            ScrollView(.horizontal, showsIndicators: true) {
+                Text(message.toolDetailText)
+                    .font(.system(size: 10, design: message.kind.isToolDetailMonospaced ? .monospaced : .default))
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(2)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
@@ -1070,8 +1102,12 @@ struct ChatPanelView: View {
     }
 
     private func copyMessage(_ message: ChatMessage) {
+        copyText(message.text)
+    }
+
+    private func copyText(_ text: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(message.text, forType: .string)
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private func editMessage(_ message: ChatMessage) {
@@ -1180,6 +1216,220 @@ private enum ChatTranscriptItem: Identifiable {
         case .loading:
             "loading"
         }
+    }
+}
+
+private struct AssistantMessageContent: View {
+    let text: String
+
+    private var blocks: [AssistantMessageBlock] {
+        AssistantMessageBlock.parse(text)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                blockView(block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func blockView(_ block: AssistantMessageBlock) -> some View {
+        switch block {
+        case .text(let value):
+            Text(inlineMarkdown(value))
+                .font(.system(size: 12))
+                .lineSpacing(3)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .code(let language, let code):
+            AssistantCodeBlockView(language: language, code: code)
+        case .table(let value):
+            ScrollView(.horizontal, showsIndicators: true) {
+                Text(value)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color.black.opacity(0.025))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(AppTheme.hairline, lineWidth: 1)
+            )
+        }
+    }
+
+    private func inlineMarkdown(_ value: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: value, options: options)) ?? AttributedString(value)
+    }
+}
+
+private struct AssistantCodeBlockView: View {
+    let language: String
+    let code: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(language.isEmpty ? "code" : language)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                Spacer(minLength: 0)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(code, forType: .string)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 9, weight: .medium))
+                        Text("copy")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .help("复制代码")
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(Color.black.opacity(0.035))
+
+            ScrollView(.horizontal, showsIndicators: true) {
+                Text(code)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .background(Color.black.opacity(0.025))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(AppTheme.hairline, lineWidth: 1)
+        )
+    }
+}
+
+private enum AssistantMessageBlock {
+    case text(String)
+    case code(language: String, code: String)
+    case table(String)
+
+    static func parse(_ text: String) -> [AssistantMessageBlock] {
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+        let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var blocks: [AssistantMessageBlock] = []
+        var textBuffer: [String] = []
+        var codeBuffer: [String] = []
+        var codeLanguage = ""
+        var isInCodeBlock = false
+
+        func flushText() {
+            let value = textBuffer.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            textBuffer.removeAll()
+            guard !value.isEmpty else { return }
+            appendTextOrTable(value, to: &blocks)
+        }
+
+        for line in lines {
+            if let language = fenceLanguage(from: line) {
+                if isInCodeBlock {
+                    blocks.append(.code(language: codeLanguage, code: codeBuffer.joined(separator: "\n")))
+                    codeBuffer.removeAll()
+                    codeLanguage = ""
+                    isInCodeBlock = false
+                } else {
+                    flushText()
+                    codeLanguage = language
+                    isInCodeBlock = true
+                }
+            } else if isInCodeBlock {
+                codeBuffer.append(line)
+            } else {
+                textBuffer.append(line)
+            }
+        }
+
+        if isInCodeBlock {
+            blocks.append(.code(language: codeLanguage, code: codeBuffer.joined(separator: "\n")))
+        }
+        flushText()
+
+        return blocks.isEmpty && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [.text(text)] : blocks
+    }
+
+    private static func appendTextOrTable(_ value: String, to blocks: inout [AssistantMessageBlock]) {
+        let lines = value.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var buffer: [String] = []
+        var tableBuffer: [String] = []
+
+        func flushBuffer() {
+            let text = buffer.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            buffer.removeAll()
+            if !text.isEmpty { blocks.append(.text(text)) }
+        }
+
+        func flushTable() {
+            let table = tableBuffer.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            tableBuffer.removeAll()
+            if !table.isEmpty { blocks.append(.table(table)) }
+        }
+
+        var index = 0
+        while index < lines.count {
+            if let tableRange = tableRangeStart(in: lines, at: index) {
+                flushBuffer()
+                tableBuffer.append(contentsOf: lines[tableRange])
+                flushTable()
+                index = tableRange.upperBound
+            } else {
+                buffer.append(lines[index])
+                index += 1
+            }
+        }
+        flushTable()
+        flushBuffer()
+    }
+
+    private static func fenceLanguage(from line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("```") else { return nil }
+        return String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func tableRangeStart(in lines: [String], at index: Int) -> Range<Int>? {
+        guard index + 1 < lines.count,
+              isPotentialTableRow(lines[index]),
+              isTableSeparator(lines[index + 1]) else { return nil }
+        var end = index + 2
+        while end < lines.count && isPotentialTableRow(lines[end]) {
+            end += 1
+        }
+        return index..<end
+    }
+
+    private static func isPotentialTableRow(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains("|") else { return false }
+        return trimmed.first == "|" || trimmed.last == "|" || trimmed.contains(" | ")
+    }
+
+    private static func isTableSeparator(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains("|") else { return false }
+        let allowed = CharacterSet(charactersIn: "|-: ")
+        return trimmed.unicodeScalars.allSatisfy { allowed.contains($0) }
+            && trimmed.contains("---")
     }
 }
 
@@ -1419,10 +1669,16 @@ private extension ChatMessage {
     var toolDetailText: String {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return "" }
-        if let formatted = compactFormattedJSONObject(body) {
-            return formatted
+        if let visual = visualFormattedJSONObject(body) {
+            return visual
         }
-        return body
+        let filtered = body
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.isInternalToolNoiseLine }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return filtered
     }
 
     var isBackendLaunchCommand: Bool {
@@ -1445,13 +1701,86 @@ private extension ChatMessage {
         } ?? ""
     }
 
-    private func compactFormattedJSONObject(_ body: String) -> String? {
+    private func visualFormattedJSONObject(_ body: String) -> String? {
         guard let data = body.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data),
-              JSONSerialization.isValidJSONObject(object),
-              let formattedData = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
-              let formatted = String(data: formattedData, encoding: .utf8) else { return nil }
-        return formatted
+              let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        let pairs = visibleToolPairs(from: object)
+        guard !pairs.isEmpty else { return "" }
+        return pairs
+            .map { "\($0.key):\n\($0.value)" }
+            .joined(separator: "\n\n")
+    }
+
+    private func visibleToolPairs(from object: Any) -> [(key: String, value: String)] {
+        if let dictionary = object as? [String: Any] {
+            return visibleToolPairs(from: dictionary)
+        }
+        if let array = object as? [Any] {
+            return array.enumerated().flatMap { index, value in
+                visibleToolPairs(from: value).map { ("item \(index + 1) · \($0.key)", $0.value) }
+            }
+        }
+        return []
+    }
+
+    private func visibleToolPairs(from dictionary: [String: Any]) -> [(key: String, value: String)] {
+        let priorityKeys = [
+            "toolName", "tool_name", "name", "tool",
+            "command", "cmd", "cwd", "path", "file", "filePath", "file_path",
+            "input", "args", "arguments", "params",
+            "stdout", "stderr", "output", "result", "error", "message", "text", "is_error", "diff", "patch"
+        ]
+        var pairs: [(key: String, value: String)] = []
+        for key in priorityKeys {
+            guard let value = dictionary[key],
+                  let text = readableToolValue(value),
+                  !text.isEmpty else { continue }
+            pairs.append((displayToolKey(key), text))
+        }
+        if !pairs.isEmpty { return pairs.removingDuplicateKeys() }
+
+        let envelopeKeys = ["message", "content", "event", "delta", "item", "params", "data"]
+        for key in envelopeKeys {
+            guard let value = dictionary[key] else { continue }
+            pairs.append(contentsOf: visibleToolPairs(from: value))
+        }
+        return pairs.removingDuplicateKeys()
+    }
+
+    private func readableToolValue(_ value: Any) -> String? {
+        if let bool = value as? Bool {
+            return bool ? "true" : "false"
+        }
+        if let number = value as? NSNumber {
+            return number.stringValue
+        }
+        if let string = value as? String {
+            let filtered = string
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+                .filter { !$0.isInternalToolNoiseLine }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return filtered.isEmpty ? nil : filtered
+        }
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+              let string = String(data: data, encoding: .utf8) else { return nil }
+        let filtered = string
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.isInternalToolNoiseLine }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return filtered.isEmpty ? nil : filtered
+    }
+
+    private func displayToolKey(_ key: String) -> String {
+        switch key {
+        case "toolName", "tool_name": return "tool"
+        case "filePath", "file_path": return "path"
+        default: return key
+        }
     }
 }
 
@@ -1484,12 +1813,37 @@ private extension ChatPermissionMode {
     }
 }
 
+private extension Array where Element == (key: String, value: String) {
+    func removingDuplicateKeys() -> [(key: String, value: String)] {
+        var seen = Set<String>()
+        var result: [(key: String, value: String)] = []
+        for item in self where !seen.contains(item.key) {
+            seen.insert(item.key)
+            result.append(item)
+        }
+        return result
+    }
+}
+
 private extension String {
     var diffTint: Color {
         if hasPrefix("+") { return .green }
         if hasPrefix("-") { return .red }
         if hasPrefix("@@") { return .blue }
         return .secondary
+    }
+
+    var isInternalToolNoiseLine: Bool {
+        let normalized = trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return false }
+        if normalized == "done" || normalized == "null" { return true }
+        let noisyPrefixes = [
+            "\"id\"", "\"type\"", "\"role\"", "\"index\"", "\"model\"",
+            "\"usage\"", "\"session_id\"", "\"request_id\"", "\"parent_id\"",
+            "\"message_start\"", "\"message_stop\"", "\"stop_reason\"",
+            "\"created_at\"", "\"timestamp\"", "\"uuid\""
+        ]
+        return noisyPrefixes.contains { normalized.hasPrefix($0) }
     }
 }
 

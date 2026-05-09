@@ -427,14 +427,38 @@ Windows 复刻建议：
 2. 工具调用、命令输出、后续 thinking 会按真实事件顺序向下推进。
 3. assistant 回复也不会跨工具事件错误合并。
 
-### 9.3 Tool row
+### 9.3 Assistant output
+
+assistant 回复不再只按纯文本渲染，输出层要识别常见 Markdown 结构：
+
+- 普通段落：保留选择和整条复制，行内 Markdown/inline code 允许轻量解析，解析失败回退纯文本。
+- fenced code block：独立代码卡片、等宽字体、横向滚动、显示语言标签、提供单块 `copy`。
+- Markdown table：独立表格卡片，等宽显示并支持横向滚动，避免列被压碎。
+- 长文本仍按流式追加，不改变 backend event 和 `ChatMessage` 模型。
+
+证据：
+
+- `ClaudeMac/Views/ClaudeSessionPanelView.swift:286`
+- `ClaudeMac/Views/ClaudeSessionPanelView.swift:1219`
+- `ClaudeMac/Views/ClaudeSessionPanelView.swift:1271`
+
+Windows 复刻建议：
+
+1. Assistant renderer 先做轻量 parser，不要引入会阻塞流式渲染的大型 Markdown 引擎。
+2. 代码块复制必须复制原始 code，不包含语言 fence。
+3. 表格优先保证可读和可横向滚动，不要求第一版做复杂 grid。
+4. renderer 必须能处理未闭合代码 fence，避免流式过程中闪烁或崩溃。
+
+### 9.4 Tool row
 
 工具行现在是极简折叠行：
 
 - 不显示图标。
 - 标题优先显示 raw/英文工具名。
 - fallback 为 `tool`、`command`、`command output`、`diff`。
-- 展开后才显示参数、输出或 diff。
+- 展开后用带边框的详情卡片显示参数、输出或 diff。
+- 详情卡片保留复制入口，长命令、长 JSON、diff 支持横向滚动。
+- 工具详情展示层过滤 `id/type/index/session/timestamp/message_start/message_stop/done` 等内部噪音，只保留 command/path/input/output/result/error/message/text/diff 等可理解字段，不能丢失错误原因。
 - 最新运行中的工具行有 accent 色闪烁动画。
 - 支持 reduce motion：系统减少动态时不闪烁，只显示静态运行态。
 
@@ -447,10 +471,12 @@ Windows 复刻建议：
 
 1. ToolRow 必须有 collapsed/expanded 两态。
 2. active 状态只给最后可见且 streaming 的工具行。
-3. 动效只做 opacity/background pulse，避免布局抖动。
-4. 尊重 Windows 系统动画减少设置。
+3. 展开区必须是卡片，不直接裸露大段文字。
+4. 动效只做 opacity/background pulse，避免布局抖动。
+5. 尊重 Windows 系统动画减少设置。
+6. 原始事件仍可进诊断日志，但主 UI 和详情卡片默认不显示内部 envelope。
 
-### 9.4 Thinking row
+### 9.5 Thinking row
 
 thinking 行设计：
 
@@ -530,9 +556,9 @@ Windows 复刻建议：
 | UI 组件 | 触发数据 | 默认状态 | 交互 | Windows 复刻 |
 | --- | --- | --- | --- | --- |
 | UserMessageRow | `.user` | 右侧气泡 | 复制、编辑、撤销 | Bubble + action bar |
-| AssistantMessageRow | `.assistant` | 普通文本 | 复制 | Markdown/Text renderer |
+| AssistantMessageRow | `.assistant` | Markdown 段落、代码块、表格 | 整条复制、代码块复制 | Lightweight Markdown renderer + code/table cards |
 | ThinkingRow | `.reasoning` | 标题 thinking；运行时展开，结束后收缩 | 手动展开/收起 | Expander/Disclosure |
-| ToolInvocationRow | tool/command/diff | 折叠；运行中闪烁 | 展开看详情 | Expander + active pulse |
+| ToolInvocationRow | tool/command/diff | 折叠；运行中闪烁 | 展开详情卡片、复制详情 | Expander + active pulse + detail card |
 | PermissionCard | `.permissionRequest` | waiting | deny/allow/session allow | Card + buttons |
 | InteractiveCard | `.interactiveRequest` | waiting | 单选/多选/文本提交 | Card + inputs |
 | LoadingRow | awaiting first output | spinner + “正在生成” | 无 | Progress indicator |
@@ -715,10 +741,14 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 | 场景 | 期望 |
 | --- | --- |
 | 普通问候 | user 立即出现，loading 出现，assistant 首字后 loading 消失 |
+| assistant 代码块 | 独立代码卡片、等宽字体、横向滚动、单块 copy 只复制代码 |
+| assistant 表格 | 表格卡片可横向滚动，不被压成乱文本 |
+| 未闭合代码 fence | 流式过程中按代码块展示，不崩溃、不吞后续文本 |
 | thinking | 标题 thinking 常显，运行时展开，结束后收缩 |
 | 多个工具 | 每个工具按顺序下推，不合并成大组 |
 | 工具运行中 | 最新工具行有可见运行态闪烁或静态高亮 |
-| 展开工具 | 只展开当前行详情，不污染主线 |
+| 展开工具 | 只展开当前行详情卡片，不污染主线 |
+| 工具噪音过滤 | 展开卡片不显示 id/type/index/session/timestamp/done 等内部 envelope，但必须保留 error/message/text |
 | diff | 默认折叠，展开看 diff |
 | permission | 卡片显示 deny/allow/session allow |
 | interactive | 单选、多选、文本输入可提交 |
