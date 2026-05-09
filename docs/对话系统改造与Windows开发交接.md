@@ -459,8 +459,8 @@ Windows 复刻建议：
 - 展开后用带边框的详情卡片显示参数、输出或 diff。
 - 详情卡片保留复制入口，长命令、长 JSON、diff 支持横向滚动。
 - 工具详情展示层过滤 `id/type/index/session/timestamp/message_start/message_stop/done` 等内部噪音，只保留 command/path/input/output/result/error/message/text/diff 等可理解字段，不能丢失错误原因。
-- 最新运行中的工具行有 accent 色闪烁动画。
-- 支持 reduce motion：系统减少动态时不闪烁，只显示静态运行态。
+- 最新运行中的工具行只用静态字体/颜色强调，不做闪烁或 repeat 动画。
+- 执行完成后工具行自动恢复普通静态样式。
 
 证据：
 
@@ -472,9 +472,8 @@ Windows 复刻建议：
 1. ToolRow 必须有 collapsed/expanded 两态。
 2. active 状态只给最后可见且 streaming 的工具行。
 3. 展开区必须是卡片，不直接裸露大段文字。
-4. 动效只做 opacity/background pulse，避免布局抖动。
-5. 尊重 Windows 系统动画减少设置。
-6. 原始事件仍可进诊断日志，但主 UI 和详情卡片默认不显示内部 envelope。
+4. 运行态只做静态 font/color 差异，避免闪烁动画和布局抖动。
+5. 原始事件仍可进诊断日志，但主 UI 和详情卡片默认不显示内部 envelope。
 
 ### 9.5 Thinking row
 
@@ -537,19 +536,21 @@ Windows 复刻建议：
 
 ### 10.3 UI 位置与密度
 
-队列消息显示在 composer 上方，贴近输入框：
+队列消息显示在 composer 上方，紧贴输入框：
 
-- 最多约 3 行高度。
-- 内部可滚动。
-- 每行显示序号、首行摘要、取消按钮。
+- 少于 3 条时按实际行数占高，不预留空白。
+- 超过 3 条时固定 3 行高度，内部可滚动。
+- 每行显示序号、首行摘要、编辑按钮、删除按钮。
+- 删除直接移除队列项；编辑会把队列文本回填到输入框并从队列中移除。
 
 证据：`ClaudeMac/Views/ClaudeSessionPanelView.swift:598`
 
 Windows 复刻建议：
 
 1. QueueBar 放在 Composer 内部或紧贴 Composer 上沿。
-2. 不要占据 transcript 大块空间。
-3. 队列取消必须只移除未开始请求，不能影响当前 run。
+2. 不要占据 transcript 大块空间，也不要用最大高度预留空白。
+3. 队列删除必须只移除未开始请求，不能影响当前 run。
+4. 队列编辑必须先删除队列项，再把文本放回 composer 草稿。
 
 ## 11. UI 组件矩阵
 
@@ -558,12 +559,14 @@ Windows 复刻建议：
 | UserMessageRow | `.user` | 右侧气泡 | 复制、编辑、撤销 | Bubble + action bar |
 | AssistantMessageRow | `.assistant` | Markdown 段落、代码块、表格 | 整条复制、代码块复制 | Lightweight Markdown renderer + code/table cards |
 | ThinkingRow | `.reasoning` | 标题 thinking；运行时展开，结束后收缩 | 手动展开/收起 | Expander/Disclosure |
-| ToolInvocationRow | tool/command/diff | 折叠；运行中闪烁 | 展开详情卡片、复制详情 | Expander + active pulse + detail card |
+| ToolInvocationRow | tool/command/diff | 折叠；运行中静态强调 | 展开详情卡片、复制详情 | Expander + static active style + detail card |
 | PermissionCard | `.permissionRequest` | waiting | deny/allow/session allow | Card + buttons |
 | InteractiveCard | `.interactiveRequest` | waiting | 单选/多选/文本提交 | Card + inputs |
 | LoadingRow | awaiting first output | spinner + “正在生成” | 无 | Progress indicator |
-| QueueBar | queuedRequests | 最多 3 行 | 取消单条 | Scrollable compact list |
+| QueueBar | queuedRequests | 实际行数，最多 3 行 | 编辑、删除单条 | Scrollable compact list |
+| WorkbenchSplit | editor/chat layout | chat 宽度可拖拽，按可用空间 clamp | 左拖扩大对话，右拖扩大编辑器 | 持久化 split width，不要固定 420/840 卡片宽度 |
 | StopButton | status.isRunning | 显示 stop | interrupt | 独立于 send |
+| Composer | draft text | 占位文案“输入你的需求” | IME 候选确认、Shift+Enter 换行 | marked text 时隐藏 placeholder，避免叠字 |
 | SendButton | draft nonempty | 发送/加入队列 | send | 不承担 stop 语义 |
 
 证据：
@@ -571,6 +574,7 @@ Windows 复刻建议：
 - UI row 分发：`ClaudeMac/Views/ClaudeSessionPanelView.swift:253`
 - interactive card：`ClaudeMac/Views/ClaudeSessionPanelView.swift:1186`
 - send button：`ClaudeMac/Views/ClaudeSessionPanelView.swift:925`
+- workbench split：`ClaudeMac/Views/RootView.swift:59`
 
 ## 12. 自动滚动与 loading
 
@@ -746,17 +750,20 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 | 未闭合代码 fence | 流式过程中按代码块展示，不崩溃、不吞后续文本 |
 | thinking | 标题 thinking 常显，运行时展开，结束后收缩 |
 | 多个工具 | 每个工具按顺序下推，不合并成大组 |
-| 工具运行中 | 最新工具行有可见运行态闪烁或静态高亮 |
+| 工具运行中 | 最新工具行只有静态字体/颜色强调，不闪烁 |
 | 展开工具 | 只展开当前行详情卡片，不污染主线 |
 | 工具噪音过滤 | 展开卡片不显示 id/type/index/session/timestamp/done 等内部 envelope，但必须保留 error/message/text |
 | diff | 默认折叠，展开看 diff |
 | permission | 卡片显示 deny/allow/session allow |
 | interactive | 单选、多选、文本输入可提交 |
-| 运行中继续发送 | 进入队列，不 interrupt 当前 run |
+| 运行中继续发送 | 进入队列，不 interrupt 当前 run；队列紧贴输入框且无预留空白 |
+| 队列编辑/删除 | 删除直接移除队列项；编辑回填输入框并移除队列项 |
+| IME 回车 | 有 marked text 时 placeholder 隐藏且 Enter 只确认候选，不发送；普通 Enter 发送，Shift+Enter 换行 |
+| 普通消息发送 | 打开编辑器文件时不自动追加 Current file/Cursor，只有显式附加路径才进入 prompt |
 | stop | 只停止当前 run，不自动启动队列下一条 |
 | failed | 显示错误，不继续刷队列 |
 | auto-scroll | 流式高度增长时滚到底 |
-| reduce motion | 动效降级为静态运行态 |
+| 工具运行态 | 只做静态字体/颜色强调，执行完恢复普通样式 |
 
 ## 16. 已验证项
 
@@ -769,7 +776,7 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 5. `thinking` 文案替代中文思考文案。
 6. 队列出队逻辑改为 backend stream end 后触发。
 7. stop/failed 不自动出队。
-8. 最新工具行运行态增加动效，并有 reduce motion 兜底。
+8. 最新工具行运行态已改为静态字体/颜色强调，无闪烁动画。
 
 ## 17. 未验证项与风险
 
@@ -809,7 +816,7 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 
 1. Transcript + auto scroll。
 2. User/Assistant/Thinking rows。
-3. ToolRow 折叠、展开、active pulse。
+3. ToolRow 折叠、展开、静态运行态。
 4. PermissionCard 与 InteractiveCard。
 5. QueueBar 与 Composer。
 6. Stop/Send 语义拆分。

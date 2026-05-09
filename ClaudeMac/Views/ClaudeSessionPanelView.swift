@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 struct ChatPanelView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var modelService: ChatModelService
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var chatState = ChatPanelState()
     @State private var draftMessage = ""
     @State private var editingMessageID: UUID?
@@ -19,7 +18,7 @@ struct ChatPanelView: View {
     @State private var showResumePopover = false
     @State private var resumeInput = ""
     @State private var expandedTranscriptMessageIDs: Set<UUID> = []
-    @State private var activityPulse = false
+    @State private var composerHasMarkedText = false
     private let transcriptBottomID = "chat-transcript-bottom"
 
     var body: some View {
@@ -76,9 +75,6 @@ struct ChatPanelView: View {
         .onChange(of: selectedModelID) { _, _ in
             syncSelectedContextWindow()
             persistChatSelection()
-        }
-        .onChange(of: reduceMotion) { _, enabled in
-            if enabled { activityPulse = false }
         }
     }
 
@@ -326,26 +322,20 @@ struct ChatPanelView: View {
     private func toolInvocationRow(_ message: ChatMessage) -> some View {
         let isExpanded = expandedTranscriptMessageIDs.contains(message.id)
         let isActive = message.isStreaming && lastVisibleTranscriptMessageID == message.id
-        let activeOpacity = reduceMotion ? 0.10 : (activityPulse ? 0.14 : 0.035)
-        let activeTextOpacity = reduceMotion ? 0.95 : (activityPulse ? 1 : 0.52)
         return VStack(alignment: .leading, spacing: 6) {
             Button {
                 toggleTranscriptMessage(message.id)
             } label: {
                 HStack(spacing: 6) {
                     Text(message.toolDisplayTitle)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(isActive ? Color.accentColor.opacity(activeTextOpacity) : Color.secondary)
+                        .font(.system(size: 12, weight: isActive ? .semibold : .medium, design: .monospaced))
+                        .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
                         .lineLimit(1)
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(isActive ? Color.accentColor.opacity(0.75) : Color.secondary.opacity(0.45))
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, isActive ? 8 : 0)
-                .padding(.vertical, isActive ? 5 : 0)
-                .background(isActive ? Color.accentColor.opacity(activeOpacity) : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -357,8 +347,6 @@ struct ChatPanelView: View {
         }
         .padding(.vertical, 1)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onAppear { startActivityPulseIfNeeded() }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.72).repeatForever(autoreverses: true), value: activityPulse)
     }
 
     @ViewBuilder
@@ -462,11 +450,6 @@ struct ChatPanelView: View {
 
     private var lastVisibleTranscriptMessageID: UUID? {
         chatState.messages.last(where: shouldShowInTranscript)?.id
-    }
-
-    private func startActivityPulseIfNeeded() {
-        guard !reduceMotion, !activityPulse else { return }
-        activityPulse = true
     }
 
     private func toggleTranscriptMessage(_ id: UUID) {
@@ -606,7 +589,7 @@ struct ChatPanelView: View {
     }
 
     private var composer: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 0) {
             if !chatState.queuedRequests.isEmpty {
                 queuedRequestsView
             }
@@ -622,14 +605,19 @@ struct ChatPanelView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.top, 4)
+        .padding(.top, 2)
         .padding(.bottom, 12)
         .background(Color.white)
     }
 
     private var queuedRequestsView: some View {
-        ScrollView {
-            VStack(spacing: 4) {
+        let rowHeight: CGFloat = 28
+        let rowSpacing: CGFloat = 4
+        let visibleRows = min(chatState.queuedRequests.count, 3)
+        let height = CGFloat(visibleRows) * rowHeight + CGFloat(max(visibleRows - 1, 0)) * rowSpacing
+
+        return ScrollView {
+            VStack(spacing: rowSpacing) {
                 ForEach(Array(chatState.queuedRequests.enumerated()), id: \.element.id) { index, request in
                     HStack(spacing: 7) {
                         Text("#\(index + 1)")
@@ -642,6 +630,16 @@ struct ChatPanelView: View {
                             .lineLimit(1)
                         Spacer(minLength: 0)
                         Button {
+                            editQueuedRequest(request)
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 9, weight: .medium))
+                                .frame(width: 18, height: 18)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tertiary)
+                        .help("编辑队列消息")
+                        Button {
                             chatState.cancelQueuedRequest(request.id)
                         } label: {
                             Image(systemName: "xmark")
@@ -650,28 +648,29 @@ struct ChatPanelView: View {
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.tertiary)
+                        .help("删除队列消息")
                     }
                     .padding(.horizontal, 9)
-                    .frame(height: 28)
+                    .frame(height: rowHeight)
                     .background(Color.black.opacity(0.035))
                     .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
             }
         }
-        .frame(maxHeight: 28 * 3 + 8)
+        .frame(height: height)
     }
 
     private var composerCard: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
-                ChatComposerTextView(text: $draftMessage, onSubmit: sendMessage)
+                ChatComposerTextView(text: $draftMessage, hasMarkedText: $composerHasMarkedText, onSubmit: sendMessage)
                     .frame(minHeight: 42, maxHeight: 60)
                     .padding(.horizontal, 14)
                     .padding(.top, 9)
                     .padding(.bottom, 1)
 
-                if draftMessage.isEmpty {
-                    Text(editingMessageID == nil ? "要求后续变更" : "编辑上一条消息")
+                if draftMessage.isEmpty && !composerHasMarkedText {
+                    Text(editingMessageID == nil ? "输入你的需求" : "编辑上一条消息")
                         .font(.system(size: 12))
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 18)
@@ -1010,6 +1009,7 @@ struct ChatPanelView: View {
     }
 
     private func sendMessage() {
+        guard canSend else { return }
         if let editingMessageID, !chatState.status.isRunning {
             chatState.removeMessageThread(editingMessageID)
             self.editingMessageID = nil
@@ -1033,9 +1033,6 @@ struct ChatPanelView: View {
 
     private var composedPrompt: String {
         var parts = [draftMessage.trimmingCharacters(in: .whitespacesAndNewlines)]
-        if let tab = appState.selectedTab {
-            parts.append("Current file: \(tab.url.path)\nCursor: line \(appState.cursorLine), column \(appState.cursorColumn)")
-        }
         let paths = attachedPaths.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         if !paths.isEmpty {
             parts.append("Attached paths:\n" + paths.joined(separator: "\n"))
@@ -1108,6 +1105,18 @@ struct ChatPanelView: View {
     private func copyText(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func editQueuedRequest(_ request: QueuedChatRequest) {
+        draftMessage = editableQueuedText(request.text)
+        attachedPaths.removeAll()
+        chatState.cancelQueuedRequest(request.id)
+    }
+
+    private func editableQueuedText(_ text: String) -> String {
+        var value = text.components(separatedBy: "\n\nAttached paths:\n").first ?? text
+        value = value.components(separatedBy: "\n\nCurrent file:").first ?? value
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func editMessage(_ message: ChatMessage) {
@@ -1558,10 +1567,11 @@ private struct ChatInteractiveRequestCard: View {
 
 private struct ChatComposerTextView: NSViewRepresentable {
     @Binding var text: String
+    @Binding var hasMarkedText: Bool
     let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onSubmit: onSubmit)
+        Coordinator(text: $text, hasMarkedText: $hasMarkedText, onSubmit: onSubmit)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -1574,6 +1584,7 @@ private struct ChatComposerTextView: NSViewRepresentable {
         let textView = SubmitTextView()
         textView.delegate = context.coordinator
         textView.onSubmit = onSubmit
+        textView.onMarkedTextChanged = { context.coordinator.hasMarkedText = $0 }
         textView.string = text
         textView.font = .systemFont(ofSize: 12)
         textView.drawsBackground = false
@@ -1595,6 +1606,7 @@ private struct ChatComposerTextView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? SubmitTextView else { return }
         textView.onSubmit = onSubmit
+        textView.onMarkedTextChanged = { context.coordinator.hasMarkedText = $0 }
         if textView.string != text {
             textView.string = text
         }
@@ -1602,29 +1614,50 @@ private struct ChatComposerTextView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding var text: String
+        @Binding var hasMarkedText: Bool
         let onSubmit: () -> Void
 
-        init(text: Binding<String>, onSubmit: @escaping () -> Void) {
+        init(text: Binding<String>, hasMarkedText: Binding<Bool>, onSubmit: @escaping () -> Void) {
             _text = text
+            _hasMarkedText = hasMarkedText
             self.onSubmit = onSubmit
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             text = textView.string
+            hasMarkedText = textView.hasMarkedText()
         }
     }
 
     final class SubmitTextView: NSTextView {
         var onSubmit: (() -> Void)?
+        var onMarkedTextChanged: ((Bool) -> Void)?
 
         override func keyDown(with event: NSEvent) {
             let isReturn = event.keyCode == 36 || event.keyCode == 76
-            if isReturn && !event.modifierFlags.contains(.shift) {
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let hasSubmitModifier = flags.contains(.shift) || flags.contains(.option) || flags.contains(.control) || flags.contains(.command)
+            if isReturn, hasMarkedText() {
+                super.keyDown(with: event)
+                onMarkedTextChanged?(hasMarkedText())
+                return
+            }
+            if isReturn && !hasSubmitModifier {
                 onSubmit?()
                 return
             }
             super.keyDown(with: event)
+        }
+
+        override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+            super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+            onMarkedTextChanged?(hasMarkedText())
+        }
+
+        override func unmarkText() {
+            super.unmarkText()
+            onMarkedTextChanged?(hasMarkedText())
         }
     }
 }

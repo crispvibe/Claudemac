@@ -3,14 +3,13 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
-    @State private var chatPanelWidth: CGFloat = 420
+    @AppStorage("root.chatPanelWidth") private var storedChatPanelWidth = 420.0
     @State private var dragStartChatPanelWidth: CGFloat?
     @State private var isHoveringResizeHandle = false
     @State private var workbenchContentWidth: CGFloat = 0
 
     private let minChatPanelWidth: CGFloat = 260
-    private let maxChatPanelWidth: CGFloat = 840
-    private let minEditorWidth: CGFloat = 520
+    private let minEditorWidth: CGFloat = 320
     private let resizeHandleWidth: CGFloat = 12
 
     var body: some View {
@@ -64,13 +63,16 @@ struct RootView: View {
                     resizeHandle
 
                     ChatPanelView()
-                        .frame(width: clampedChatPanelWidth(chatPanelWidth))
+                        .frame(width: clampedChatPanelWidth(CGFloat(storedChatPanelWidth), availableWidth: proxy.size.width))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .onAppear { workbenchContentWidth = proxy.size.width }
+                .onAppear {
+                    workbenchContentWidth = proxy.size.width
+                    storedChatPanelWidth = Double(clampedChatPanelWidth(CGFloat(storedChatPanelWidth), availableWidth: proxy.size.width))
+                }
                 .onChange(of: proxy.size.width) { _, width in
                     workbenchContentWidth = width
-                    chatPanelWidth = clampedChatPanelWidth(chatPanelWidth)
+                    storedChatPanelWidth = Double(clampedChatPanelWidth(CGFloat(storedChatPanelWidth), availableWidth: width))
                 }
             }
         }
@@ -112,10 +114,10 @@ struct RootView: View {
             DragGesture(minimumDistance: 1)
                 .onChanged { value in
                     if dragStartChatPanelWidth == nil {
-                        dragStartChatPanelWidth = chatPanelWidth
+                        dragStartChatPanelWidth = CGFloat(storedChatPanelWidth)
                     }
-                    let startWidth = dragStartChatPanelWidth ?? chatPanelWidth
-                    chatPanelWidth = clampedChatPanelWidth(startWidth - value.translation.width)
+                    let startWidth = dragStartChatPanelWidth ?? CGFloat(storedChatPanelWidth)
+                    storedChatPanelWidth = Double(clampedChatPanelWidth(startWidth - value.translation.width, availableWidth: workbenchContentWidth))
                 }
                 .onEnded { _ in
                     dragStartChatPanelWidth = nil
@@ -124,10 +126,10 @@ struct RootView: View {
         .help("拖动调整编辑器和对话卡片宽度")
     }
 
-    private func clampedChatPanelWidth(_ width: CGFloat) -> CGFloat {
-        let availableMax = workbenchContentWidth > 0
-            ? max(minChatPanelWidth, workbenchContentWidth - minEditorWidth - resizeHandleWidth)
-            : maxChatPanelWidth
-        return min(max(width, minChatPanelWidth), min(maxChatPanelWidth, availableMax))
+    private func clampedChatPanelWidth(_ width: CGFloat, availableWidth: CGFloat) -> CGFloat {
+        let availableMax = availableWidth > 0
+            ? max(minChatPanelWidth, availableWidth - minEditorWidth - resizeHandleWidth)
+            : max(width, minChatPanelWidth)
+        return min(max(width, minChatPanelWidth), availableMax)
     }
 }
