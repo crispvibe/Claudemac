@@ -123,14 +123,6 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         inputPipe = nil
 
         do {
-            continuation.yield(.appendMessage(
-                kind: .command,
-                title: "claude",
-                subtitle: options.projectPath,
-                text: displayCommand(executablePath: options.executablePath, arguments: process.arguments ?? []),
-                status: "start",
-                requestID: nil
-            ))
             try process.run()
         } catch {
             continuation.yield(.failed(ChatProcessError.launchFailed(error.localizedDescription).localizedDescription))
@@ -288,7 +280,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         let type = object["type"] as? String ?? object["event"] as? String ?? "raw"
         if type == "system" {
             if let subtype = object["subtype"] as? String, subtype == "init" {
-                events.append(.appendMessage(kind: .rawOutput, title: "Claude init", subtitle: "tools", text: initSummary(from: object), status: "done", requestID: nil))
+                events.append(.appendMessage(kind: .system, title: "Claude init", subtitle: "tools", text: initSummary(from: object), status: "done", requestID: nil))
             } else if let subtype = object["subtype"] as? String {
                 events.append(.appendMessage(kind: .system, title: "system", subtitle: subtype, text: compactText(from: object), status: "done", requestID: nil))
             }

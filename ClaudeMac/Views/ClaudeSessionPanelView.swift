@@ -183,6 +183,7 @@ struct ChatPanelView: View {
     }
 
     private func shouldShowInTranscript(_ message: ChatMessage) -> Bool {
+        guard !message.isBackendLaunchCommand else { return false }
         guard message.kind.isVisibleInTranscript else { return false }
         guard message.kind.isGroupedActivityEvent else { return true }
         return message.isStreaming
@@ -330,7 +331,7 @@ struct ChatPanelView: View {
                 toggleTranscriptMessage(group.id)
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Image(systemName: "terminal")
+                    Image(systemName: "gearshape")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                         .frame(width: 13)
@@ -1169,23 +1170,31 @@ private struct ChatActivityGroup: Identifiable {
     }
 
     var title: String {
-        "\(isStreaming ? "处理中" : "已处理") \(durationText)"
+        "\(activityLabel)\(isStreaming ? "进行中" : "完成") · \(durationText)"
     }
 
     var summaryText: String? {
         var parts: [String] = []
-        let reasoningCount = messages.filter { $0.kind == .reasoning }.count
-        let toolCount = messages.filter { $0.kind == .toolCall }.count
-        let commandCount = messages.filter { $0.kind == .command }.count
+        let toolCallCount = messages.filter { $0.kind == .toolCall }.count
+        let toolResultCount = messages.filter { $0.kind == .toolResult }.count
+        let operationCount = messages.filter { $0.kind == .command }.count
+        let outputCount = messages.filter { $0.kind == .commandOutput }.count
+        let rawEventCount = messages.filter { $0.kind == .rawOutput }.count
 
-        if reasoningCount > 0 {
-            parts.append(isStreaming ? "正在思考" : "已思考")
+        if toolCallCount > 0 {
+            parts.append("调用 \(toolCallCount) 个工具")
         }
-        if toolCount > 0 {
-            parts.append("已调用 \(toolCount) 个工具")
+        if toolResultCount > 0 {
+            parts.append("收到 \(toolResultCount) 个工具结果")
         }
-        if commandCount > 0 {
-            parts.append("已运行 \(commandCount) 条命令")
+        if operationCount > 0 {
+            parts.append("执行 \(operationCount) 个操作")
+        }
+        if outputCount > 0 {
+            parts.append("收到输出")
+        }
+        if rawEventCount > 0 {
+            parts.append("保留 \(rawEventCount) 条运行事件")
         }
 
         return parts.isEmpty ? nil : parts.joined(separator: "，")
@@ -1200,6 +1209,19 @@ private struct ChatActivityGroup: Identifiable {
                 true
             }
         }
+    }
+
+    private var activityLabel: String {
+        if messages.contains(where: { $0.kind == .toolCall || $0.kind == .toolResult }) {
+            return "工具调用"
+        }
+        if messages.contains(where: { $0.kind == .command || $0.kind == .commandOutput }) {
+            return "操作"
+        }
+        if messages.contains(where: { $0.kind == .rawOutput }) {
+            return "运行事件"
+        }
+        return "处理"
     }
 
     private var durationText: String {
@@ -1295,8 +1317,8 @@ private extension ChatMessageKind {
         case .reasoning: "think"
         case .toolCall: "tool"
         case .toolResult: "out"
-        case .command: "cmd"
-        case .commandOutput: "log"
+        case .command: "run"
+        case .commandOutput: "out"
         case .system: "sys"
         case .result: "done"
         case .error: "err"
@@ -1312,8 +1334,8 @@ private extension ChatMessageKind {
         case .reasoning: "思考"
         case .toolCall: "工具调用"
         case .toolResult: "工具结果"
-        case .command: "命令"
-        case .commandOutput: "命令输出"
+        case .command: "操作"
+        case .commandOutput: "操作输出"
         case .system: "系统"
         case .result: "结果"
         case .error: "错误"
@@ -1361,8 +1383,10 @@ private extension ChatMessageKind {
             "lightbulb"
         case .toolCall, .toolResult:
             "gearshape"
-        case .command, .commandOutput:
-            "terminal"
+        case .command:
+            "play.circle"
+        case .commandOutput:
+            "doc.text"
         case .result:
             "checkmark.circle"
         case .rawOutput:
@@ -1380,9 +1404,9 @@ private extension ChatMessageKind {
 
     var isVisibleInTranscript: Bool {
         switch self {
-        case .system:
+        case .system, .result:
             false
-        case .user, .assistant, .reasoning, .toolCall, .toolResult, .command, .commandOutput, .permissionRequest, .diff, .error, .result, .rawOutput:
+        case .user, .assistant, .reasoning, .toolCall, .toolResult, .command, .commandOutput, .permissionRequest, .diff, .error, .rawOutput:
             true
         }
     }
@@ -1398,9 +1422,9 @@ private extension ChatMessage {
         case .toolResult:
             compactActivityTitle(prefix: "工具已完成")
         case .command:
-            compactActivityTitle(prefix: "已运行命令")
+            compactActivityTitle(prefix: "执行操作")
         case .commandOutput:
-            compactActivityTitle(prefix: "命令输出")
+            compactActivityTitle(prefix: "操作输出")
         case .result:
             compactActivityTitle(prefix: "结果")
         case .rawOutput:
@@ -1412,6 +1436,17 @@ private extension ChatMessage {
 
     var activityBody: String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var isBackendLaunchCommand: Bool {
+        guard kind == .command else { return false }
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalizedTitle == "claude" || normalizedTitle == "codex" else { return false }
+        let normalizedStatus = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedStatus == "start"
+            || body.contains(" --output-format stream-json")
+            || body.contains(" app-server")
     }
 
     private func compactActivityTitle(prefix: String) -> String {

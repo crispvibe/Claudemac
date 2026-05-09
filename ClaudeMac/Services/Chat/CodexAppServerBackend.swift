@@ -49,14 +49,6 @@ final class CodexAppServerBackend: ChatProcessBackend {
                 self.inputPipe = stdin
 
                 do {
-                    continuation.yield(.appendMessage(
-                        kind: .command,
-                        title: "codex",
-                        subtitle: options.projectPath,
-                        text: "\(options.executablePath) app-server -c \(configOverride) --listen stdio://",
-                        status: "start",
-                        requestID: nil
-                    ))
                     try process.run()
                     self.bootstrapCodex()
                 } catch {
