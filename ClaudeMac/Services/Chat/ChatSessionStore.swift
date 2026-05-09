@@ -2,6 +2,7 @@ import Foundation
 
 enum ChatSessionStore {
     private static let indexFileName = "chat-sessions.json"
+    private static let draftsFileName = "chat-drafts.json"
     private static let messagesDirectoryName = "chat-messages"
     static let storageKey = "claudemac"
 
@@ -42,19 +43,51 @@ enum ChatSessionStore {
         try lines.joined(separator: "\n").write(to: messagesURL(for: sessionID), atomically: true, encoding: .utf8)
     }
 
+    static func session(id: String) -> ChatSessionRecord? {
+        guard let uuid = UUID(uuidString: id) else { return nil }
+        return loadSessions().first { $0.id == uuid }
+    }
+
     static func deleteSession(id: String) throws {
         guard let uuid = UUID(uuidString: id) else { return }
         var sessions = loadSessions()
+        let deletedSession = sessions.first { $0.id == uuid }
         sessions.removeAll { $0.id == uuid }
         try JSONEncoder.chat.encode(sessions).write(to: indexURL(), options: .atomic)
+        if let deletedSession {
+            try? deleteDraft(for: "history:\(deletedSession.cli.rawValue):\(uuid.uuidString)")
+        }
         let url = messagesURL(for: uuid)
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
     }
 
+    static func draft(for key: String) -> String {
+        loadDrafts()[key] ?? ""
+    }
+
+    static func saveDraft(_ text: String, for key: String) throws {
+        try ensureDirectories()
+        var drafts = loadDrafts()
+        if text.isEmpty {
+            drafts.removeValue(forKey: key)
+        } else {
+            drafts[key] = text
+        }
+        try JSONEncoder.chat.encode(drafts).write(to: draftsURL(), options: .atomic)
+    }
+
+    static func deleteDraft(for key: String) throws {
+        try saveDraft("", for: key)
+    }
+
     static func historySessions() -> [CLIHistorySession] {
-        loadSessions().map { session in
+        historySessions(from: loadSessions())
+    }
+
+    static func historySessions(from sessions: [ChatSessionRecord]) -> [CLIHistorySession] {
+        sessions.map { session in
             CLIHistorySession(
                 cli: session.cli,
                 sessionId: session.id.uuidString,
@@ -78,8 +111,17 @@ enum ChatSessionStore {
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/Acode", isDirectory: true)
     }
 
+    private static func loadDrafts() -> [String: String] {
+        guard let data = try? Data(contentsOf: draftsURL()) else { return [:] }
+        return (try? JSONDecoder.chat.decode([String: String].self, from: data)) ?? [:]
+    }
+
     private static func indexURL() -> URL {
         appSupportURL().appendingPathComponent(indexFileName)
+    }
+
+    private static func draftsURL() -> URL {
+        appSupportURL().appendingPathComponent(draftsFileName)
     }
 
     private static func messagesDirectoryURL() -> URL {

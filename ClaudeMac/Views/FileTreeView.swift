@@ -28,13 +28,15 @@ struct FileTreeItemView: View {
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                     } else {
-                        Image(systemName: "doc.text")
+                        Image(systemName: fileIconName)
                             .font(.system(size: 13))
-                            .foregroundStyle(fileColor)
+                            .foregroundStyle(fileIconColor)
+                            .frame(width: 13)
                             .padding(.leading, 18)
                     }
                     Text(node.name)
                         .font(.system(size: 13))
+                        .foregroundStyle(AppTheme.fileTreeName)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
@@ -75,12 +77,37 @@ struct FileTreeItemView: View {
         appState.selectedTab?.url == node.url
     }
 
-    private var fileColor: Color {
+    private var fileIconName: String {
+        switch node.url.pathExtension.lowercased() {
+        case "swift": "swift"
+        case "js", "jsx", "ts", "tsx": "curlybraces"
+        case "json", "plist", "yaml", "yml", "toml": "list.bullet.rectangle"
+        case "md", "markdown", "txt": "doc.richtext"
+        case "html", "htm", "xml": "chevron.left.forwardslash.chevron.right"
+        case "css", "scss", "sass", "less": "paintbrush"
+        case "py": "terminal"
+        case "go", "rs", "java", "kt", "kts", "c", "cc", "cpp", "h", "hpp", "cs", "rb", "php": "chevron.left.slash.chevron.right"
+        case "png", "jpg", "jpeg", "gif", "webp", "svg", "pdf": "photo"
+        default: "doc.text"
+        }
+    }
+
+    private var fileIconColor: Color {
         switch node.url.pathExtension.lowercased() {
         case "swift": .orange
+        case "js", "jsx": .yellow
+        case "ts", "tsx": .blue
+        case "json", "plist", "yaml", "yml", "toml": .purple
+        case "md", "markdown", "txt": .mint
+        case "html", "htm", "xml": .red
+        case "css", "scss", "sass", "less": .indigo
+        case "py": .green
         case "go": .cyan
-        case "md", "markdown": .blue
-        case "json", "plist": .purple
+        case "rs": .brown
+        case "java", "kt", "kts": .pink
+        case "c", "cc", "cpp", "h", "hpp", "cs": .teal
+        case "rb", "php": .purple
+        case "png", "jpg", "jpeg", "gif", "webp", "svg", "pdf": .orange
         default: .secondary
         }
     }

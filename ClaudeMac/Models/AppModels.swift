@@ -159,6 +159,8 @@ struct AppSettings: Codable, Equatable {
     var enableClaudeHistoryScan: Bool
     var apiBaseURL: String
     var apiKey: String
+    var lastSelectedProjectPath: String?
+    var lastSelectedCLIHistoryID: String?
 
     static let `default` = AppSettings(
         defaultTerminal: .terminal,
@@ -171,7 +173,9 @@ struct AppSettings: Codable, Equatable {
         ignoredFolders: FileTreeScanner.defaultIgnoredNames.sorted(),
         enableClaudeHistoryScan: true,
         apiBaseURL: "",
-        apiKey: ""
+        apiKey: "",
+        lastSelectedProjectPath: nil,
+        lastSelectedCLIHistoryID: nil
     )
 
     init(
@@ -185,7 +189,9 @@ struct AppSettings: Codable, Equatable {
         ignoredFolders: [String],
         enableClaudeHistoryScan: Bool,
         apiBaseURL: String,
-        apiKey: String
+        apiKey: String,
+        lastSelectedProjectPath: String?,
+        lastSelectedCLIHistoryID: String?
     ) {
         self.defaultTerminal = defaultTerminal
         self.defaultCLI = defaultCLI
@@ -198,6 +204,8 @@ struct AppSettings: Codable, Equatable {
         self.enableClaudeHistoryScan = enableClaudeHistoryScan
         self.apiBaseURL = apiBaseURL
         self.apiKey = apiKey
+        self.lastSelectedProjectPath = lastSelectedProjectPath
+        self.lastSelectedCLIHistoryID = lastSelectedCLIHistoryID
     }
 
     init(from decoder: Decoder) throws {
@@ -213,6 +221,8 @@ struct AppSettings: Codable, Equatable {
         enableClaudeHistoryScan = try values.decodeIfPresent(Bool.self, forKey: .enableClaudeHistoryScan) ?? true
         apiBaseURL = try values.decodeIfPresent(String.self, forKey: .apiBaseURL) ?? ""
         apiKey = try values.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        lastSelectedProjectPath = try values.decodeIfPresent(String.self, forKey: .lastSelectedProjectPath)
+        lastSelectedCLIHistoryID = try values.decodeIfPresent(String.self, forKey: .lastSelectedCLIHistoryID)
     }
 }
 

@@ -1,11 +1,11 @@
 # ClaudeMac 当前完善程度
 
-> 更新日期：2026-05-08  
+> 更新日期：2026-05-10
 > 目的：给接手项目的人快速判断当前完成到哪里、哪些链路可用、哪些地方还只是骨架或待验证。
 
 ## 一句话状态
 
-ClaudeMac 目前已经从“外部 Terminal 启动器”推进到“macOS 原生 IDE 式工作台 + 内嵌 Claude Code 对话 MVP”。项目管理、文件树、编辑器、多标签、右侧真实 Claude Code 会话、会话本地保存、历史列表合并已经具备；Codex app-server 已按本机 `codex-cli 0.120.0` schema 校准并验证 initialize / model-list，完整模型 turn 仍需在 App 内手工确认。
+ClaudeMac 目前已经从“外部 Terminal 启动器”推进到“macOS 原生 IDE 式工作台 + 内嵌 Claude Code/Codex 对话 MVP”。项目管理、文件树、编辑器、多标签、右侧真实 CLI 会话、多会话后台运行、队列持久化、输入框自动高度、Agent process 详情、会话本地保存和按 CLI 分流的历史列表已经具备；Codex app-server 代码链路已接入，完整模型 turn 仍需 App 内手工确认。
 
 ## 当前完成度总览
 
@@ -16,11 +16,11 @@ ClaudeMac 目前已经从“外部 Terminal 启动器”推进到“macOS 原生
 | 文件树 | 中等偏高 | 支持懒加载目录、忽略常见大目录、点击文本文件打开；暂未做 Git 状态、搜索、批量操作。 |
 | 编辑器 | 中等 | AppKit `NSTextView` 编辑器、行号、多标签、UTF-8 保存、基础语法高亮已实现；还不是完整 IDE 编辑器。 |
 | 顶部文件标签 | 进行中 | 已多轮贴近设计图，但视觉还在调细节，当前主要问题是尺寸、融合度和设计稿一致性仍需人工复核。 |
-| 右侧聊天 UI | 中等偏高 | 已是 IDE 式消息流，支持 user/assistant/tool/permission/error/diff 等行样式、复制、编辑/撤销入口、文本选中。 |
-| Claude Code 对接 | MVP 可用 | 通过 `Process + Pipe + stream-json` 真实启动 Claude Code，并已用最小探针验证收到 `OK` 回复。 |
-| Codex 对接 | MVP 可试用，待完整闭环 | 已实现 `codex app-server --listen stdio://` 启动、initialize、thread/start、turn/start、权限响应和事件适配；本机已验证 `codex-cli 0.120.0` 的 app-server schema 与 model/list，完整模型 turn 仍需 App 内手工确认。 |
+| 右侧聊天 UI | 较高 | 已是 IDE 式消息流，支持 user/assistant/tool/permission/error/diff、队列、自动高度输入框、Agent process、长对话缓存和轻量滚动策略。 |
+| Claude Code 对接 | MVP 可用 | 通过 `Process + Pipe + stream-json` 真实启动 Claude Code，并已用最小探针验证收到 `OK` 回复；Claude ask/交互回写仍需真实样本。 |
+| Codex 对接 | MVP 可试用，待完整闭环 | 已实现 `codex app-server --listen stdio://` 启动、initialize、thread/start、turn/start、权限响应和事件适配；完整模型 turn 仍需 App 内手工确认。 |
 | CLI 能力探针 | 中等 | 支持查找 Homebrew 路径、读取版本、判断 Claude stream-json / resume / continue 和 Codex app-server。 |
-| 会话保存/历史 | 中等 | App 自建聊天会话保存到 Application Support，并和扫描到的 Claude/Codex 历史合并到左侧历史。 |
+| 会话保存/历史 | 中等偏高 | App 自建聊天会话保存到 Application Support/Acode，并和扫描到的 Claude/Codex 历史合并；侧栏按当前 CLI 分流，删除会清理相关索引。 |
 | 外部 Terminal fallback | 可用 | 仍保留 Terminal/iTerm2 启动命令路径，但不再是主要对话路径。 |
 | 设置页 | 基础可用 | 默认 CLI、默认终端、命令预览、历史扫描、忽略目录等已有。 |
 | 测试自动化 | 低 | 当前无 XCTest target；主要依赖 `xcodebuild`、源码级探针和手工验证。 |
@@ -78,22 +78,23 @@ ClaudeMac 目前已经从“外部 Terminal 启动器”推进到“macOS 原生
 已实现：
 
 - 新会话发送消息。
-- running 时发送按钮变停止。
+- running 时 action button 执行停止；运行中继续发送会进入队列。
 - Claude/Codex CLI 切换。
 - 模型选择。
 - 权限模式选择：询问、自动编辑、完全访问。
 - assistant 流式 delta 合并。
-- tool / command / permission / error / result / raw output 行显示。
-- 权限请求 allow/deny 写回 backend。
-- 消息本地持久化。
+- tool / command / permission / error / diff 行显示；system/result/raw output 默认不进入主 transcript。
+- 权限请求 allow/deny 写回 backend；Claude ask/交互回写仍按未验证能力处理。
+- 消息、队列、草稿和运行态本地持久化。
 - 选择本地历史后加载消息。
 - 选择外部历史后提供 resume 提示。
+- Agent 工具行可打开子代理 process 详情。
 
 当前限制：
 
-- 对 Claude Code JSON 事件的适配还偏 MVP，只覆盖主流 `assistant`、`result`、`tool`、`permission/control_request` 等。
+- 对 Claude Code JSON 事件的适配仍需用更多真实工具/权限/AskUserQuestion 样本回归。
 - Permission prompt 的真实复杂交互仍需更多场景验证。
-- 消息流没有做 token 级 UI 节流优化，长输出时性能还需观察。
+- 长输出已做批量 flush、滚动节流和缓存，但多个真实长任务并发仍需 profiler 压测。
 - diff/file edit UI 有样式基础，但还不是完整可应用/撤销 patch 的编辑器级体验。
 
 ### 5. Claude Code backend
@@ -128,9 +129,9 @@ ClaudeMac 目前已经从“外部 Terminal 启动器”推进到“macOS 原生
   - approval/respond
   - stdout/stderr JSONL 事件适配
 - 当前状态：
-  - 本机未安装 `codex`。
+  - 代码链路已接入 app-server JSON-RPC。
   - UI 会显示 Codex 缺失或 app-server 不支持。
-  - 没有完成真实 Codex 端到端验证。
+  - 没有完成真实 Codex 端到端模型 turn 验证。
 
 ### 7. CLI 探针和 GUI PATH 修复
 
@@ -153,13 +154,14 @@ ClaudeMac 目前已经从“外部 Terminal 启动器”推进到“macOS 原生
 
 App 自己的聊天会话：
 
-- `~/Library/Application Support/ClaudeMac/chat-sessions.json`
-- `~/Library/Application Support/ClaudeMac/chat-messages/<session-id>.jsonl`
+- `~/Library/Application Support/Acode/chat-sessions.json`
+- `~/Library/Application Support/Acode/chat-messages/<session-id>.jsonl`
+- `~/Library/Application Support/Acode/chat-drafts.json`
 
 项目和启动记录：
 
-- `~/Library/Application Support/ClaudeMac/projects.json`
-- `~/Library/Application Support/ClaudeMac/launch-history.json`
+- `~/Library/Application Support/Acode/projects.json`
+- `~/Library/Application Support/Acode/launch-history.json`
 
 外部 Claude 历史扫描：
 
@@ -188,9 +190,9 @@ App 自己的聊天会话：
 
 1. 编辑器能力不足：没有搜索、替换、LSP、格式化、diff apply。
 2. 文件树能力不足：没有搜索、Git 状态、右键菜单、拖拽批量导入完整闭环。
-3. 会话历史只做基础合并和删除，外部 CLI 历史恢复仍是轻量占位。
+3. 外部 CLI 历史恢复仍是轻量占位，不完整还原外部 transcript。
 4. full access 虽不是默认，但还需要更明确的 UI 风险提示和二次确认。
-5. 长输出、大量 tool event 和大项目文件树性能需要实际压测。
+5. 长输出、多会话并发、大量 tool event 和大项目文件树性能仍需要实际压测。
 
 ### 低优先级
 
@@ -203,10 +205,11 @@ App 自己的聊天会话：
 
 ### 推荐先读
 
-1. `README.md`：了解旧版运行方式，但注意内容有滞后。
-2. `docs/chat-cli-panel-research.md`：了解 Claude/Codex 对接调研和实现记录。
-3. `docs/project-current-status.md`：了解当前完成度和缺口。
-4. `ClaudeMac/Views/RootView.swift`：看整体布局。
+1. `README.md`：了解当前工作台能力概览。
+2. `docs/对话系统改造与Windows开发交接.md`：了解对话系统和 Windows 复刻基线。
+3. `docs/chat-cli-panel-research.md`：了解 Claude/Codex 对接调研和实现记录。
+4. `docs/project-current-status.md`：了解当前完成度和缺口。
+5. `ClaudeMac/Views/RootView.swift`：看整体布局。
 5. `ClaudeMac/ViewModels/AppState.swift`：看项目、文件、历史、终端 fallback 的全局状态。
 6. `ClaudeMac/ViewModels/ChatPanelState.swift`：看聊天状态机。
 7. `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift`：看 Claude Code 真实对接。

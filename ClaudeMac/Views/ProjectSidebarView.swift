@@ -5,6 +5,7 @@ struct ProjectSidebarView: View {
     @EnvironmentObject private var chatRuntimeStore: ChatRuntimeStore
     @State private var projectToRemove: ProjectItem?
     @State private var historyToRemove: CLIHistorySession?
+    @State private var expandedProjectID: UUID?
 
     var body: some View {
         GlassPanel {
@@ -32,7 +33,13 @@ struct ProjectSidebarView: View {
                     .padding(.vertical, 10)
             }
         }
-        .onAppear { chatRuntimeStore.refreshPersistedActivities() }
+        .onAppear {
+            chatRuntimeStore.refreshPersistedActivities()
+            expandedProjectID = appState.selectedProjectID
+        }
+        .onChange(of: appState.selectedProjectID) { _, selectedProjectID in
+            expandedProjectID = selectedProjectID
+        }
         .alert("移除项目？", isPresented: Binding(
             get: { projectToRemove != nil },
             set: { if !$0 { projectToRemove = nil } }
@@ -66,7 +73,8 @@ struct ProjectSidebarView: View {
     }
 
     private var projectSection: some View {
-        VStack(spacing: 12) {
+        let sessionsByKey = sessionsByProjectKey
+        return VStack(spacing: 12) {
             HStack {
                 Text("项目")
                     .font(.system(size: 13, weight: .semibold))
@@ -99,11 +107,10 @@ struct ProjectSidebarView: View {
                         ForEach(appState.projects) { project in
                             ProjectRow(
                                 project: project,
-                                sessions: sessions(for: project),
+                                sessions: sessionsByKey[storageKey(for: project.path), default: []],
                                 selectedSessionID: appState.selectedCLIHistoryID,
-                                isSelected: project.id == appState.selectedProjectID,
-                                activityForSession: { chatRuntimeStore.activity(for: $0) },
-                                onSelect: { appState.selectProject(project) },
+                                isSelected: project.id == expandedProjectID,
+                                onSelect: { toggleProjectExpansion(project) },
                                 onRemove: { projectToRemove = project },
                                 onSelectSession: { appState.selectCLIHistory($0) },
                                 onRemoveSession: { historyToRemove = $0 }
@@ -116,15 +123,24 @@ struct ProjectSidebarView: View {
         }
     }
 
-    private func sessions(for project: ProjectItem) -> [CLIHistorySession] {
-        let projectPath = normalizedPath(project.path)
-        let key = storageKey(for: project.path)
-        return appState.cliHistory.filter { session in
-            if let sessionPath = session.projectPath, normalizedPath(sessionPath) == projectPath {
-                return true
-            }
-            return session.storageKey == key
+    private func toggleProjectExpansion(_ project: ProjectItem) {
+        if expandedProjectID == project.id {
+            expandedProjectID = nil
+            return
         }
+        if appState.selectProject(project) {
+            expandedProjectID = project.id
+        }
+    }
+
+    private var sessionsByProjectKey: [String: [CLIHistorySession]] {
+        var grouped: [String: [CLIHistorySession]] = [:]
+        let selectedCLI = appState.selectedCLI.visibleValue
+        for session in appState.cliHistory where session.cli.visibleValue == selectedCLI {
+            guard let key = session.projectPath.map(storageKey(for:)) ?? session.storageKey else { continue }
+            grouped[key, default: []].append(session)
+        }
+        return grouped
     }
 
     private func normalizedPath(_ value: String) -> String {
@@ -198,7 +214,6 @@ private struct ProjectRow: View {
     let sessions: [CLIHistorySession]
     let selectedSessionID: String?
     let isSelected: Bool
-    let activityForSession: (CLIHistorySession) -> ChatSessionActivity?
     let onSelect: () -> Void
     let onRemove: () -> Void
     let onSelectSession: (CLIHistorySession) -> Void
@@ -239,7 +254,6 @@ private struct ProjectRow: View {
                     ForEach(sessions) { session in
                         HistorySessionRow(
                             session: session,
-                            activity: activityForSession(session),
                             isSelected: selectedSessionID == session.id,
                             onSelect: { onSelectSession(session) },
                             onRemove: { onRemoveSession(session) }
@@ -267,7 +281,6 @@ private struct ProjectRow: View {
 
 private struct HistorySessionRow: View {
     let session: CLIHistorySession
-    let activity: ChatSessionActivity?
     let isSelected: Bool
     let onSelect: () -> Void
     let onRemove: () -> Void
@@ -275,25 +288,16 @@ private struct HistorySessionRow: View {
     var body: some View {
         HStack(spacing: 6) {
             Button(action: onSelect) {
-                HStack(spacing: 8) {
-                    Text(session.title)
-                        .font(.system(size: 12, weight: isSelected ? .medium : .regular))
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text(session.relativeUpdatedText)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-                .foregroundStyle(isSelected ? .primary : .secondary)
-                .padding(.leading, 10)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text(session.title)
+                    .font(.system(size: 12, weight: isSelected ? .medium : .regular))
+                    .lineLimit(1)
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                    .padding(.leading, 10)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .buttonStyle(.plain)
-
-            statusIndicator
 
             Button(action: onRemove) {
                 Image(systemName: "trash")
@@ -310,34 +314,4 @@ private struct HistorySessionRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    @ViewBuilder
-    private var statusIndicator: some View {
-        if let activity, activity.status.isRunning {
-            ProgressView()
-                .controlSize(.mini)
-                .scaleEffect(0.55)
-                .frame(width: 16, height: 16)
-                .help(activity.statusText)
-        } else if activity?.status == .completed {
-            Circle()
-                .fill(Color.green)
-                .frame(width: 6, height: 6)
-                .frame(width: 16, height: 16)
-                .help("完成")
-        } else if activity?.status == .failed {
-            Circle()
-                .fill(Color.orange)
-                .frame(width: 6, height: 6)
-                .frame(width: 16, height: 16)
-                .help(activity?.statusText ?? "失败")
-        } else if let activity, activity.queuedCount > 0 {
-            Text("\(activity.queuedCount)")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: 16, height: 16)
-                .help("队列中 \(activity.queuedCount) 条")
-        } else {
-            Color.clear.frame(width: 16, height: 16)
-        }
-    }
 }

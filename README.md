@@ -56,19 +56,19 @@ open ClaudeMac.xcodeproj
 
 - 右侧面板可切换 Claude Code / Codex。
 - Claude Code 通过 `claude -p <prompt> --output-format stream-json --verbose` 真实启动，流式接收 assistant delta。
-- Codex 通过 `codex app-server --listen stdio://` 对接（JSON-RPC），已按本机 `codex-cli 0.120.0` 协议校准 initialize / model-list。Codex 完整模型 turn 仍需 App 内手工确认。
+- Codex 通过 `codex app-server --listen stdio://` 对接（JSON-RPC），已接入 initialize / thread / turn / approval / event adapter。Codex 完整模型 turn 仍需 App 内手工确认。
 - 模型选择：Claude 支持 Opus 4.7 / Sonnet 4.6 / Haiku 4.5；Codex 支持 GPT-5.x 系列。
 - 权限模式选择：询问（default）、自动编辑（acceptEdits）、完全访问（bypassPermissions）。
 - 权限请求 UI：拒绝 / 允许 / 本会话允许。Codex 三态完整；Claude 当前只传 `allowed: bool`，session scope 待补。
-- 消息流支持 user / assistant / reasoning / tool / command / permission / diff / error / result / raw 等行样式。
+- 消息流支持 user / assistant / reasoning / tool / command / permission / diff / error 等主线行样式，system/result/raw 默认不进入主 transcript。
 - 新建会话 / 继续上次（`--continue`）/ 恢复历史（`--resume <id>`）。
-- 会话本地持久化（`chat-sessions.json` + `chat-messages/<uuid>.jsonl`）。
+- 会话本地持久化（`chat-sessions.json` + `chat-messages/<uuid>.jsonl` + `chat-drafts.json`），包含队列和运行态快照。
 
 ### 历史会话
 
 - 实验性只读扫描 `~/.claude/projects` 和 `~/.codex/sessions` 下的 JSONL 历史。
-- 本地会话和外部 CLI 历史合并到左侧项目下方，按 updatedAt 排序。
-- 支持删除本地会话和外部历史条目。
+- 本地会话和外部 CLI 历史合并到左侧项目下方，按 updatedAt 排序，并按当前 CLI 分流显示。
+- 支持删除本地会话和外部历史条目，删除时同步清理相关索引和 transcript。
 
 ### 外部终端 fallback
 
@@ -209,11 +209,12 @@ cd '/Users/oreo/Desktop/公司/摄影 go-server/server' && claude --continue
 本 App 数据写入：
 
 ```text
-~/Library/Application Support/ClaudeMac/projects.json
-~/Library/Application Support/ClaudeMac/settings.json
-~/Library/Application Support/ClaudeMac/launch-history.json
-~/Library/Application Support/ClaudeMac/chat-sessions.json
-~/Library/Application Support/ClaudeMac/chat-messages/<session-id>.jsonl
+~/Library/Application Support/Acode/projects.json
+~/Library/Application Support/Acode/settings.json
+~/Library/Application Support/Acode/launch-history.json
+~/Library/Application Support/Acode/chat-sessions.json
+~/Library/Application Support/Acode/chat-messages/<session-id>.jsonl
+~/Library/Application Support/Acode/chat-drafts.json
 ```
 
 外部 CLI 历史只读扫描：

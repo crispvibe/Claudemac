@@ -201,7 +201,7 @@ final class ChatPanelState: ObservableObject {
             queuedRequests.append(request)
             statusText = "已加入队列"
             bumpTranscriptRevision()
-            persistCurrentSession()
+            persistCurrentSession(saveMessages: false)
             publishActivity()
             return true
         }
@@ -211,7 +211,7 @@ final class ChatPanelState: ObservableObject {
     func cancelQueuedRequest(_ id: UUID) {
         queuedRequests.removeAll { $0.id == id }
         bumpTranscriptRevision()
-        persistCurrentSession()
+        persistCurrentSession(saveMessages: false)
         publishActivity()
     }
 
@@ -742,7 +742,7 @@ final class ChatPanelState: ObservableObject {
         guard !status.isRunning, !queuedRequests.isEmpty else { return }
         let request = queuedRequests.removeFirst()
         bumpTranscriptRevision()
-        persistCurrentSession()
+        persistCurrentSession(saveMessages: false)
         _ = startRun(request)
     }
 
@@ -786,7 +786,7 @@ final class ChatPanelState: ObservableObject {
         bumpTranscriptRevision()
     }
 
-    private func persistCurrentSession() {
+    private func persistCurrentSession(saveMessages shouldSaveMessages: Bool = true) {
         guard var session = currentSession else { return }
         session.runStatus = status
         session.statusText = statusText
@@ -796,7 +796,9 @@ final class ChatPanelState: ObservableObject {
         currentSession = session
         do {
             try ChatSessionStore.saveSession(session)
-            try ChatSessionStore.saveMessages(messages, sessionID: session.id)
+            if shouldSaveMessages {
+                try ChatSessionStore.saveMessages(messages, sessionID: session.id)
+            }
             onSessionPersisted?()
         } catch {
             statusText = "保存失败"

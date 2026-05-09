@@ -45,6 +45,34 @@
 - 队列请求模型：`ClaudeMac/ViewModels/ChatPanelState.swift:3`
 - transcript 渲染入口：`ClaudeMac/Views/ClaudeSessionPanelView.swift:140`
 
+### 2.1 2026-05-10 对话页面审计快照
+
+本轮用 10 个只读子代理从架构、transcript UI、composer/queue、历史侧栏、backend 事件、性能、持久化、Agent process、Windows 文档和设计系统十个方向审计当前本地对话页面。Windows 端应优先复刻语义和状态机，而不是照搬 SwiftUI/AppKit 实现。
+
+| 方向 | macOS 当前事实 | Windows 必须落地 |
+| --- | --- | --- |
+| 多会话运行态 | `ChatRuntimeStore` 按 session/history/draft key 复用多个 `ChatPanelState`，切换会话不销毁旧 run | 独立 runtime store；后台会话继续接收输出；状态更新不能触发全局 UI 重绘 |
+| 队列与恢复 | `QueuedChatRequest` 保存 prompt、project、CLI、model、权限和 resume 上下文；active run 重启后标 failed，不自动重放 | FIFO 语义、崩溃后不重复执行危险 active run、队列持久化 |
+| Transcript | 主线只展示 user/assistant/reasoning/tool/permission/interactive/error；raw/system/result 隐藏 | 虚拟化列表、折叠工具行、Markdown/code/table 轻量渲染、底部跟随判定 |
+| Composer | 自动高度 42–160；IME marked text 时不回写、不发送；建议命令支持整块删除 | Windows IME composition/Enter 必测；草稿保存要 debounce |
+| 历史侧栏 | 当前 CLI 过滤历史：Claude 只显示 Claude，Codex 只显示 Codex；subagents 不进入普通历史 | 历史扫描按 CLI 分流；删除同步清 index/transcript；过期异步刷新不得覆盖新状态 |
+| Backend | Claude 是 stream-json JSONL；Codex 是 app-server stdio JSON-RPC | Process/pipe/JSONL/JSON-RPC 分层；stdout/stderr 并发读；stdin JSONL 可写 |
+| Agent process | Agent tool 行提供 process 入口，详情 sheet 读取 `subagents/agent-*.jsonl` 和 meta | 复刻 process 入口、2.5s 刷新、pause/resume、subagent block 映射 |
+| 性能 | delta 150ms flush、scroll 0.25s 节流、parse/cache、侧栏轻量化、关键状态才落盘 | 流式批量刷新、Markdown/文件引用/工具摘要缓存、持久化节流、侧栏虚拟化 |
+| 视觉 | 20/18/14/13/12 圆角层级、白色半透明面、弱描边、紧凑列表密度 | 抽设计 token；用 WinUI/Mica/Acrylic 等效替换 AppKit 毛玻璃 |
+| 文档缺口 | 旧文档未覆盖最新多 runtime、Agent process、CLI 过滤历史和性能约束 | 本文以本节和后续章节作为 Windows 复刻最新基线 |
+
+关键证据：
+
+- 多 runtime store：`ClaudeMac/Services/Chat/ChatRuntimeStore.swift:6`
+- per-session state：`ClaudeMac/ViewModels/ChatPanelState.swift:4`
+- 本地 JSON/JSONL store：`ClaudeMac/Services/Chat/ChatSessionStore.swift:4`
+- transcript 入口：`ClaudeMac/Views/ClaudeSessionPanelView.swift:174`
+- CLI 历史扫描：`ClaudeMac/Services/ClaudeHistoryScanner.swift:23`
+- 当前 CLI 过滤：`ClaudeMac/Views/ProjectSidebarView.swift:119`
+- Agent process sheet：`ClaudeMac/Views/ClaudeSessionPanelView.swift:2444`
+- 子代理 transcript：`ClaudeMac/Services/Chat/SubagentTranscriptStore.swift:76`
+
 ## 3. 领域模型设计
 
 ### 3.1 ChatMessageKind
@@ -113,7 +141,7 @@ Windows 复刻建议：
 
 1. `isRunning` 必须覆盖 starting、streaming、waitingPermission、waitingInput、stopping。
 2. waitingPermission/waitingInput 仍属于“运行中”，此时用户继续发送应该进入队列，不应该启动第二个进程。
-3. send button 始终表示发送或加入队列，stop button 独立存在。
+3. macOS 当前 action button 在运行中切换为停止语义；Windows 目标建议拆成 Send/Queue 与 Stop 两个独立控件，避免运行态按钮语义跳变。
 
 ## 4. Backend 协议统一层
 
@@ -497,6 +525,31 @@ Windows 复刻建议：
 3. 用户可以手动展开历史 thinking。
 4. thinking 正文字号应与 assistant 正文接近。
 
+### 9.6 Agent process 与子代理过程
+
+Agent 工具调用不是普通工具日志：主 transcript 中仍按轻量 ToolRow 展示，但 Agent 行提供 `process` 入口打开子代理过程面板。面板标题为 `Agent process`，支持 pause/resume/refresh/close，运行时约 2.5 秒自动刷新；详情从 `.claude/projects/<storageKey>/subagents/agent-*.jsonl` 和对应 meta 读取，找不到 agentID 时按 agentType/description 匹配最近修改的记录。
+
+子代理 JSONL 映射规则：
+
+- text → assistant
+- thinking → reasoning
+- tool_use → toolCall
+- tool_result → toolResult，`is_error` 标为失败态
+
+Windows 复刻建议：
+
+1. 不要把 Agent 过程做成彩色大卡片；主线只保留轻量折叠行和 `process` 入口。
+2. 子代理详情读取应与普通历史扫描分离；普通历史必须继续排除 `subagents`。
+3. 读取过程要支持 pause/resume，避免大 JSONL 高频轮询拖慢主页面。
+4. 截断策略要保留：主线展示摘要，详情区限制长文本，复制仍尽量保留完整可诊断内容。
+
+证据：
+
+- Agent process 入口：`ClaudeMac/Views/ClaudeSessionPanelView.swift:429`
+- process sheet：`ClaudeMac/Views/ClaudeSessionPanelView.swift:2444`
+- 子代理读取：`ClaudeMac/Services/Chat/SubagentTranscriptStore.swift:76`
+- 子代理 block 映射：`ClaudeMac/Services/Chat/SubagentTranscriptStore.swift:187`
+
 ## 10. 队列消息设计
 
 ### 10.1 FIFO 语义
@@ -571,9 +624,11 @@ Windows 复刻建议：
 | LoadingRow | awaiting first output | spinner + “正在生成” | 无 | Progress indicator |
 | QueueBar | queuedRequests | 实际行数，最多 3 行 | 编辑、删除单条 | Scrollable compact list |
 | WorkbenchSplit | editor/chat layout | chat 宽度可拖拽，按可用空间 clamp | 左拖扩大对话，右拖扩大编辑器 | 持久化 split width，不要固定 420/840 卡片宽度 |
-| StopButton | status.isRunning | 显示 stop | interrupt | 独立于 send |
+| ActionButton | status + draft | macOS 当前非运行时发送/入队，运行时停止 | send / interrupt | Windows 建议拆分为 SendButton + StopButton |
+| StopButton | status.isRunning | Windows 目标控件 | interrupt | 独立于 send，避免运行态按钮语义跳变 |
 | Composer | draft text | 占位文案“输入你的需求” | IME 候选确认、Shift+Enter 换行 | marked text 时隐藏 placeholder，避免叠字 |
-| SendButton | draft nonempty | 发送/加入队列 | send | 不承担 stop 语义 |
+| SendButton | draft nonempty | Windows 目标控件 | send / enqueue | 不承担 stop 语义 |
+| AgentProcessSheet | Agent tool row | process 入口，默认自动刷新 | pause/resume/refresh/close | 读取 subagents JSONL，展示子代理真实过程 |
 
 证据：
 
@@ -604,35 +659,84 @@ Windows 复刻建议：
 
 1. 使用 observable revision 或消息集合版本号触发滚动。
 2. 流式文本高度变化也要触发滚动，而不只是 message count 变化。
-3. 如果未来支持用户上滑暂停自动滚动，应明确“用户在底部附近才自动滚”。当前版本按需求强制到底。
+3. 只在用户位于底部附近或明确 force 时自动滚动；用户上滑阅读历史时不能被流式输出抢回底部。
+
+### 12.1 长对话性能约束
+
+当前 macOS 已做过一轮对话页性能收敛，Windows 端第一版不能回退到“每个 token 全量刷新”的模型。
+
+必须保留的约束：
+
+1. 流式 delta 先聚合，约 100–200ms 批量 flush；macOS 当前约 150ms。
+2. 自动滚动节流，macOS 当前约 0.25s；只在贴底时跟随。
+3. transcript items 用 revision/project key 缓存，不在每次 body/render 里全量重算。
+4. assistant Markdown/code/table parse 对完成消息缓存；流式和超长消息走轻量纯文本/预览。
+5. 文件引用、AttributedString、工具摘要和详情过滤做缓存。
+6. 队列变更等元数据保存不应每次重写全部 messages JSONL。
+7. 侧栏只展开当前项目历史，并按当前 CLI 过滤；历史状态不要把每个 streaming delta 广播到全局 sidebar。
+8. composer 草稿保存建议 debounce 或脏标记；不要逐字同步落盘。
+
+证据：
+
+- runtime store 活动发布：`ClaudeMac/Services/Chat/ChatRuntimeStore.swift:51`
+- delta flush：`ClaudeMac/ViewModels/ChatPanelState.swift:672`
+- 消息持久化节流：`ClaudeMac/ViewModels/ChatPanelState.swift:789`
+- transcript 缓存：`ClaudeMac/Views/ClaudeSessionPanelView.swift:213`
+- 自动滚动节流：`ClaudeMac/Views/ClaudeSessionPanelView.swift:239`
+- assistant parse cache：`ClaudeMac/Views/ClaudeSessionPanelView.swift:2038`
+- 当前 CLI 过滤历史：`ClaudeMac/Views/ProjectSidebarView.swift:119`
 
 ## 13. 历史会话与持久化
 
-本地会话：
+### 13.1 本地 Acode 会话
 
-- session index 保存到本地。
-- 每个 session 的 messages 以 JSONL 保存。
-- 新增 optional 字段保持旧 JSONL 可读。
+本地聊天数据当前放在 Application Support 的 `Acode` 目录，旧 `ClaudeMac` 和 sandbox 目录会被迁移复制。聊天数据拆为三类：
 
-外部 Claude/Codex 历史：
+- `chat-sessions.json`：会话索引数组，保存 title、projectPath、CLI、externalSessionID、runStatus、queuedRequests、activeRunRequest 等。
+- `chat-messages/<uuid>.jsonl`：每行一条 `ChatMessage`，便于排障和增量恢复。
+- `chat-drafts.json`：按 session/draft key 保存输入草稿。
 
-- 扫描外部历史元信息。
-- 选中后创建本地 session，带 `externalSessionID`。
-- 发送时通过 resume/continue 尝试继续。
-- 不直接完整还原外部 transcript。
+恢复策略必须保守：如果解码发现 `runStatus.isRunning` 或 `activeRunRequest`，启动后标记为 failed/上次运行已中断，并清空 active run；不能自动重放已经开始的请求，避免重复执行工具写文件、命令或权限操作。未开始的 `queuedRequests` 保留，等待用户继续。
 
-子代理证据：
+证据：
 
-- `ClaudeMac/Services/Chat/ChatSessionStore.swift:3`
-- `ClaudeMac/ViewModels/ChatPanelState.swift:136`
+- Acode Application Support：`ClaudeMac/Services/ProjectStore.swift:30`
+- 存储文件名：`ClaudeMac/Services/Chat/ChatSessionStore.swift:4`
+- JSONL 消息保存：`ClaudeMac/Services/Chat/ChatSessionStore.swift:36`
+- draft 保存：`ClaudeMac/Services/Chat/ChatSessionStore.swift:70`
+- 会话运行态字段：`ClaudeMac/Models/ChatModels.swift:347`
+- active run 中断恢复：`ClaudeMac/Models/ChatModels.swift:443`
+
+### 13.2 外部 Claude/Codex 历史
+
+外部历史只作为“可继续的历史入口”，不直接完整还原外部 transcript。选中外部历史后会创建本地 Acode session，并记录 `externalSessionID`；发送时通过 Claude resume/continue 或 Codex thread resume 尝试继续。
+
+当前侧栏历史必须同时满足三层过滤：
+
+1. 按项目路径/storageKey 分组。
+2. 按当前 `selectedCLI` 过滤：Claude 模式只显示 Claude 历史，Codex 模式只显示 Codex 历史。
+3. 过滤掉已被本地 session `externalSessionID` 关联的外部记录，避免同一会话显示两份。
+
+普通历史扫描不得混入子代理；Claude project JSONL 扫描和 transcript 删除枚举都跳过 `subagents`。删除历史时不只删 transcript，还要同步清理 Claude `history.jsonl` 或 Codex `history.jsonl/session_index.jsonl`，并容忍文件已不存在的情况。
+
+证据：
+
+- CLI history id 带 CLI 前缀：`ClaudeMac/Models/AppModels.swift:124`
+- 侧栏当前 CLI 过滤：`ClaudeMac/Views/ProjectSidebarView.swift:119`
+- 外部扫描入口：`ClaudeMac/Services/ClaudeHistoryScanner.swift:23`
+- subagents 排除：`ClaudeMac/Services/ClaudeHistoryScanner.swift:40`
+- local/external 去重：`ClaudeMac/ViewModels/AppState.swift:610`
+- 刷新 generation 防旧结果覆盖：`ClaudeMac/ViewModels/AppState.swift:668`
+- 删除索引清理：`ClaudeMac/ViewModels/AppState.swift:537`
 
 Windows 复刻建议：
 
-1. 本地历史格式应保持 JSONL，便于排障。
-2. 新字段必须 optional decode。
-3. 本地 session index/messages 不应放 macOS `Library/Application Support/Acode`，应使用 `%APPDATA%` 或 `%LOCALAPPDATA%` 下的应用目录。
-4. 外部历史扫描不要假设路径与 macOS 相同，应分别处理 `%USERPROFILE%\.claude` 与 `%USERPROFILE%\.codex`。
-5. `storageKey` 和路径归一化要重写，覆盖盘符、UNC、大小写、junction/symlink；禁止沿用 POSIX “把 `/` 转成 `-`”的规则。
+1. 本地历史建议使用 `%APPDATA%\\Acode\\chat-sessions.json`、`%APPDATA%\\Acode\\chat-messages\\<uuid>.jsonl`、`%APPDATA%\\Acode\\chat-drafts.json`。
+2. 需要定义旧目录迁移策略，至少覆盖未来 Windows 早期版本可能使用的临时目录。
+3. 外部历史扫描不要假设 macOS 路径，应分别验证 `%USERPROFILE%\\.claude`、`%USERPROFILE%\\.codex`、Codex sessions/archived_sessions/session_index.jsonl 的真实 Windows 位置。
+4. `storageKey` 和路径归一化要重写，覆盖盘符、UNC、大小写、junction/symlink；禁止沿用 POSIX “把 `/` 转成 `-`”的规则。
+5. 删除要处理 CRLF、文件占用、长路径和大小写路径；失败时要给可理解错误，并避免 stale index 让已删历史重新出现。
+6. 普通历史与 Agent subagents 必须是两条读取链路，不能为了展示 Agent process 把 subagents 混进历史列表。
 
 ## 14. Windows 迁移重点
 
@@ -698,6 +802,34 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 2. CLI 工作目录限制。
 3. Codex readFile 请求不得越过项目根目录。
 4. ACL/权限失败要转换成用户可理解错误。
+
+### 14.6 视觉与布局 token
+
+Windows 端不要直接复制 SwiftUI 修饰符，应先抽设计 token，再映射到 WinUI/WPF/Avalonia/Electron 组件。
+
+当前 macOS token 基线：
+
+- 面板：白色半透明、弱发丝线、20 圆角、轻阴影。
+- 项目行：14 圆角、8 垂直内距；历史行：12 圆角、7 垂直内距。
+- 对话面板：18 圆角；header 约 37 高；transcript 横向 14、纵向 12、行距 10。
+- 用户气泡：12 字号、11x8 内距、13 圆角。
+- Composer：输入卡 20 圆角；队列行 28 高、9 圆角；action 按钮 20 圆形 accent。
+- Settings：大卡 24 圆角、22 内距，控件高度 34/40/44。
+
+Windows 缺口：
+
+1. `NSVisualEffectView` / `NSViewRepresentable` 要替换为 Mica/Acrylic 或普通半透明 surface。
+2. `NSApp.applicationIconImage`、AppKit pasteboard、NSTextView/NSScrollView 行为都要替换。
+3. 字体、禁用态、阴影、列表密度必须集中配置，避免散落硬编码。
+
+证据：
+
+- Theme token：`ClaudeMac/Views/GlassPanel.swift:4`
+- GlassPanel：`ClaudeMac/Views/GlassPanel.swift:16`
+- Sidebar 密度：`ClaudeMac/Views/ProjectSidebarView.swift:14`
+- Chat panel 布局：`ClaudeMac/Views/ClaudeSessionPanelView.swift:67`
+- Composer 密度：`ClaudeMac/Views/ClaudeSessionPanelView.swift:830`
+- VisualEffectView：`ClaudeMac/AppKit/VisualEffectView.swift:4`
 
 ## 15. 调试与验证建议
 
@@ -787,6 +919,12 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 6. 队列出队逻辑改为 backend stream end 后触发。
 7. stop/failed 不自动出队。
 8. 最新工具行运行态已改为静态字体/颜色强调，无闪烁动画。
+9. 多会话 runtime 已拆到 `ChatRuntimeStore`，切换会话不应中断旧 run。
+10. 队列、runStatus、activeRunRequest 已进入本地 session index，重启后 active run 只标中断不重放。
+11. 输入框已支持自动高度和中文 IME marked text 保护。
+12. 子代理 Agent process 已有读取和详情 UI 链路。
+13. 历史侧栏已按当前 CLI 过滤，Claude/Codex 不再混显；subagents 继续排除在普通历史外。
+14. 对话性能已做流式 flush、滚动节流、parse/cache 和侧栏轻量化收敛。
 
 ## 17. 未验证项与风险
 
@@ -799,6 +937,9 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 | ConPTY 是否必要 | 未验证 | 先跑纯 stdio；失败再引入 ConPTY |
 | Windows UTF-8/CRLF/长行 JSONL | 未验证 | 构造中文、emoji、长输出和 CRLF 样本 |
 | Windows 路径越界校验 | 未验证 | 覆盖盘符、UNC、junction、symlink、大小写 |
+| Windows IME composition | 未验证 | 覆盖中文拼音候选、Enter 确认、Shift+Enter 换行、整块建议命令删除 |
+| Windows 历史路径 | 未验证 | 实机确认 `.claude`、`.codex`、subagents、sessions、archived_sessions、session_index.jsonl 位置 |
+| Agent process Windows 读取链路 | 未验证 | 用真实 Claude 子代理 JSONL/meta 样本验证匹配、刷新、截断和错误态 |
 | UI 动效实际观感 | 构建通过但需手测 | 安装新版应用手测工具运行态 |
 | 完整历史还原 | 当前非目标 | 如需要，另做历史 transcript parser |
 
@@ -806,12 +947,13 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 
 第一阶段：领域模型与 ViewModel
 
-1. 复制 ChatMessageKind、ChatRunStatus、ChatBackendEvent、InteractiveRequest 等 DTO 语义。
+1. 复制 ChatMessageKind、ChatRunStatus、ChatBackendEvent、InteractiveRequest、QueuedChatRequest、ChatSessionRecord 等 DTO 语义。
 2. 实现 ChatProcessBackend interface。
 3. 实现 ChatPanelState 等价 store：send、queue、apply、appendDelta、backendStreamDidEnd。
-4. 用 fake backend 写 UI 状态测试。
+4. 实现 ChatRuntimeStore 等价运行态容器：按 session/history/draft key 复用 runtime，支持多会话后台运行。
+5. 用 fake backend 写 UI 状态测试。
 
-完成条件：fake backend 能覆盖 assistant/reasoning/tool/permission/interactive/loading/error；running send 只入队；stop/failed 不自动出队；backend stream end 后 FIFO 出队。
+完成条件：fake backend 能覆盖 assistant/reasoning/tool/permission/interactive/loading/error；running send 只入队；stop/failed 不自动出队；backend stream end 后 FIFO 出队；切换会话不 interrupt；active run 重启后只标中断不重放。
 
 第二阶段：进程通信
 
@@ -824,16 +966,18 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 
 第三阶段：UI 组件
 
-1. Transcript + auto scroll。
+1. Transcript + auto scroll，必须保留贴底判定和滚动节流。
 2. User/Assistant/Thinking rows。
 3. ToolRow 折叠、展开、静态运行态。
 4. FileToolCard：Read/Edit/Write 显示工具名 + 文件名 chip，并支持点击打开项目内文件。
 5. TerminalCommandCard：Bash/command 折叠态显示命令，展开显示 `$ command` + 输出/错误回馈。
-6. PermissionCard 与 InteractiveCard。
-7. QueueBar 与 Composer。
-8. Stop/Send 语义拆分。
+6. Agent process：Agent 工具行 process 入口、子代理详情 sheet、pause/resume/refresh。
+7. PermissionCard 与 InteractiveCard。
+8. QueueBar 与 Composer，覆盖自动高度、IME marked text、建议命令整块删除。
+9. Stop/Send 语义拆分。
+10. 设计 token 映射：surface、border、radius、shadow、list density、disabled/accent state。
 
-完成条件：用 fake backend 手测 UI 矩阵全部通过；主 transcript 不出现 raw/system/result/internal JSON；工具行默认折叠且逐条下推；文件工具可点击打开；终端命令能看到命令和输出；thinking 运行中展开、结束后收缩。
+完成条件：用 fake backend 手测 UI 矩阵全部通过；主 transcript 不出现 raw/system/result/internal JSON；工具行默认折叠且逐条下推；文件工具可点击打开；终端命令能看到命令和输出；thinking 运行中展开、结束后收缩；Agent process 能读取子代理过程；长输出不造成全局卡顿。
 
 第四阶段：真实 CLI 验证
 

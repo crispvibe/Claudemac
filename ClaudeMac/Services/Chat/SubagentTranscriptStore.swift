@@ -31,8 +31,35 @@ enum SubagentTranscriptMessageKind: String, Equatable {
 enum SubagentTranscriptStore {
     static func load(agentID rawAgentID: String, projectPath: String?) -> SubagentTranscript? {
         let agentID = normalizedAgentID(rawAgentID)
-        guard let jsonlURL = transcriptURL(agentID: agentID, projectPath: projectPath),
-              let content = try? String(contentsOf: jsonlURL, encoding: .utf8) else { return nil }
+        guard let jsonlURL = transcriptURL(agentID: agentID, projectPath: projectPath) else { return nil }
+        return load(jsonlURL: jsonlURL, agentID: agentID)
+    }
+
+    static func find(agentType: String, description: String, projectPath: String?) -> SubagentTranscript? {
+        let targetType = comparable(agentType)
+        let targetDescription = comparable(description)
+        return candidateMetaURLs(projectPath: projectPath)
+            .compactMap { metaURL -> (URL, Date)? in
+                let meta = loadMeta(url: metaURL)
+                let typeMatches = targetType.isEmpty || comparable(meta.agentType) == targetType
+                let descriptionMatches = targetDescription.isEmpty || comparable(meta.description) == targetDescription
+                guard typeMatches && descriptionMatches else { return nil }
+                let jsonlURL = metaURL.deletingLastPathComponent().appendingPathComponent(metaURL.lastPathComponent.replacingOccurrences(of: ".meta.json", with: ".jsonl"))
+                guard FileManager.default.fileExists(atPath: jsonlURL.path) else { return nil }
+                let values = try? jsonlURL.resourceValues(forKeys: [.contentModificationDateKey])
+                return (jsonlURL, values?.contentModificationDate ?? .distantPast)
+            }
+            .sorted { $0.1 > $1.1 }
+            .compactMap { url, _ in load(jsonlURL: url, agentID: normalizedAgentID(url.deletingPathExtension().lastPathComponent)) }
+            .first
+    }
+
+    static func normalizedAgentID(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "agent-", with: "")
+    }
+
+    private static func load(jsonlURL: URL, agentID: String) -> SubagentTranscript? {
+        guard let content = try? String(contentsOf: jsonlURL, encoding: .utf8) else { return nil }
         let meta = loadMeta(url: jsonlURL.deletingLastPathComponent().appendingPathComponent("agent-\(agentID).meta.json"))
         let messages = parseMessages(from: content)
         let values = try? jsonlURL.resourceValues(forKeys: [.contentModificationDateKey])
@@ -44,10 +71,6 @@ enum SubagentTranscriptStore {
             updatedAt: values?.contentModificationDate,
             messages: messages
         )
-    }
-
-    static func normalizedAgentID(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "agent-", with: "")
     }
 
     private static func transcriptURL(agentID: String, projectPath: String?) -> URL? {
@@ -71,6 +94,30 @@ enum SubagentTranscriptStore {
             return url
         }
         return nil
+    }
+
+    private static func candidateMetaURLs(projectPath: String?) -> [URL] {
+        let root: URL
+        if let projectPath {
+            root = claudeProjectsRoot().appendingPathComponent(storageKey(for: projectPath), isDirectory: true)
+        } else {
+            root = claudeProjectsRoot()
+        }
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return [] }
+        return enumerator.compactMap { value in
+            guard let url = value as? URL,
+                  url.lastPathComponent.hasPrefix("agent-"),
+                  url.lastPathComponent.hasSuffix(".meta.json") else { return nil }
+            return url
+        }
+    }
+
+    private static func comparable(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private static func loadMeta(url: URL) -> (agentType: String, description: String) {

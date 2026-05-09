@@ -7,6 +7,7 @@ enum AppTheme {
     static let panelSurface = Color.white.opacity(0.26)
     static let controlSurface = Color.white.opacity(0.40)
     static let selectedSurface = Color.accentColor.opacity(0.10)
+    static let fileTreeName = Color.accentColor
     static let hairline = Color.black.opacity(0.06)
     static let weakHairline = Color.black.opacity(0.035)
 }

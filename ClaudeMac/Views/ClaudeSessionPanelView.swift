@@ -15,8 +15,6 @@ struct ChatPanelView: View {
     @State private var customModelInput = ""
     @State private var showCopiedToast = false
     @State private var attachedPaths: [String] = []
-    @State private var showResumePopover = false
-    @State private var resumeInput = ""
     @State private var expandedTranscriptMessageIDs: Set<UUID> = []
     @State private var composerHasMarkedText = false
     @State private var suggestedCommand: ComposerSuggestedCommand?
@@ -25,7 +23,12 @@ struct ChatPanelView: View {
     @State private var shouldFollowTranscriptBottom = true
     @State private var composerTextHeight: CGFloat = 42
     @State private var selectedSubagentDetail: SubagentDetailRequest?
+    @State private var activeComposerDraftKey = ""
+    @State private var cachedTranscriptRevision = -1
+    @State private var cachedTranscriptProjectKey = ""
+    @State private var cachedTranscriptItems: [ChatTranscriptItem] = []
     private let transcriptBottomID = "chat-transcript-bottom"
+    private let composerMinimumTextHeight: CGFloat = 42
 
     private var chatState: ChatPanelState {
         chatRuntimeStore.state(
@@ -59,6 +62,12 @@ struct ChatPanelView: View {
                     .background(Color.black.opacity(0.82))
                     .clipShape(Capsule())
                     .transition(.opacity)
+                    .zIndex(900)
+            }
+
+            if let activePicker {
+                globalPickerLayer(activePicker)
+                    .zIndex(1_000)
             }
         }
         .background(Color.white)
@@ -71,6 +80,14 @@ struct ChatPanelView: View {
             applyPersistedChatSelection()
             resetReasoningEffortToConfiguredDefault()
             syncSelectedContextWindow()
+            activateComposerDraftKey(composerDraftKey)
+            refreshTranscriptItems()
+        }
+        .onChange(of: composerDraftKey) { oldKey, newKey in
+            switchComposerDraft(from: oldKey, to: newKey)
+        }
+        .onChange(of: draftMessage) { _, newValue in
+            persistComposerDraft(newValue)
         }
         .onChange(of: appState.chatConversationSerial) { _, _ in
             applyPersistedChatSelection()
@@ -79,6 +96,7 @@ struct ChatPanelView: View {
             clearSuggestedCommand()
             shouldFollowTranscriptBottom = true
             lastSuggestedAssistantMessageID = nil
+            refreshTranscriptItems(force: true)
         }
         .onChange(of: appState.selectedCLI) { _, _ in
             selectedModelID = persistedModelID(for: appState.selectedCLI)
@@ -94,7 +112,11 @@ struct ChatPanelView: View {
             persistChatSelection()
         }
         .onChange(of: chatState.transcriptRevision) { _, _ in
+            refreshTranscriptItems()
             installSuggestedCommandIfNeeded()
+        }
+        .onChange(of: appState.selectedProject?.path) { _, _ in
+            refreshTranscriptItems(force: true)
         }
         .sheet(item: $selectedSubagentDetail) { request in
             SubagentTranscriptSheet(request: request)
@@ -102,11 +124,8 @@ struct ChatPanelView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(projectName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
+        HStack(alignment: .center, spacing: 8) {
+            appIdentity
             Button(action: copyProjectPath) {
                 Text(projectPath)
                     .font(.system(size: 10))
@@ -118,58 +137,48 @@ struct ChatPanelView: View {
             .buttonStyle(.plain)
 
             Button(action: startNewChat) {
-                Image(systemName: "plus.message")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: "plus")
+                    Text("新对话")
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 10)
+                .frame(height: 26)
+                .background(Color.primary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(appState.selectedProject == nil)
+            .opacity(appState.selectedProject == nil ? 0.45 : 1)
             .help("新建对话")
-
-            Button {
-                showResumePopover = true
-            } label: {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("恢复历史会话")
-            .popover(isPresented: $showResumePopover, arrowEdge: .bottom) {
-                VStack(spacing: 8) {
-                    Text("恢复会话")
-                        .font(.system(size: 11, weight: .medium))
-                    TextField("Session ID", text: $resumeInput)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11, design: .monospaced))
-                        .frame(width: 200)
-                    Button("恢复") {
-                        let trimmed = resumeInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return }
-                        appState.selectedMode = .resume
-                        appState.resumeSessionId = trimmed
-                        appState.chatConversationSerial = UUID()
-                        showResumePopover = false
-                        resumeInput = ""
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(resumeInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                .padding(12)
-            }
-
-            Text(chatState.statusText)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(chatState.status.statusTint)
-                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, minHeight: 37, alignment: .leading)
         .padding(.horizontal, 14)
     }
 
+    private var appIdentity: some View {
+        HStack(spacing: 8) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 30, height: 30)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            Text(appDisplayName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .layoutPriority(1)
+    }
+
+    private var appDisplayName: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? "Acode"
+    }
+
     private var transcript: some View {
-        let items = transcriptItems
+        let items = cachedTranscriptItems
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -189,36 +198,73 @@ struct ChatPanelView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    TranscriptScrollObserver { isAtBottom in
+                        shouldFollowTranscriptBottom = isAtBottom
+                    }
+                )
             }
             .scrollIndicators(.hidden)
             .background(Color.white)
-            .background(
-                TranscriptScrollObserver { isAtBottom in
-                    shouldFollowTranscriptBottom = isAtBottom
-                }
-            )
-            .onAppear { scrollTranscriptToBottom(proxy, force: true) }
+            .onAppear {
+                refreshTranscriptItems()
+                scrollTranscriptToBottom(proxy, force: true)
+            }
             .onChange(of: chatState.transcriptRevision) { _, _ in scrollTranscriptToBottom(proxy, animated: false) }
             .onChange(of: chatState.isAwaitingFirstModelOutput) { _, _ in scrollTranscriptToBottom(proxy) }
             .onChange(of: chatState.queuedRequests.count) { _, _ in scrollTranscriptToBottom(proxy) }
         }
     }
 
-    private var transcriptItems: [ChatTranscriptItem] {
+    private func refreshTranscriptItems(force: Bool = false) {
+        let projectKey = appState.selectedProject?.path ?? appState.selectedHistoryProjectPath ?? ""
+        guard force || cachedTranscriptRevision != chatState.transcriptRevision || cachedTranscriptProjectKey != projectKey else { return }
+        cachedTranscriptRevision = chatState.transcriptRevision
+        cachedTranscriptProjectKey = projectKey
+        cachedTranscriptItems = buildTranscriptItems()
+    }
+
+    private func buildTranscriptItems() -> [ChatTranscriptItem] {
         var items: [ChatTranscriptItem] = []
+        items.reserveCapacity(chatState.messages.count + 1)
         var seenErrorMessages = Set<String>()
-        for message in chatState.messages {
-            guard shouldShowInTranscript(message) else { continue }
+        var groupedMessageIDs = Set<UUID>()
+        for index in chatState.messages.indices {
+            let message = chatState.messages[index]
+            guard shouldShowInTranscript(message), !groupedMessageIDs.contains(message.id) else { continue }
             if message.kind == .error {
                 let key = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard seenErrorMessages.insert(key).inserted else { continue }
             }
-            items.append(.message(message))
+            if let group = toolInvocationGroup(startingAt: index, groupedMessageIDs: groupedMessageIDs) {
+                groupedMessageIDs.formUnion(group.responses.map(\.id))
+                items.append(.toolGroup(group))
+            } else {
+                items.append(.message(message))
+            }
         }
         if chatState.isAwaitingFirstModelOutput && appState.selectedProject != nil {
             items.append(.loading)
         }
         return items
+    }
+
+    private func toolInvocationGroup(startingAt index: Int, groupedMessageIDs: Set<UUID>) -> ToolInvocationGroup? {
+        let primary = chatState.messages[index]
+        guard primary.isToolInvocationStart else { return nil }
+        var responses: [ChatMessage] = []
+        for candidate in chatState.messages.dropFirst(index + 1) {
+            guard shouldShowInTranscript(candidate), !groupedMessageIDs.contains(candidate.id) else { continue }
+            if candidate.isToolInvocationFeedback(for: primary) {
+                responses.append(candidate)
+                continue
+            }
+            if candidate.isToolInvocationBoundary || primary.toolCorrelationID == nil || !responses.isEmpty {
+                break
+            }
+        }
+        guard !responses.isEmpty else { return nil }
+        return ToolInvocationGroup(primary: primary, responses: responses)
     }
 
     private func scrollTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool = true, force: Bool = false) {
@@ -281,6 +327,8 @@ struct ChatPanelView: View {
         switch item {
         case .message(let message):
             messageRow(message)
+        case .toolGroup(let group):
+            toolInvocationRow(group)
         case .loading:
             loadingMessageRow
         }
@@ -382,93 +430,80 @@ struct ChatPanelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func toolInvocationHeader(_ message: ChatMessage, isExpanded: Bool) -> some View {
-        HStack(alignment: .center, spacing: 9) {
+    private func toolInvocationRow(_ group: ToolInvocationGroup) -> some View {
+        let isExpanded = expandedTranscriptMessageIDs.contains(group.primary.id)
+        return VStack(alignment: .leading, spacing: 6) {
+            toolInvocationHeader(group.primary, isExpanded: isExpanded, feedbackCount: group.responses.count)
+
+            if isExpanded {
+                toolDetailCard(group)
+                    .padding(.leading, 12)
+            }
+        }
+        .padding(.vertical, 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func toolInvocationHeader(_ message: ChatMessage, isExpanded: Bool, feedbackCount: Int = 0) -> some View {
+        let summary = ToolInvocationSummaryCache.summary(for: message)
+        return HStack(alignment: .center, spacing: 7) {
             Button {
                 toggleTranscriptMessage(message.id)
             } label: {
-                HStack(alignment: .center, spacing: 9) {
-                    ZStack {
-                        Circle()
-                            .fill(message.toolTint.opacity(0.13))
-                            .frame(width: 24, height: 24)
-                        Image(systemName: message.toolSystemImage)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(message.toolTint)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(message.toolPrimaryTitle)
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(.primary.opacity(0.82))
-                                .lineLimit(1)
-                            Text(message.toolActionSummary)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-
-                        HStack(spacing: 5) {
-                            if let execution = message.toolExecutionSummary {
-                                toolInfoPill(execution, systemImage: message.toolExecutionSystemImage, tint: .secondary)
-                                    .help(execution)
-                            }
-                            if let metrics = message.toolMetricsSummary {
-                                toolInfoPill(metrics, systemImage: "chart.bar.doc.horizontal", tint: .secondary)
-                            }
-                        }
-                    }
-
+                HStack(alignment: .center, spacing: 7) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Color.secondary.opacity(0.45))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 10)
+
+                    Text(summary.primaryTitle)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    if let summaryText = summary.plainSummary {
+                        Text(summaryText)
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary.opacity(0.8))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    if feedbackCount > 0 {
+                        Text("反馈 \(feedbackCount)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.green.opacity(0.08))
+                            .clipShape(Capsule())
+                    }
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            if let filePath = message.toolFilePath {
-                toolFileButton(path: filePath)
+            if summary.isAgentTool {
+                subagentDetailButton(message, summary: summary)
             }
 
-            if message.isAgentTool {
-                subagentDetailButton(message)
-            }
-
-            toolStatusPill(message)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(message.toolTint.opacity(0.055))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(message.toolTint.opacity(0.14), lineWidth: 1)
-        )
+        .padding(.horizontal, 2)
+        .padding(.vertical, 3)
     }
 
-    private func subagentDetailButton(_ message: ChatMessage) -> some View {
+    private func subagentDetailButton(_ message: ChatMessage, summary: ToolInvocationSummary) -> some View {
         Button {
             guard let request = message.subagentDetailRequest(projectPath: appState.selectedProject?.path) else { return }
             selectedSubagentDetail = request
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "text.bubble")
-                    .font(.system(size: 9, weight: .semibold))
-                Text(message.subagentID == nil ? "等待详情" : "查看对话")
-                    .font(.system(size: 10, weight: .semibold))
-            }
-            .foregroundStyle(message.subagentID == nil ? Color.secondary.opacity(0.55) : Color.blue)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background((message.subagentID == nil ? Color.secondary : Color.blue).opacity(0.08))
-            .clipShape(Capsule())
+            Text("process")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
         }
         .buttonStyle(.plain)
-        .disabled(message.subagentID == nil)
-        .help(message.subagentID == nil ? "子代理完成后可查看完整对话" : "打开子代理完整对话")
+        .help("打开子代理过程")
     }
 
     private func toolFileButton(path: String) -> some View {
@@ -519,38 +554,68 @@ struct ChatPanelView: View {
                     }
                 }
 
+                toolDetailSection(message, label: nil)
+            }
+            .padding(.leading, 2)
+        }
+    }
+
+    @ViewBuilder
+    private func toolDetailCard(_ group: ToolInvocationGroup) -> some View {
+        let detailText = group.detailText
+        if !detailText.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text(group.primary.isTerminalTool ? "terminal + feedback" : "tool + feedback")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 0)
+                    iconAction("doc.on.doc", help: "复制详情") {
+                        copyText(detailText)
+                    }
+                }
+
+                toolDetailSection(group.primary, label: "调用")
+                ForEach(group.responses) { response in
+                    toolDetailSection(response, label: "反馈")
+                }
+            }
+            .padding(.leading, 2)
+        }
+    }
+
+    @ViewBuilder
+    private func toolDetailSection(_ message: ChatMessage, label: String?) -> some View {
+        let detailText = message.isTerminalTool ? message.terminalDetailText : message.toolDetailText
+        if message.kind == .diff || !detailText.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                if let label {
+                    Text(label)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
                 if message.isAgentTool {
                     subagentSummaryCard(message)
                 }
                 if let preview = message.toolCodePreview {
                     toolCodePreviewCard(preview)
                 }
-                FileReferenceChips(text: detailText, onOpenFile: openFileReference)
                 toolDetailView(message)
             }
-            .padding(9)
-            .background(Color.black.opacity(0.025))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(AppTheme.hairline, lineWidth: 1)
-            )
         }
     }
 
     private func subagentSummaryCard(_ message: ChatMessage) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
-                Image(systemName: "person.2.wave.2")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.blue)
                 Text(message.subagentDisplayTitle)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.primary.opacity(0.82))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer(minLength: 0)
                 if let agentID = message.subagentID {
                     Text("agent-\(agentID.prefix(8))")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -559,64 +624,46 @@ struct ChatPanelView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(5)
-                    .textSelection(.enabled)
             } else if let summary = message.subagentResultSummary {
                 Text(summary)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(5)
-                    .textSelection(.enabled)
             }
         }
-        .padding(8)
-        .background(Color.blue.opacity(0.045))
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private func toolCodePreviewCard(_ preview: ToolCodePreview) -> some View {
-        let style = FileLanguageStyle.forPath(preview.path)
-        return VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 7) {
-                Image(systemName: style.symbol)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(style.tint)
                 Text(preview.title)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.primary.opacity(0.78))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 Text(preview.stats)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(style.tint.opacity(0.07))
 
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(preview.lines.enumerated()), id: \.offset) { _, line in
                     HStack(alignment: .top, spacing: 6) {
                         Text(line.marker)
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(line.tint)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.tertiary)
                             .frame(width: 10, alignment: .center)
                         Text(line.text)
                             .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(line.tint)
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(8)
-            .background(Color.black.opacity(0.035))
+            .padding(.leading, 8)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(style.tint.opacity(0.16), lineWidth: 1)
-        )
     }
 
     @ViewBuilder
@@ -865,15 +912,7 @@ struct ChatPanelView: View {
                 queuedRequestsView
             }
 
-            ZStack(alignment: .bottomLeading) {
-                composerCard
-
-                if let activePicker {
-                    pickerOverlay(activePicker)
-                        .padding(.bottom, 92)
-                        .zIndex(10)
-                }
-            }
+            composerCard
         }
         .padding(.horizontal, 12)
         .padding(.top, 2)
@@ -996,8 +1035,7 @@ struct ChatPanelView: View {
                 if editingMessageID != nil {
                     Button("取消") {
                         editingMessageID = nil
-                        draftMessage = ""
-                        clearSuggestedCommand()
+                        clearComposerText()
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
@@ -1074,6 +1112,23 @@ struct ChatPanelView: View {
                 ? "\(Int(value))k"
                 : String(format: "%.1fk", value)
         }
+    }
+
+    private func globalPickerLayer(_ picker: ChatPicker) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            Color.black.opacity(0.001)
+                .contentShape(Rectangle())
+                .onTapGesture { activePicker = nil }
+
+            pickerOverlay(picker)
+                .padding(.horizontal, 12)
+                .padding(.bottom, pickerLayerBottomInset)
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
+        }
+    }
+
+    private var pickerLayerBottomInset: CGFloat {
+        composerTextHeight + 64 + (attachedPaths.isEmpty ? 0 : 30)
     }
 
     @ViewBuilder
@@ -1255,6 +1310,18 @@ struct ChatPanelView: View {
         modelService.title(for: selectedModelID, cli: appState.selectedCLI)
     }
 
+    private var composerDraftKey: String {
+        if let historyID = appState.selectedCLIHistoryID {
+            return "history:\(historyID)"
+        }
+        let sessionID = appState.resumeSessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if appState.selectedMode == .resume, !sessionID.isEmpty {
+            return "history:\(appState.selectedCLI.visibleValue.rawValue):\(sessionID)"
+        }
+        let projectPath = appState.selectedHistoryProjectPath ?? appState.selectedProject?.path ?? "none"
+        return "new:\((projectPath as NSString).standardizingPath)"
+    }
+
     private var canSend: Bool {
         appState.selectedProject != nil && !draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -1301,10 +1368,36 @@ struct ChatPanelView: View {
             resumeSessionID: appState.resumeSessionId
         )
         if didStart {
-            draftMessage = ""
-            clearSuggestedCommand()
+            clearComposerText()
             attachedPaths.removeAll()
         }
+    }
+
+    private func clearComposerText() {
+        draftMessage = ""
+        composerHasMarkedText = false
+        composerTextHeight = composerMinimumTextHeight
+        clearSuggestedCommand()
+        persistComposerDraft("")
+    }
+
+    private func switchComposerDraft(from oldKey: String, to newKey: String) {
+        persistComposerDraft(draftMessage, for: oldKey)
+        activateComposerDraftKey(newKey)
+    }
+
+    private func activateComposerDraftKey(_ key: String) {
+        activeComposerDraftKey = key
+        draftMessage = ChatSessionStore.draft(for: key)
+        composerHasMarkedText = false
+        composerTextHeight = composerMinimumTextHeight
+        clearSuggestedCommand()
+    }
+
+    private func persistComposerDraft(_ text: String, for key: String? = nil) {
+        let draftKey = key ?? activeComposerDraftKey
+        guard !draftKey.isEmpty else { return }
+        try? ChatSessionStore.saveDraft(text, for: draftKey)
     }
 
     private var composedPrompt: String {
@@ -1502,8 +1595,7 @@ struct ChatPanelView: View {
         chatState.removeMessageThread(message.id)
         if editingMessageID == message.id {
             editingMessageID = nil
-            draftMessage = ""
-            clearSuggestedCommand()
+            clearComposerText()
         }
     }
 
@@ -1589,15 +1681,35 @@ struct ChatPanelView: View {
 
 private enum ChatTranscriptItem: Identifiable {
     case message(ChatMessage)
+    case toolGroup(ToolInvocationGroup)
     case loading
 
     var id: String {
         switch self {
         case .message(let message):
             "message-\(message.id.uuidString)"
+        case .toolGroup(let group):
+            group.id
         case .loading:
             "loading"
         }
+    }
+}
+
+private struct ToolInvocationGroup: Identifiable {
+    let primary: ChatMessage
+    let responses: [ChatMessage]
+
+    var id: String { "tool-group-\(primary.id.uuidString)" }
+
+    var detailText: String {
+        ([primary] + responses)
+            .map { message in
+                message.isTerminalTool ? message.terminalDetailText : message.toolDetailText
+            }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
     }
 }
 
@@ -1613,7 +1725,6 @@ private struct TranscriptScrollObserver: NSViewRepresentable {
     func updateNSView(_ nsView: ObserverView, context: Context) {
         nsView.onBottomStateChanged = onBottomStateChanged
         nsView.attachIfNeeded()
-        nsView.publishBottomState()
     }
 
     final class ObserverView: NSView {
@@ -1621,7 +1732,7 @@ private struct TranscriptScrollObserver: NSViewRepresentable {
         private weak var observedScrollView: NSScrollView?
         private var boundsObserver: NSObjectProtocol?
         private var lastIsAtBottom: Bool?
-        private let bottomTolerance: CGFloat = 48
+        private let bottomTolerance: CGFloat = 16
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -1893,9 +2004,35 @@ private struct FileReferenceButton: View {
     }
 }
 
+private final class FileReferenceListBox {
+    let references: [FileReference]
+
+    init(_ references: [FileReference]) {
+        self.references = references
+    }
+}
+
+private final class AttributedStringBox {
+    let value: AttributedString
+
+    init(_ value: AttributedString) {
+        self.value = value
+    }
+}
+
 private enum FileReferenceDetector {
     private static let maxScanLength = 40_000
     private static let maxReferences = 24
+    private static let referenceCache: NSCache<NSString, FileReferenceListBox> = {
+        let cache = NSCache<NSString, FileReferenceListBox>()
+        cache.countLimit = 400
+        return cache
+    }()
+    private static let attributedCache: NSCache<NSString, AttributedStringBox> = {
+        let cache = NSCache<NSString, AttributedStringBox>()
+        cache.countLimit = 240
+        return cache
+    }()
     private static let pathPattern = #"(?:(?:file://)?/(?:[^\s`\"'<>|])+|(?:[A-Za-z0-9_@.+~%-]+/)+(?:[A-Za-z0-9_@.+~%-]+)|[A-Za-z0-9_@.+~%-]+\.[A-Za-z0-9]{1,12})(?::\d+){0,2}"#
     private static let knownKeys: Set<String> = [
         "swift", "xib", "storyboard", "xcconfig", "entitlements", "xcprivacy", "pbxproj",
@@ -1910,6 +2047,10 @@ private enum FileReferenceDetector {
     ]
 
     static func references(in text: String) -> [FileReference] {
+        let key = cacheKey(prefix: "refs", text: text)
+        if let cached = referenceCache.object(forKey: key) {
+            return cached.references
+        }
         let scanText = String(text.prefix(maxScanLength))
         guard let regex = try? NSRegularExpression(pattern: pathPattern) else { return [] }
         let range = NSRange(scanText.startIndex..<scanText.endIndex, in: scanText)
@@ -1923,14 +2064,12 @@ private enum FileReferenceDetector {
                   seen.insert(reference.id).inserted else { continue }
             references.append(reference)
         }
+        referenceCache.setObject(FileReferenceListBox(references), forKey: key)
         return references
     }
 
     static func attributedString(from text: String, parseMarkdown: Bool, baseColor: Color) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        var attributed = parseMarkdown
-            ? ((try? AttributedString(markdown: text, options: options)) ?? AttributedString(text))
-            : AttributedString(text)
+        var attributed = baseAttributedString(from: text, parseMarkdown: parseMarkdown)
         attributed.foregroundColor = baseColor
 
         for reference in references(in: text) {
@@ -1939,6 +2078,23 @@ private enum FileReferenceDetector {
             attributed[range].foregroundColor = FileLanguageStyle.forPath(reference.path).tint
         }
         return attributed
+    }
+
+    private static func baseAttributedString(from text: String, parseMarkdown: Bool) -> AttributedString {
+        let key = cacheKey(prefix: parseMarkdown ? "md" : "text", text: text)
+        if let cached = attributedCache.object(forKey: key) {
+            return cached.value
+        }
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        let attributed = parseMarkdown
+            ? ((try? AttributedString(markdown: text, options: options)) ?? AttributedString(text))
+            : AttributedString(text)
+        attributedCache.setObject(AttributedStringBox(attributed), forKey: key)
+        return attributed
+    }
+
+    private static func cacheKey(prefix: String, text: String) -> NSString {
+        "\(prefix):\(text.count):\(text.hashValue)" as NSString
     }
 
     private static func reference(from rawValue: String) -> FileReference? {
@@ -2025,7 +2181,13 @@ private struct AssistantMessageContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if shouldUseLightweightRender {
+            if isStreaming {
+                Text(previewText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.primary)
+                    .lineSpacing(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if shouldUseLightweightRender {
                 FileReferenceText(
                     text: previewText,
                     font: .system(size: 12),
@@ -2035,7 +2197,6 @@ private struct AssistantMessageContent: View {
                     onOpenFile: onOpenFile
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
-                FileReferenceChips(text: previewText, onOpenFile: onOpenFile)
             } else {
                 ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                     blockView(block)
@@ -2386,12 +2547,12 @@ private struct ComposerSuggestedCommand: Equatable {
 }
 
 private struct SubagentDetailRequest: Identifiable, Equatable {
-    let agentID: String
+    let agentID: String?
     let agentType: String
     let description: String
     let projectPath: String?
 
-    var id: String { agentID }
+    var id: String { agentID ?? "pending-\(agentType)-\(description)" }
 }
 
 private struct SubagentTranscriptSheet: View {
@@ -2403,29 +2564,29 @@ private struct SubagentTranscriptSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "person.2.wave.2")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.blue)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("子代理对话")
-                        .font(.system(size: 13, weight: .semibold))
+                    Text("Agent process")
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     Text(headerSubtitle)
-                        .font(.system(size: 10))
+                        .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Spacer()
-                Button(isPaused ? "继续刷新" : "暂停可视化") {
+                Button(isPaused ? "resume" : "pause") {
                     isPaused.toggle()
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                Button("刷新") { refreshTranscript() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                Button("关闭") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                .buttonStyle(.plain)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                Button("refresh") { refreshTranscript() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Button("close") { dismiss() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
             }
             .padding(14)
 
@@ -2442,23 +2603,21 @@ private struct SubagentTranscriptSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "text.bubble")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.tertiary)
-                    Text("还没有找到子代理对话日志")
-                        .font(.system(size: 12, weight: .medium))
-                    Text("子代理完成或写入日志后刷新即可查看；这不会影响后台运行。")
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("waiting for agent transcript")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Text("日志写入后会自动刷新；这里只读展示，不会影响后台运行。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(18)
             }
         }
         .frame(minWidth: 760, minHeight: 560)
         .onAppear { refreshTranscript() }
-        .onReceive(Timer.publish(every: 1.2, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: 2.5, on: .main, in: .common).autoconnect()) { _ in
             guard !isPaused else { return }
             refreshTranscript()
         }
@@ -2468,11 +2627,20 @@ private struct SubagentTranscriptSheet: View {
         let transcriptType = transcript?.agentType.nonEmptyTrimmed
         let type = transcriptType ?? request.agentType
         let description = transcript?.description.nonEmptyTrimmed ?? request.description
-        return "\(type) · \(description) · agent-\(request.agentID.prefix(8))"
+        let idText = request.agentID.map { "agent-\($0.prefix(8))" } ?? "pending"
+        return "\(type) · \(description) · \(idText)"
     }
 
     private func refreshTranscript() {
-        transcript = SubagentTranscriptStore.load(agentID: request.agentID, projectPath: request.projectPath)
+        let nextTranscript: SubagentTranscript?
+        if let agentID = request.agentID {
+            nextTranscript = SubagentTranscriptStore.load(agentID: agentID, projectPath: request.projectPath)
+        } else {
+            nextTranscript = SubagentTranscriptStore.find(agentType: request.agentType, description: request.description, projectPath: request.projectPath)
+        }
+        if transcript != nextTranscript {
+            transcript = nextTranscript
+        }
     }
 }
 
@@ -2497,29 +2665,26 @@ private struct SubagentTranscriptMessageRow: View {
             AssistantMessageContent(text: message.text, isStreaming: false, onOpenFile: { _ in })
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .reasoning:
-            SubagentSmallCard(message: message, tint: .indigo, icon: "brain.head.profile")
+            SubagentSmallCard(message: message)
         case .toolCall:
-            SubagentSmallCard(message: message, tint: .purple, icon: "hammer")
+            SubagentSmallCard(message: message)
         case .toolResult:
-            SubagentSmallCard(message: message, tint: message.status == "failed" ? .red : .green, icon: message.status == "failed" ? "xmark.seal" : "checkmark.seal")
+            SubagentSmallCard(message: message)
         case .raw:
-            SubagentSmallCard(message: message, tint: .secondary, icon: "doc.text")
+            SubagentSmallCard(message: message)
         }
     }
 }
 
 private struct SubagentSmallCard: View {
     let message: SubagentTranscriptMessage
-    let tint: Color
-    let icon: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 7) {
-                Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
                 Text(message.title.isEmpty ? message.kind.rawValue : message.title)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if !message.subtitle.isEmpty {
                     Text(message.subtitle)
@@ -2529,10 +2694,9 @@ private struct SubagentSmallCard: View {
                 }
                 Spacer(minLength: 0)
                 Text(statusText)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(tint)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
             }
-            .foregroundStyle(tint)
 
             if !message.text.isEmpty {
                 ScrollView(.horizontal, showsIndicators: true) {
@@ -2540,18 +2704,11 @@ private struct SubagentSmallCard: View {
                         .font(.system(size: 10, design: message.kind == .toolCall || message.kind == .toolResult ? .monospaced : .default))
                         .foregroundStyle(.secondary)
                         .lineSpacing(2)
-                        .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
-        .padding(9)
-        .background(tint.opacity(0.055))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(tint.opacity(0.14), lineWidth: 1)
-        )
+        .padding(.leading, 12)
     }
 
     private var previewText: String {
@@ -2769,6 +2926,44 @@ private struct ChatComposerTextView: NSViewRepresentable {
     }
 }
 
+private struct ToolInvocationSummary {
+    let primaryTitle: String
+    let plainSummary: String?
+    let isAgentTool: Bool
+    let subagentID: String?
+}
+
+private final class ToolInvocationSummaryBox {
+    let value: ToolInvocationSummary
+
+    init(_ value: ToolInvocationSummary) {
+        self.value = value
+    }
+}
+
+private enum ToolInvocationSummaryCache {
+    private static let cache: NSCache<NSString, ToolInvocationSummaryBox> = {
+        let cache = NSCache<NSString, ToolInvocationSummaryBox>()
+        cache.countLimit = 800
+        return cache
+    }()
+
+    static func summary(for message: ChatMessage) -> ToolInvocationSummary {
+        let key = "\(message.id.uuidString):\(message.status):\(message.isStreaming):\(message.text.count):\(message.text.hashValue)" as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached.value
+        }
+        let summary = ToolInvocationSummary(
+            primaryTitle: message.toolPrimaryTitle,
+            plainSummary: message.toolPlainSummary,
+            isAgentTool: message.isAgentTool,
+            subagentID: message.subagentID
+        )
+        cache.setObject(ToolInvocationSummaryBox(summary), forKey: key)
+        return summary
+    }
+}
+
 private extension ChatMessageKind {
     var isToolDetailMonospaced: Bool {
         switch self {
@@ -2790,6 +2985,38 @@ private extension ChatMessageKind {
 }
 
 private extension ChatMessage {
+    var isToolInvocationStart: Bool {
+        kind == .toolCall || kind == .command
+    }
+
+    var isToolInvocationBoundary: Bool {
+        switch kind {
+        case .user, .assistant, .reasoning, .permissionRequest, .interactiveRequest, .error:
+            true
+        case .toolCall, .command:
+            true
+        case .toolResult, .commandOutput, .diff, .system, .result, .rawOutput:
+            false
+        }
+    }
+
+    func isToolInvocationFeedback(for primary: ChatMessage) -> Bool {
+        switch (primary.kind, kind) {
+        case (.command, .commandOutput), (.toolCall, .toolResult):
+            if let primaryID = primary.toolCorrelationID, let feedbackID = toolCorrelationID {
+                return primaryID == feedbackID
+            }
+            return primary.requestID == nil && requestID == nil
+        default:
+            return false
+        }
+    }
+
+    var toolCorrelationID: String? {
+        requestID?.nonEmptyTrimmed
+            ?? firstToolStringValue(keys: ["tool_use_id", "toolUseId", "tool_use", "call_id", "callId", "item_id", "itemId", "command_id", "commandId", "id"], in: text)
+    }
+
     var toolDisplayTitle: String {
         toolPrimaryTitle
     }
@@ -2903,9 +3130,9 @@ private extension ChatMessage {
     }
 
     func subagentDetailRequest(projectPath: String?) -> SubagentDetailRequest? {
-        guard let agentID = subagentID else { return nil }
+        guard isAgentTool else { return nil }
         return SubagentDetailRequest(
-            agentID: agentID,
+            agentID: subagentID,
             agentType: subagentType ?? "Agent",
             description: subagentDescription ?? subagentResultSummary ?? "子代理",
             projectPath: projectPath
@@ -2918,6 +3145,26 @@ private extension ChatMessage {
 
     private var subagentDescription: String? {
         firstToolStringValue(keys: ["description", "summary", "title"], in: text)
+    }
+
+    var toolPlainSummary: String? {
+        switch toolName.lowercased() {
+        case "read", "edit", "write":
+            return toolFilePath.map(Self.displayFileName)
+        case "grep":
+            if let path = toolFilePath { return Self.displayFileName(path) }
+            return firstToolStringValue(keys: ["pattern", "query", "regex"], in: text).map { Self.previewSnippet($0, limit: 56) }
+        case "glob":
+            return firstToolStringValue(keys: ["pattern", "glob", "path"], in: text).map { Self.previewSnippet($0, limit: 56) }
+        case "bash":
+            return toolExecutedCommand.map { Self.previewSnippet($0, limit: 72) }
+        default:
+            if isAgentTool { return subagentDisplayTitle }
+            if kind == .diff { return toolFilePath.map(Self.displayFileName) }
+            if let path = toolFilePath { return Self.displayFileName(path) }
+            if let command = toolExecutedCommand { return Self.previewSnippet(command, limit: 72) }
+            return Self.firstUsefulLine(toolDetailText).map { Self.previewSnippet($0, limit: 72) }
+        }
     }
 
     var toolExecutionSummary: String? {

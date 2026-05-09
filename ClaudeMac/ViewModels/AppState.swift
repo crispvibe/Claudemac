@@ -27,18 +27,30 @@ final class AppState: ObservableObject {
     @Published var showSettings: Bool = false
 
     private var scanner: FileTreeScanner
+    private var pendingRestoreCLIHistoryID: String?
+    private var cliHistoryRefreshGeneration = 0
 
     init() {
         var settings = ProjectStore.loadSettings()
         settings.defaultCLI = settings.defaultCLI.visibleValue
         settings.chatCLI = settings.chatCLI.visibleValue
+        let loadedProjects = ProjectStore.loadProjects().sorted { ($0.lastOpenedAt ?? .distantPast) > ($1.lastOpenedAt ?? .distantPast) }
+        let restoredProjectID = settings.lastSelectedProjectPath.flatMap { savedPath in
+            loadedProjects.first { Self.normalizedProjectPath($0.path) == Self.normalizedProjectPath(savedPath) }?.id
+        }
+        if restoredProjectID == nil, settings.lastSelectedProjectPath != nil || settings.lastSelectedCLIHistoryID != nil {
+            settings.lastSelectedProjectPath = loadedProjects.first?.path
+            settings.lastSelectedCLIHistoryID = nil
+            try? ProjectStore.saveSettings(settings)
+        }
         self.settings = settings
-        self.projects = ProjectStore.loadProjects().sorted { ($0.lastOpenedAt ?? .distantPast) > ($1.lastOpenedAt ?? .distantPast) }
+        self.projects = loadedProjects
         self.launchHistory = LaunchHistoryStore.load().sorted { $0.createdAt > $1.createdAt }
         self.selectedCLI = settings.chatCLI
         self.selectedTerminal = settings.defaultTerminal
         self.scanner = FileTreeScanner(ignoredNames: Set(settings.ignoredFolders))
-        self.selectedProjectID = projects.first?.id
+        self.selectedProjectID = restoredProjectID ?? loadedProjects.first?.id
+        self.pendingRestoreCLIHistoryID = settings.lastSelectedCLIHistoryID
         refreshProjectContext()
     }
 
@@ -49,6 +61,61 @@ final class AppState: ObservableObject {
     private func project(matching path: String?) -> ProjectItem? {
         guard let normalizedPath = Self.normalizedProjectPath(path) else { return nil }
         return projects.first { Self.normalizedProjectPath($0.path) == normalizedPath }
+    }
+
+    private func persistWorkspaceSelection(projectPath: String?, historyID: String?, clearPending: Bool = true) {
+        settings.lastSelectedProjectPath = projectPath
+        settings.lastSelectedCLIHistoryID = historyID
+        if clearPending {
+            pendingRestoreCLIHistoryID = nil
+        }
+        do {
+            try ProjectStore.saveSettings(settings)
+        } catch {
+            show(error)
+        }
+    }
+
+    private func restorePendingHistorySelectionIfPossible(finalizeIfMissing: Bool) {
+        guard let historyID = pendingRestoreCLIHistoryID else { return }
+        guard let session = cliHistory.first(where: { $0.id == historyID }) else {
+            if finalizeIfMissing {
+                pendingRestoreCLIHistoryID = nil
+                persistWorkspaceSelection(projectPath: selectedProject?.path, historyID: nil, clearPending: false)
+            }
+            return
+        }
+        guard let matchingProject = project(matching: session.projectPath) else {
+            pendingRestoreCLIHistoryID = nil
+            persistWorkspaceSelection(projectPath: selectedProject?.path, historyID: nil, clearPending: false)
+            return
+        }
+        selectedProjectID = matchingProject.id
+        selectedCLI = session.cli.visibleValue
+        selectedMode = .resume
+        resumeSessionId = session.sessionId
+        selectedHistoryProjectPath = session.projectPath
+        selectedCLIHistoryID = session.id
+        chatConversationSerial = UUID()
+        persistWorkspaceSelection(projectPath: matchingProject.path, historyID: session.id)
+    }
+
+    func adoptPersistedChatSession(_ session: ChatSessionRecord) {
+        guard let currentProject = selectedProject,
+              Self.normalizedProjectPath(currentProject.path) == Self.normalizedProjectPath(session.projectPath) else { return }
+        let historyID = "\(session.cli.rawValue):\(session.id.uuidString)"
+        let sessionID = session.id.uuidString
+        guard selectedCLI != session.cli.visibleValue
+            || selectedMode != .resume
+            || resumeSessionId != sessionID
+            || selectedHistoryProjectPath != session.projectPath
+            || selectedCLIHistoryID != historyID else { return }
+        selectedCLI = session.cli.visibleValue
+        selectedMode = .resume
+        resumeSessionId = sessionID
+        selectedHistoryProjectPath = session.projectPath
+        selectedCLIHistoryID = historyID
+        persistWorkspaceSelection(projectPath: currentProject.path, historyID: historyID)
     }
 
     nonisolated private static func normalizedProjectPath(_ path: String?) -> String? {
@@ -85,6 +152,7 @@ final class AppState: ObservableObject {
             selectedProjectID = project.id
             try ProjectStore.saveProjects(projects)
             refreshProjectContext()
+            persistWorkspaceSelection(projectPath: project.path, historyID: nil)
         } catch {
             show(error)
         }
@@ -101,6 +169,7 @@ final class AppState: ObservableObject {
         do {
             try ProjectStore.saveProjects(projects)
             refreshProjectContext()
+            persistWorkspaceSelection(projectPath: selectedProject?.path, historyID: nil)
         } catch {
             show(error)
         }
@@ -117,6 +186,7 @@ final class AppState: ObservableObject {
             try? ProjectStore.saveProjects(projects)
         }
         refreshProjectContext()
+        persistWorkspaceSelection(projectPath: project.path, historyID: nil)
         return true
     }
 
@@ -393,6 +463,7 @@ final class AppState: ObservableObject {
         selectedMode = .newSession
         resumeSessionId = ""
         chatConversationSerial = UUID()
+        persistWorkspaceSelection(projectPath: selectedProject?.path, historyID: nil)
     }
 
     func selectCLIHistory(_ session: CLIHistorySession) {
@@ -413,6 +484,7 @@ final class AppState: ObservableObject {
         selectedHistoryProjectPath = session.projectPath
         selectedCLIHistoryID = session.id
         chatConversationSerial = UUID()
+        persistWorkspaceSelection(projectPath: matchingProject?.path ?? session.projectPath ?? selectedProject?.path, historyID: session.id)
     }
 
     func deleteCLIHistory(_ session: CLIHistorySession) {
@@ -441,34 +513,110 @@ final class AppState: ObservableObject {
 
     nonisolated private static func deleteCLIHistoryFiles(session: CLIHistorySession, storagePath: String) throws {
         if session.storageKey == ChatSessionStore.storageKey {
+            let localSession = ChatSessionStore.session(id: session.sessionId)
             try ChatSessionStore.deleteSession(id: session.sessionId)
+            if let localSession, let externalSessionID = localSession.externalSessionID?.nonEmptyTrimmed {
+                try removeExternalHistoryReferences(cli: localSession.cli, sessionID: externalSessionID, projectPath: localSession.projectPath)
+            }
             return
         }
 
         let url = URL(fileURLWithPath: storagePath)
-        if url.lastPathComponent == "history.jsonl" {
+        if url.lastPathComponent == "history.jsonl" || url.lastPathComponent == "session_index.jsonl" {
             try removeHistoryIndexEntries(from: url, matching: session)
         } else {
-            try FileManager.default.removeItem(at: url)
+            try removeFileIfPresent(url)
         }
+        try removeExternalHistoryReferences(cli: session.cli, sessionID: session.sessionId, projectPath: session.projectPath)
     }
 
     nonisolated private static func removeHistoryIndexEntries(from url: URL, matching session: CLIHistorySession) throws {
+        try removeHistoryIndexEntries(from: url, sessionID: session.sessionId)
+    }
+
+    nonisolated private static func removeExternalHistoryReferences(cli: CLIType, sessionID: String, projectPath: String?) throws {
+        let home = URL(fileURLWithPath: ChatCLIEnvironment.realHomeDirectory, isDirectory: true)
+        switch cli.visibleValue {
+        case .claude:
+            let claudeRoot = home.appendingPathComponent(".claude", isDirectory: true)
+            try removeHistoryIndexEntries(from: claudeRoot.appendingPathComponent("history.jsonl"), sessionID: sessionID)
+            try removeClaudeTranscriptFiles(sessionID: sessionID, projectPath: projectPath)
+        case .codex:
+            let codexRoot = home.appendingPathComponent(".codex", isDirectory: true)
+            try removeHistoryIndexEntries(from: codexRoot.appendingPathComponent("history.jsonl"), sessionID: sessionID)
+            try removeHistoryIndexEntries(from: codexRoot.appendingPathComponent("session_index.jsonl"), sessionID: sessionID)
+            try removeTranscriptFiles(named: "\(sessionID).jsonl", under: codexRoot.appendingPathComponent("sessions", isDirectory: true))
+            try removeTranscriptFiles(named: "\(sessionID).jsonl", under: codexRoot.appendingPathComponent("archived_sessions", isDirectory: true))
+        case .gemini, .custom:
+            return
+        }
+    }
+
+    nonisolated private static func removeHistoryIndexEntries(from url: URL, sessionID: String) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
         let content = try String(contentsOf: url, encoding: .utf8)
         let keptLines = content.split(separator: "\n", omittingEmptySubsequences: false).filter { line in
             guard !line.isEmpty, let data = String(line).data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return true
             }
-            return (object["sessionId"] as? String) != session.sessionId && (object["session_id"] as? String) != session.sessionId
+            return (object["sessionId"] as? String) != sessionID
+                && (object["session_id"] as? String) != sessionID
+                && (object["id"] as? String) != sessionID
         }
         try keptLines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 
+    nonisolated private static func removeClaudeTranscriptFiles(sessionID: String, projectPath: String?) throws {
+        let projectsRoot = URL(fileURLWithPath: ChatCLIEnvironment.realHomeDirectory, isDirectory: true)
+            .appendingPathComponent(".claude", isDirectory: true)
+            .appendingPathComponent("projects", isDirectory: true)
+        let fileName = "\(sessionID).jsonl"
+        if let projectPath {
+            try removeFileIfPresent(projectsRoot
+                .appendingPathComponent(claudeStorageKey(for: projectPath), isDirectory: true)
+                .appendingPathComponent(fileName))
+        }
+        try removeTranscriptFiles(named: fileName, under: projectsRoot)
+    }
+
+    nonisolated private static func claudeStorageKey(for projectPath: String) -> String {
+        "-" + (projectPath as NSString).standardizingPath.trimmingCharacters(in: CharacterSet(charactersIn: "/")).replacingOccurrences(of: "/", with: "-")
+    }
+
+    nonisolated private static func removeTranscriptFiles(named fileName: String, under root: URL) throws {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return }
+        for case let url as URL in enumerator where url.lastPathComponent == fileName {
+            if url.pathComponents.contains("subagents") { continue }
+            try removeFileIfPresent(url)
+        }
+    }
+
+    nonisolated private static func removeFileIfPresent(_ url: URL) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch CocoaError.fileNoSuchFile {
+            return
+        } catch {
+            if !FileManager.default.fileExists(atPath: url.path) { return }
+            throw error
+        }
+    }
+
     nonisolated private static func loadCLIHistory(enableClaudeHistoryScan: Bool) -> [CLIHistorySession] {
-        let local = ChatSessionStore.historySessions()
+        let localRecords = ChatSessionStore.loadSessions()
+        let local = ChatSessionStore.historySessions(from: localRecords)
         guard enableClaudeHistoryScan else { return local }
-        let external = CLIHistoryScanner().scan(projectPath: nil)
+        let linkedExternalIDs = Set(localRecords.compactMap { record -> String? in
+            guard let externalSessionID = record.externalSessionID?.nonEmptyTrimmed else { return nil }
+            return "\(record.cli.visibleValue.rawValue):\(externalSessionID)"
+        })
+        let external = CLIHistoryScanner().scan(projectPath: nil).filter { !linkedExternalIDs.contains($0.id) }
         return (local + external).sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
     }
 
@@ -518,16 +666,29 @@ final class AppState: ObservableObject {
     }
 
     func refreshCLIHistory() {
-        let local = ChatSessionStore.historySessions()
-        cliHistory = local
-        guard settings.enableClaudeHistoryScan else { return }
+        cliHistoryRefreshGeneration += 1
+        let generation = cliHistoryRefreshGeneration
+        let shouldScanExternalHistory = settings.enableClaudeHistoryScan
+        guard shouldScanExternalHistory else {
+            let local = ChatSessionStore.historySessions()
+            if cliHistory != local {
+                cliHistory = local
+            }
+            restorePendingHistorySelectionIfPossible(finalizeIfMissing: true)
+            return
+        }
 
         Task { [weak self] in
             let history = await Task.detached(priority: .utility) {
                 Self.loadCLIHistory(enableClaudeHistoryScan: true)
             }.value
-            guard let self else { return }
-            self.cliHistory = history
+            guard let self,
+                  self.cliHistoryRefreshGeneration == generation,
+                  self.settings.enableClaudeHistoryScan == shouldScanExternalHistory else { return }
+            if self.cliHistory != history {
+                self.cliHistory = history
+            }
+            self.restorePendingHistorySelectionIfPossible(finalizeIfMissing: true)
         }
     }
 
@@ -549,7 +710,9 @@ final class AppState: ObservableObject {
             ignoredFolders: ignoredFolders,
             enableClaudeHistoryScan: enableClaudeHistoryScan,
             apiBaseURL: settings.apiBaseURL,
-            apiKey: settings.apiKey
+            apiKey: settings.apiKey,
+            lastSelectedProjectPath: settings.lastSelectedProjectPath,
+            lastSelectedCLIHistoryID: settings.lastSelectedCLIHistoryID
         )
         selectedTerminal = defaultTerminal
         scanner = FileTreeScanner(ignoredNames: Set(ignoredFolders))

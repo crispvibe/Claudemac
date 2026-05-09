@@ -4,7 +4,6 @@ import Foundation
 @MainActor
 final class ChatRuntimeStore: ObservableObject {
     private var statesByKey: [String: ChatPanelState] = [:]
-    private var cancellablesByState: [ObjectIdentifier: AnyCancellable] = [:]
     @Published private var activityBySessionID: [String: ChatSessionActivity] = [:]
 
     init() {
@@ -49,7 +48,9 @@ final class ChatRuntimeStore: ObservableObject {
                 activeRunStartedAt: session.activeRunStartedAt
             )
         }
-        activityBySessionID = activities
+        if activities != activityBySessionID {
+            activityBySessionID = activities
+        }
     }
 
     func removeRuntime(for session: CLIHistorySession) {
@@ -68,27 +69,38 @@ final class ChatRuntimeStore: ObservableObject {
         state.onSessionPersisted = { [weak self, weak state, weak appState] in
             guard let self, let state else { return }
             self.registerAliases(for: state, primaryHistoryID: primaryHistoryID)
-            self.refreshPersistedActivities()
-            appState?.refreshCLIHistory()
-        }
-        let identifier = ObjectIdentifier(state)
-        cancellablesByState[identifier] = state.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
+            if let session = state.currentSessionSnapshot {
+                let historyID = self.historyID(for: session)
+                let historyExists = appState?.cliHistory.contains { $0.id == historyID } == true
+                appState?.adoptPersistedChatSession(session)
+                if !historyExists {
+                    appState?.refreshCLIHistory()
+                }
+            }
         }
     }
 
     private func updateActivity(_ activity: ChatSessionActivity?, for state: ChatPanelState, primaryHistoryID: String?) {
-        if let primaryHistoryID, let activity {
-            activityBySessionID[primaryHistoryID] = activity
+        guard let activity else { return }
+        var activities = activityBySessionID
+        if let primaryHistoryID {
+            activities[primaryHistoryID] = activity
         }
-        guard let session = state.currentSessionSnapshot, let activity else { return }
-        activityBySessionID[historyID(for: session)] = activity
+        if let session = state.currentSessionSnapshot {
+            activities[historyID(for: session)] = activity
+        }
+        if activities != activityBySessionID {
+            activityBySessionID = activities
+        }
     }
 
     private func registerAliases(for state: ChatPanelState, primaryHistoryID: String?) {
         guard let session = state.currentSessionSnapshot else { return }
         let localKey = "local:\(session.id.uuidString)"
         statesByKey[localKey] = state
+        if let externalSessionID = session.externalSessionID?.nonEmptyTrimmed {
+            statesByKey["history:\(session.cli.visibleValue.rawValue):\(externalSessionID)"] = state
+        }
         if let primaryHistoryID {
             statesByKey["history:\(primaryHistoryID)"] = state
         }
