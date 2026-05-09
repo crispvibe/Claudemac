@@ -90,7 +90,7 @@ enum ChatCLIEnvironment {
         var environment = ProcessInfo.processInfo.environment
         let existingPath = environment["PATH"] ?? ""
         sanitizeInheritedAgentEnvironment(&environment)
-        mergePersistedProxyEnvironment(into: &environment)
+        mergePersistedClaudeEnvironment(into: &environment)
         normalizeProxyValues(&environment)
         mirrorProxyValues(&environment)
         environment["HOME"] = realHomeDirectory
@@ -130,13 +130,13 @@ enum ChatCLIEnvironment {
         proxyURLKeys + proxyBypassKeys
     }
 
-    private static func mergePersistedProxyEnvironment(into environment: inout [String: String]) {
-        for (key, value) in persistedProxyEnvironment() {
+    private static func mergePersistedClaudeEnvironment(into environment: inout [String: String]) {
+        for (key, value) in persistedClaudeEnvironment() {
             environment[key] = value
         }
     }
 
-    private static func persistedProxyEnvironment() -> [String: String] {
+    private static func persistedClaudeEnvironment() -> [String: String] {
         let settingsURL = URL(fileURLWithPath: realHomeDirectory, isDirectory: true)
             .appendingPathComponent(".claude/settings.json")
         guard let data = try? Data(contentsOf: settingsURL),
@@ -145,10 +145,18 @@ enum ChatCLIEnvironment {
             return [:]
         }
 
-        return proxyKeys.reduce(into: [String: String]()) { result, key in
-            guard let value = env[key] as? String else { return }
-            result[key] = value
+        return env.reduce(into: [String: String]()) { result, item in
+            guard isSupportedPersistedEnvironmentKey(item.key),
+                  let value = item.value as? String,
+                  let trimmed = value.nonEmptyTrimmed else { return }
+            result[item.key] = trimmed
         }
+    }
+
+    private static func isSupportedPersistedEnvironmentKey(_ key: String) -> Bool {
+        proxyKeys.contains(key)
+            || key.hasPrefix("ANTHROPIC_")
+            || key.hasPrefix("CLAUDE_CODE_")
     }
 
     private static func normalizeProxyValues(_ environment: inout [String: String]) {

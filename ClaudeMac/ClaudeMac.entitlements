@@ -12,17 +12,17 @@
 	<true/>
 	<key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
 	<array>
-		<string>.claude/</string>
-		<string>.claude.json</string>
-		<string>.codex/</string>
+		<string>/.claude/</string>
+		<string>/.claude.json</string>
+		<string>/.codex/</string>
 	</array>
 	<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
 	<array>
-		<string>.claude/</string>
-		<string>.claude.json</string>
-		<string>.codex/</string>
-		<string>.cc-switch/</string>
-		<string>.local/</string>
+		<string>/.claude/</string>
+		<string>/.claude.json</string>
+		<string>/.codex/</string>
+		<string>/.cc-switch/</string>
+		<string>/.local/</string>
 	</array>
 	<key>com.apple.security.temporary-exception.files.absolute-path.read-only</key>
 	<array>

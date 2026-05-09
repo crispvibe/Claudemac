@@ -371,7 +371,7 @@ struct SettingsPageView: View {
                 .buttonStyle(SettingsPrimaryButtonStyle())
             }
 
-            Text("代理字段会从 ~/.claude/settings.json 注入到新启动的 Claude Code / Codex 子进程。留空的字段不会写入配置文件。")
+            Text("Claude API、模型和代理字段会从 ~/.claude/settings.json 注入到新启动的 Claude Code / Codex 子进程。留空的字段不会写入配置文件。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

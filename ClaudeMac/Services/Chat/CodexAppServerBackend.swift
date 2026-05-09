@@ -88,23 +88,24 @@ final class CodexAppServerBackend: ChatProcessBackend {
                     return didReceiveVisibleOutput
                 }
 
-                let stderrTask = Task { () -> Bool in
-                    var didEmitStderrOutput = false
+                let stderrTask = Task { () -> String in
+                    var stderrLines: [String] = []
                     do {
                         for try await line in JSONLStreamReader.lines(from: stderr) {
+                            stderrLines.append(line)
                             guard let event = Self.stderrEvent(from: line) else { continue }
-                            didEmitStderrOutput = true
                             continuation.yield(event)
                         }
                     } catch {
                         continuation.yield(.failed(error.localizedDescription))
                     }
-                    return didEmitStderrOutput
+                    return stderrLines.joined(separator: "\n")
                 }
 
                 process.waitUntilExit()
                 let didReceiveVisibleOutput = await stdoutTask.value
-                let didEmitStderrOutput = await stderrTask.value
+                let stderrOutput = await stderrTask.value
+                let didEmitStderrOutput = !stderrOutput.isEmpty
 
                 self.inputPipe = nil
                 self.process = nil
@@ -119,7 +120,11 @@ final class CodexAppServerBackend: ChatProcessBackend {
                     } else if process.terminationReason == .uncaughtSignal {
                         continuation.yield(.failed("Codex 已停止。"))
                     } else {
-                        continuation.yield(.failed("Codex app-server 退出码：\(process.terminationStatus)"))
+                        let stderr = stderrOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let message = stderr.isEmpty
+                            ? "Codex app-server 退出码：\(process.terminationStatus)"
+                            : "Codex app-server 退出码：\(process.terminationStatus)\n\(stderr)"
+                        continuation.yield(.failed(message))
                     }
                 }
                 continuation.finish()
@@ -344,15 +349,15 @@ final class CodexAppServerBackend: ChatProcessBackend {
             }
             return [.updateStreamingStatus("streaming")]
         case "item/agentMessage/delta":
-            return [.appendDelta(kind: .assistant, text: Self.stringValue(params["delta"]) ?? "")]
+            return [.appendDelta(kind: .assistant, text: Self.deltaText(from: params))]
         case "item/reasoning/textDelta", "item/reasoning/summaryTextDelta":
-            return [.appendDelta(kind: .reasoning, text: Self.stringValue(params["delta"]) ?? "")]
+            return [.appendDelta(kind: .reasoning, text: Self.deltaText(from: params))]
         case "item/plan/delta":
             return [.appendMessage(kind: .reasoning, title: "plan", subtitle: "Codex", text: Self.compactText(from: params), status: "stream", requestID: nil)]
         case "command/exec/outputDelta", "item/commandExecution/outputDelta":
-            return [.appendMessage(kind: .commandOutput, title: "command", subtitle: "Codex", text: Self.stringValue(params["delta"]) ?? Self.compactText(from: params), status: "stream", requestID: nil)]
-        case "item/fileChange/outputDelta":
-            return [.appendMessage(kind: .diff, title: "file change", subtitle: "Codex", text: Self.stringValue(params["delta"]) ?? Self.compactText(from: params), status: "stream", requestID: nil)]
+            return [.appendDelta(kind: .commandOutput, text: Self.deltaText(from: params))]
+        case "item/fileChange/outputDelta", "turn/diff/updated":
+            return [.appendDelta(kind: .diff, text: Self.deltaText(from: params))]
         case "item/started":
             return [.appendMessage(kind: .toolCall, title: "item started", subtitle: "Codex", text: Self.compactText(from: params), status: "start", requestID: nil)]
         case "item/completed":
@@ -501,6 +506,13 @@ final class CodexAppServerBackend: ChatProcessBackend {
         if let string = value as? String { return string }
         if let number = value as? NSNumber { return number.stringValue }
         return "\(value)"
+    }
+
+    private static func deltaText(from object: [String: Any]) -> String {
+        stringValue(object["delta"])
+            ?? stringValue(object["text"])
+            ?? stringValue(object["content"])
+            ?? compactText(from: object)
     }
 
     private static func compactText(from object: [String: Any]) -> String {

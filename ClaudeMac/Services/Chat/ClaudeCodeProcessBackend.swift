@@ -5,11 +5,29 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         let terminationStatus: Int32
         let terminationReason: Process.TerminationReason
         let didReceiveVisibleOutput: Bool
-        let didReceiveStderr: Bool
+        let stderrOutput: String
 
         var shouldRetryWithoutEffort: Bool {
-            terminationStatus != 0 && didReceiveVisibleOutput == false
+            guard terminationStatus != 0, didReceiveVisibleOutput == false else { return false }
+            let lowercasedStderr = stderrOutput.lowercased()
+            return lowercasedStderr.contains("--effort")
+                || lowercasedStderr.contains("unknown option 'effort'")
+                || lowercasedStderr.contains("unknown option: effort")
+                || lowercasedStderr.contains("unexpected argument '--effort'")
         }
+
+        var shouldRetryWithoutPartialMessages: Bool {
+            guard terminationStatus != 0, didReceiveVisibleOutput == false else { return false }
+            let lowercasedStderr = stderrOutput.lowercased()
+            return lowercasedStderr.contains("--include-partial-messages")
+                || lowercasedStderr.contains("unknown option 'include-partial-messages'")
+                || lowercasedStderr.contains("unknown option: include-partial-messages")
+                || lowercasedStderr.contains("unexpected argument '--include-partial-messages'")
+        }
+    }
+
+    private struct ClaudeStreamState {
+        var didReceiveAssistantTextDelta = false
     }
 
     private var process: Process?
@@ -20,40 +38,51 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             let task = Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self else { return }
 
-                guard let firstRun = await self.runProcess(
-                    prompt: prompt,
-                    options: options,
-                    session: session,
-                    includeEffort: true,
-                    continuation: continuation
-                ) else {
-                    continuation.finish()
-                    return
-                }
-
+                var includeEffort = true
+                var includePartialMessages = true
                 let finalRun: ProcessRunResult
-                if firstRun.shouldRetryWithoutEffort {
-                    continuation.yield(.appendMessage(
-                        kind: .system,
-                        title: "Claude Code",
-                        subtitle: "fallback",
-                        text: "当前 Claude Code 没有接受 --effort，本次已自动改用默认思考强度重试。",
-                        status: "retry",
-                        requestID: nil
-                    ))
-                    guard let fallbackRun = await self.runProcess(
+
+                while true {
+                    guard let run = await self.runProcess(
                         prompt: prompt,
                         options: options,
                         session: session,
-                        includeEffort: false,
+                        includeEffort: includeEffort,
+                        includePartialMessages: includePartialMessages,
                         continuation: continuation
                     ) else {
                         continuation.finish()
                         return
                     }
-                    finalRun = fallbackRun
-                } else {
-                    finalRun = firstRun
+
+                    if includePartialMessages, run.shouldRetryWithoutPartialMessages {
+                        includePartialMessages = false
+                        continuation.yield(.appendMessage(
+                            kind: .system,
+                            title: "Claude Code",
+                            subtitle: "fallback",
+                            text: "当前 Claude Code 没有接受 --include-partial-messages，本次已自动改用普通 stream-json 重试。",
+                            status: "retry",
+                            requestID: nil
+                        ))
+                        continue
+                    }
+
+                    if includeEffort, run.shouldRetryWithoutEffort {
+                        includeEffort = false
+                        continuation.yield(.appendMessage(
+                            kind: .system,
+                            title: "Claude Code",
+                            subtitle: "fallback",
+                            text: "当前 Claude Code 没有接受 --effort，本次已自动改用默认思考强度重试。",
+                            status: "retry",
+                            requestID: nil
+                        ))
+                        continue
+                    }
+
+                    finalRun = run
+                    break
                 }
 
                 self.finish(finalRun, continuation: continuation)
@@ -71,21 +100,20 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         options: ChatRunOptions,
         session: ChatSessionRecord?,
         includeEffort: Bool,
+        includePartialMessages: Bool,
         continuation: AsyncThrowingStream<ChatBackendEvent, Error>.Continuation
     ) async -> ProcessRunResult? {
         let process = Process()
         let stdout = Pipe()
         let stderr = Pipe()
-        let stdin = Pipe()
         process.executableURL = URL(fileURLWithPath: options.executablePath)
-        process.arguments = arguments(prompt: prompt, options: options, session: session, includeEffort: includeEffort)
+        process.arguments = arguments(prompt: prompt, options: options, session: session, includeEffort: includeEffort, includePartialMessages: includePartialMessages)
         process.currentDirectoryURL = URL(fileURLWithPath: options.projectPath, isDirectory: true)
         process.environment = ChatCLIEnvironment.processEnvironment
         process.standardOutput = stdout
         process.standardError = stderr
-        process.standardInput = stdin
         self.process = process
-        inputPipe = stdin
+        inputPipe = nil
 
         do {
             continuation.yield(.appendMessage(
@@ -104,9 +132,10 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
 
         let stdoutTask = Task { () -> Bool in
             var didReceiveVisibleOutput = false
+            var streamState = ClaudeStreamState()
             do {
                 for try await line in JSONLStreamReader.lines(from: stdout) {
-                    let events = Self.events(fromClaudeLine: line)
+                    let events = Self.events(fromClaudeLine: line, streamState: &streamState)
                     if events.contains(where: Self.isVisibleOutput) {
                         didReceiveVisibleOutput = true
                     }
@@ -120,23 +149,22 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             return didReceiveVisibleOutput
         }
 
-        let stderrTask = Task { () -> Bool in
-            var didReceiveStderr = false
+        let stderrTask = Task { () -> String in
+            var stderrLines: [String] = []
             do {
                 for try await line in JSONLStreamReader.lines(from: stderr) {
-                    didReceiveStderr = true
+                    stderrLines.append(line)
                     continuation.yield(.appendMessage(kind: .commandOutput, title: "stderr", subtitle: "Claude Code", text: line, status: "stream", requestID: nil))
                 }
             } catch {
                 continuation.yield(.failed(error.localizedDescription))
             }
-            return didReceiveStderr
+            return stderrLines.joined(separator: "\n")
         }
 
         process.waitUntilExit()
         let didReceiveVisibleOutput = await stdoutTask.value
-        let didReceiveStderr = await stderrTask.value
-        inputPipe?.fileHandleForWriting.closeFile()
+        let stderrOutput = await stderrTask.value
         inputPipe = nil
         self.process = nil
 
@@ -144,7 +172,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             terminationStatus: process.terminationStatus,
             terminationReason: process.terminationReason,
             didReceiveVisibleOutput: didReceiveVisibleOutput,
-            didReceiveStderr: didReceiveStderr
+            stderrOutput: stderrOutput
         )
     }
 
@@ -153,15 +181,19 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         continuation: AsyncThrowingStream<ChatBackendEvent, Error>.Continuation
     ) {
         if result.terminationStatus == 0 {
-            if result.didReceiveVisibleOutput || result.didReceiveStderr {
+            if result.didReceiveVisibleOutput || !result.stderrOutput.isEmpty {
                 continuation.yield(.finished)
             } else {
-                continuation.yield(.failed("Claude Code 没有输出任何对话内容。请检查 CLAUDE_CONFIG_DIR、认证配置或模型设置。"))
+                continuation.yield(.failed("Claude Code 没有输出任何对话内容。请检查认证配置或模型设置。"))
             }
         } else if result.terminationReason == .uncaughtSignal {
             continuation.yield(.failed("Claude Code 已停止。"))
         } else {
-            continuation.yield(.failed("Claude Code 退出码：\(result.terminationStatus)"))
+            let stderr = result.stderrOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = stderr.isEmpty
+                ? "Claude Code 退出码：\(result.terminationStatus)"
+                : "Claude Code 退出码：\(result.terminationStatus)\n\(stderr)"
+            continuation.yield(.failed(message))
         }
     }
 
@@ -203,7 +235,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         return ([executablePath] + displayArguments).joined(separator: " ")
     }
 
-    private func arguments(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, includeEffort: Bool) -> [String] {
+    private func arguments(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, includeEffort: Bool, includePartialMessages: Bool) -> [String] {
         var args: [String] = []
         if options.sessionMode == .continueLast {
             args.append("--continue")
@@ -215,18 +247,27 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         args.append(contentsOf: ["-p", prompt])
         args.append(contentsOf: ["--output-format", "stream-json"])
         args.append("--verbose")
+        if includePartialMessages {
+            args.append("--include-partial-messages")
+        }
         args.append(contentsOf: ["--permission-mode", options.permissionMode.claudePermissionMode])
         if includeEffort {
             args.append(contentsOf: ["--effort", options.reasoningEffort.claudeArgument])
         }
         let executionModelID = ChatModelCatalog.executionModelID(for: options.modelID)
-        if executionModelID != ChatModelCatalog.defaultClaudeModelID {
+        if isClaudeModelArgument(executionModelID) {
             args.append(contentsOf: ["--model", executionModelID])
         }
         return args
     }
 
-    private static func events(fromClaudeLine line: String) -> [ChatBackendEvent] {
+    private func isClaudeModelArgument(_ modelID: String) -> Bool {
+        let normalized = modelID.lowercased()
+        return normalized != ChatModelCatalog.defaultClaudeModelID
+            && normalized.hasPrefix("claude-")
+    }
+
+    private static func events(fromClaudeLine line: String, streamState: inout ClaudeStreamState) -> [ChatBackendEvent] {
         guard let data = line.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return [.appendMessage(kind: .rawOutput, title: "raw", subtitle: "Claude Code", text: line, status: "stream", requestID: nil)]
@@ -237,7 +278,6 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             events.append(.sessionID(sessionID))
         }
 
-        // Extract token usage from any event that carries it
         if let usageEvent = extractTokenUsage(from: object) {
             events.append(usageEvent)
         }
@@ -250,8 +290,13 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             return events
         }
 
+        if type == "stream_event" {
+            events.append(contentsOf: streamEvents(from: object, streamState: &streamState))
+            return events
+        }
+
         if type == "assistant" {
-            if let text = assistantText(from: object), !text.isEmpty {
+            if !streamState.didReceiveAssistantTextDelta, let text = assistantText(from: object), !text.isEmpty {
                 events.append(.appendDelta(kind: .assistant, text: text))
             }
             return events
@@ -276,6 +321,46 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
 
         events.append(.appendMessage(kind: .rawOutput, title: type, subtitle: "Claude Code", text: compactText(from: object), status: "stream", requestID: nil))
         return events
+    }
+
+    private static func streamEvents(from object: [String: Any], streamState: inout ClaudeStreamState) -> [ChatBackendEvent] {
+        guard let event = object["event"] as? [String: Any] else { return [] }
+        let type = stringValue(event["type"]) ?? "stream_event"
+
+        if let usageEvent = extractTokenUsage(from: event) {
+            return [usageEvent]
+        }
+
+        if type == "content_block_start", let contentBlock = event["content_block"] as? [String: Any] {
+            let blockType = stringValue(contentBlock["type"]) ?? "content_block"
+            if blockType == "tool_use" {
+                return [.appendMessage(
+                    kind: .toolCall,
+                    title: "tool_use",
+                    subtitle: stringValue(contentBlock["name"]) ?? "",
+                    text: compactText(from: contentBlock),
+                    status: "streaming",
+                    requestID: stringValue(contentBlock["id"])
+                )]
+            }
+            return []
+        }
+
+        if type == "content_block_delta", let delta = event["delta"] as? [String: Any] {
+            let deltaType = stringValue(delta["type"]) ?? ""
+            if deltaType == "text_delta", let text = stringValue(delta["text"]), !text.isEmpty {
+                streamState.didReceiveAssistantTextDelta = true
+                return [.appendDelta(kind: .assistant, text: text)]
+            }
+            if deltaType == "thinking_delta", let text = stringValue(delta["thinking"]) ?? stringValue(delta["text"]), !text.isEmpty {
+                return [.appendDelta(kind: .reasoning, text: text)]
+            }
+            if deltaType == "input_json_delta", let text = stringValue(delta["partial_json"]), !text.isEmpty {
+                return [.appendDelta(kind: .toolCall, text: text)]
+            }
+        }
+
+        return []
     }
 
     private static func isVisibleOutput(_ event: ChatBackendEvent) -> Bool {

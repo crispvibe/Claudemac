@@ -185,7 +185,7 @@ final class ChatPanelState: ObservableObject {
             permissionMode: permissionMode,
             reasoningEffort: reasoningEffort,
             sessionMode: sessionMode,
-            resumeSessionID: resumeSessionID?.nonEmptyTrimmed
+            resumeSessionID: effectiveResumeSessionID(resumeSessionID, for: session)
         )
         let backend: ChatProcessBackend = visibleCLI == .codex ? CodexAppServerBackend() : ClaudeCodeProcessBackend()
         activeBackend = backend
@@ -275,6 +275,11 @@ final class ChatPanelState: ObservableObject {
         if status.isRunning { interrupt() }
     }
 
+    private func effectiveResumeSessionID(_ resumeSessionID: String?, for session: ChatSessionRecord) -> String? {
+        guard let resumeSessionID = resumeSessionID?.nonEmptyTrimmed else { return nil }
+        return resumeSessionID.caseInsensitiveCompare(session.id.uuidString) == .orderedSame ? nil : resumeSessionID
+    }
+
     private func ensureSession(
         project: ProjectItem,
         cli: CLIType,
@@ -314,6 +319,12 @@ final class ChatPanelState: ObservableObject {
                 isStreaming: status.isRunning
             )
             messages.append(message)
+            if itemStatus == "streaming" {
+                activeStreamingMessageIDs[kind] = message.id
+                if kind == .assistant {
+                    activeAssistantMessageID = message.id
+                }
+            }
             if kind != .system && kind != .command { status = .streaming }
             statusText = itemStatus
         case .appendDelta(let kind, let text):
