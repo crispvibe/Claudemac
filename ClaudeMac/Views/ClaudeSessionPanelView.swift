@@ -284,7 +284,7 @@ struct ChatPanelView: View {
 
     private func assistantMessageRow(_ message: ChatMessage) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            AssistantMessageContent(text: message.text)
+            AssistantMessageContent(text: message.text, isStreaming: message.isStreaming)
 
             messageActionBar(message, alignment: .leading)
         }
@@ -321,24 +321,48 @@ struct ChatPanelView: View {
 
     private func toolInvocationRow(_ message: ChatMessage) -> some View {
         let isExpanded = expandedTranscriptMessageIDs.contains(message.id)
-        let isActive = message.isStreaming && lastVisibleTranscriptMessageID == message.id
+        let filePath = message.toolFilePath
         return VStack(alignment: .leading, spacing: 6) {
-            Button {
-                toggleTranscriptMessage(message.id)
-            } label: {
-                HStack(spacing: 6) {
-                    Text(message.toolDisplayTitle)
-                        .font(.system(size: 12, weight: isActive ? .semibold : .medium, design: .monospaced))
-                        .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-                        .lineLimit(1)
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(isActive ? Color.accentColor.opacity(0.75) : Color.secondary.opacity(0.45))
-                    Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                Button {
+                    toggleTranscriptMessage(message.id)
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(message.toolDisplayTitle)
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color.secondary)
+                            .lineLimit(1)
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.secondary.opacity(0.45))
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+
+                if let filePath {
+                    Button {
+                        appState.openFile(path: filePath)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: 9, weight: .medium))
+                            Text(URL(fileURLWithPath: filePath).lastPathComponent)
+                                .font(.system(size: 11, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.black.opacity(0.035))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(filePath)
+                }
+
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.plain)
 
             if isExpanded {
                 toolDetailCard(message)
@@ -383,22 +407,25 @@ struct ChatPanelView: View {
         if message.kind == .diff {
             ScrollView(.horizontal, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(message.diffLines.enumerated()), id: \.offset) { _, line in
+                    ForEach(Array(message.diffLines.prefix(300).enumerated()), id: \.offset) { _, line in
                         Text(line)
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(line.diffTint)
-                            .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if message.diffLines.count > 300 {
+                        Text("…diff 过长，已显示前 300 行")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
                     }
                 }
             }
         } else if !message.toolDetailText.isEmpty {
             ScrollView(.horizontal, showsIndicators: true) {
-                Text(message.toolDetailText)
+                Text(message.toolDetailPreviewText)
                     .font(.system(size: 10, design: message.kind.isToolDetailMonospaced ? .monospaced : .default))
                     .foregroundStyle(.secondary)
                     .lineSpacing(2)
-                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -730,10 +757,7 @@ struct ChatPanelView: View {
 
                 selectorButton(title: selectedModelTitle, systemImage: "cpu", tint: .primary, picker: .model, maxTitleWidth: 118)
                 contextIcon
-                if chatState.status.isRunning {
-                    stopButton
-                }
-                sendButton
+                actionButton
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 9)
@@ -937,6 +961,15 @@ struct ChatPanelView: View {
         .buttonStyle(.plain)
     }
 
+    @ViewBuilder
+    private var actionButton: some View {
+        if chatState.status.isRunning && draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            stopButton
+        } else {
+            sendButton
+        }
+    }
+
     private var stopButton: some View {
         Button {
             chatState.interrupt()
@@ -947,7 +980,7 @@ struct ChatPanelView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white)
-        .background(Color.orange)
+        .background(Color.accentColor)
         .clipShape(Circle())
         .contentShape(Circle())
         .help("停止当前任务")
@@ -1230,6 +1263,19 @@ private enum ChatTranscriptItem: Identifiable {
 
 private struct AssistantMessageContent: View {
     let text: String
+    let isStreaming: Bool
+
+    private let lightweightThreshold = 12_000
+    private let previewLimit = 20_000
+
+    private var shouldUseLightweightRender: Bool {
+        isStreaming || text.count > lightweightThreshold
+    }
+
+    private var previewText: String {
+        guard text.count > previewLimit else { return text }
+        return String(text.prefix(previewLimit)) + "\n\n…输出过长，已暂停完整渲染；复制消息可获取完整内容。"
+    }
 
     private var blocks: [AssistantMessageBlock] {
         AssistantMessageBlock.parse(text)
@@ -1237,8 +1283,15 @@ private struct AssistantMessageContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(block)
+            if shouldUseLightweightRender {
+                Text(previewText)
+                    .font(.system(size: 12))
+                    .lineSpacing(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                    blockView(block)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1257,11 +1310,10 @@ private struct AssistantMessageContent: View {
             AssistantCodeBlockView(language: language, code: code)
         case .table(let value):
             ScrollView(.horizontal, showsIndicators: true) {
-                Text(value)
+                Text(String(value.prefix(12_000)))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .lineSpacing(3)
-                    .textSelection(.enabled)
                     .padding(9)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -1283,6 +1335,13 @@ private struct AssistantMessageContent: View {
 private struct AssistantCodeBlockView: View {
     let language: String
     let code: String
+
+    private let previewLimit = 16_000
+
+    private var previewCode: String {
+        guard code.count > previewLimit else { return code }
+        return String(code.prefix(previewLimit)) + "\n\n…代码过长，已暂停完整渲染；点击 copy 可复制完整代码。"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1311,11 +1370,10 @@ private struct AssistantCodeBlockView: View {
             .background(Color.black.opacity(0.035))
 
             ScrollView(.horizontal, showsIndicators: true) {
-                Text(code)
+                Text(previewCode)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.primary)
                     .lineSpacing(3)
-                    .textSelection(.enabled)
                     .padding(9)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -1588,6 +1646,8 @@ private struct ChatComposerTextView: NSViewRepresentable {
         textView.string = text
         textView.font = .systemFont(ofSize: 12)
         textView.drawsBackground = false
+        textView.isEditable = true
+        textView.isSelectable = true
         textView.isRichText = false
         textView.allowsUndo = true
         textView.textContainerInset = .zero
@@ -1607,6 +1667,8 @@ private struct ChatComposerTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? SubmitTextView else { return }
         textView.onSubmit = onSubmit
         textView.onMarkedTextChanged = { context.coordinator.hasMarkedText = $0 }
+        textView.isEditable = true
+        textView.isSelectable = true
         if textView.string != text {
             textView.string = text
         }
@@ -1714,6 +1776,24 @@ private extension ChatMessage {
         return filtered
     }
 
+    var toolDetailPreviewText: String {
+        let detail = toolDetailText
+        guard detail.count > 16_000 else { return detail }
+        return String(detail.prefix(16_000)) + "\n\n…详情过长，已暂停完整渲染；复制详情可获取完整内容。"
+    }
+
+    var toolFilePath: String? {
+        if let path = jsonToolFilePath(from: text) {
+            return path
+        }
+        for value in [title, subtitle, text] {
+            if let path = textToolFilePath(from: value) {
+                return path
+            }
+        }
+        return nil
+    }
+
     var isBackendLaunchCommand: Bool {
         guard kind == .command else { return false }
         let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1732,6 +1812,76 @@ private extension ChatMessage {
         return candidates.first { value in
             !value.contains("{") && !value.contains("}") && value != "tool_use" && !value.contains("json_delta")
         } ?? ""
+    }
+
+    private func jsonToolFilePath(from body: String) -> String? {
+        guard let data = body.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        return firstToolPath(in: object)
+    }
+
+    private func firstToolPath(in object: Any) -> String? {
+        if let dictionary = object as? [String: Any] {
+            let keys = ["filePath", "file_path", "filepath", "path", "filename", "file"]
+            for key in keys {
+                if let value = dictionary[key] {
+                    if let string = value as? String, let path = normalizedToolPath(string) {
+                        return path
+                    }
+                    if let nested = firstToolPath(in: value) {
+                        return nested
+                    }
+                }
+            }
+            for value in dictionary.values {
+                if let path = firstToolPath(in: value) {
+                    return path
+                }
+            }
+        }
+        if let array = object as? [Any] {
+            for value in array {
+                if let path = firstToolPath(in: value) {
+                    return path
+                }
+            }
+        }
+        return nil
+    }
+
+    private func textToolFilePath(from value: String) -> String? {
+        let lines = value.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("diff --git a/"), let range = trimmed.range(of: " b/") {
+                let path = String(trimmed[range.upperBound...])
+                if let normalized = normalizedToolPath(path) { return normalized }
+            }
+            if trimmed.hasPrefix("+++ ") || trimmed.hasPrefix("--- ") {
+                let path = trimmed.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let normalized = normalizedToolPath(path) { return normalized }
+            }
+            let prefixes = ["path:", "file:", "filePath:", "file_path:"]
+            for prefix in prefixes where trimmed.hasPrefix(prefix) {
+                let path = trimmed.dropFirst(prefix.count).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let normalized = normalizedToolPath(String(path)) { return normalized }
+            }
+        }
+        return nil
+    }
+
+    private func normalizedToolPath(_ rawPath: String) -> String? {
+        var path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        if path.hasPrefix("file://"), let url = URL(string: path) {
+            path = url.path
+        }
+        if path.hasPrefix("a/") || path.hasPrefix("b/") {
+            path = String(path.dropFirst(2))
+        }
+        guard !path.isEmpty, path != "/dev/null", !path.contains("\n") else { return nil }
+        guard path.contains("/") || path.contains(".") else { return nil }
+        return path
     }
 
     private func visualFormattedJSONObject(_ body: String) -> String? {
@@ -1862,7 +2012,6 @@ private extension String {
     var diffTint: Color {
         if hasPrefix("+") { return .green }
         if hasPrefix("-") { return .red }
-        if hasPrefix("@@") { return .blue }
         return .secondary
     }
 

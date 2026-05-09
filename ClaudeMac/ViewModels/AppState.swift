@@ -223,6 +223,43 @@ final class AppState: ObservableObject {
         }
     }
 
+    func openFile(path rawPath: String) {
+        guard let project = selectedProject else { return }
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let url: URL
+        if trimmed.hasPrefix("file://"), let fileURL = URL(string: trimmed) {
+            url = fileURL
+        } else if trimmed.hasPrefix("/") {
+            url = URL(fileURLWithPath: trimmed)
+        } else {
+            url = URL(fileURLWithPath: project.path).appendingPathComponent(trimmed)
+        }
+        let standardizedURL = URL(fileURLWithPath: (url.path as NSString).standardizingPath)
+        guard !standardizedURL.hasDirectoryPath else { return }
+        if let existing = openTabs.first(where: { $0.url == standardizedURL }) {
+            selectedTabID = existing.id
+            return
+        }
+
+        let projectPath = (project.path as NSString).standardizingPath
+        let isProjectFile = standardizedURL.path.hasPrefix(projectPath + "/") || standardizedURL.path == projectPath
+        guard isProjectFile else {
+            errorMessage = "只能从当前项目中打开工具文件。"
+            return
+        }
+        do {
+            let (text, modifiedAt) = try withProjectAccess(project) { _ in
+                let text = try readTextFile(standardizedURL)
+                let modifiedAt = (try? standardizedURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
+                return (text, modifiedAt)
+            }
+            appendEditorTab(url: standardizedURL, projectId: project.id, text: text, modifiedAt: modifiedAt, isExternal: false)
+        } catch {
+            show(error)
+        }
+    }
+
     func openExternalFiles() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 final class CodexAppServerBackend: ChatProcessBackend {
@@ -139,6 +140,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
 
     func interrupt() {
         guard let process, process.isRunning else { return }
+        let pid = process.processIdentifier
         if let threadID = activeThreadID, let turnID = activeTurnID {
             let id = sendRequest(method: "turn/interrupt", params: [
                 "threadId": threadID,
@@ -146,10 +148,17 @@ final class CodexAppServerBackend: ChatProcessBackend {
             ])
             pendingRequests[id] = .interrupt
         }
-        process.terminate()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) { [weak process] in
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { [weak process] in
             guard let process, process.isRunning else { return }
             process.interrupt()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [weak process] in
+            guard let process, process.isRunning else { return }
+            process.terminate()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2.2) { [weak process] in
+            guard let process, process.isRunning else { return }
+            kill(pid, SIGKILL)
         }
     }
 

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 final class ClaudeCodeProcessBackend: ChatProcessBackend {
@@ -198,10 +199,15 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
 
     func interrupt() {
         guard let process, process.isRunning else { return }
-        process.terminate()
+        let pid = process.processIdentifier
+        process.interrupt()
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) { [weak process] in
             guard let process, process.isRunning else { return }
-            process.interrupt()
+            process.terminate()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) { [weak process] in
+            guard let process, process.isRunning else { return }
+            kill(pid, SIGKILL)
         }
     }
 

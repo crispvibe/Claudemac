@@ -91,6 +91,11 @@ final class ChatPanelState: ObservableObject {
     private var activeAssistantMessageID: UUID?
     private var activeStreamingMessageIDs: [StreamingMessageKey: UUID] = [:]
     private var activeParentUserMessageID: UUID?
+    private var pendingDeltaBuffers: [UUID: String] = [:]
+    private var pendingDeltaStatuses: [UUID: String] = [:]
+    private var pendingDeltaRequestIDs: [UUID: String] = [:]
+    private var deltaFlushTask: Task<Void, Never>?
+    private var stopFallbackTask: Task<Void, Never>?
 
     init() {
         refreshCapabilities()
@@ -118,6 +123,13 @@ final class ChatPanelState: ObservableObject {
         activeAssistantMessageID = nil
         activeStreamingMessageIDs.removeAll()
         activeParentUserMessageID = nil
+        pendingDeltaBuffers.removeAll()
+        pendingDeltaStatuses.removeAll()
+        pendingDeltaRequestIDs.removeAll()
+        deltaFlushTask?.cancel()
+        deltaFlushTask = nil
+        stopFallbackTask?.cancel()
+        stopFallbackTask = nil
         isUserStopping = false
         shouldStartQueuedRequestAfterBackendEnds = false
         queuedRequests.removeAll()
@@ -280,6 +292,8 @@ final class ChatPanelState: ObservableObject {
         )
         let backend: ChatProcessBackend = visibleCLI == .codex ? CodexAppServerBackend() : ClaudeCodeProcessBackend()
         activeBackend = backend
+        stopFallbackTask?.cancel()
+        stopFallbackTask = nil
         isUserStopping = false
         shouldStartQueuedRequestAfterBackendEnds = false
         status = .starting
@@ -322,6 +336,7 @@ final class ChatPanelState: ObservableObject {
                     self.appendError(error.localizedDescription)
                     self.status = .failed
                     self.statusText = "失败"
+                    self.flushPendingDeltas()
                     self.finishStreamingMessages(status: "failed")
                     self.setAwaitingFirstModelOutput(false)
                     self.shouldStartQueuedRequestAfterBackendEnds = false
@@ -349,13 +364,16 @@ final class ChatPanelState: ObservableObject {
 
     func interrupt() {
         guard status.isRunning else { return }
+        flushPendingDeltas()
         isUserStopping = true
         shouldStartQueuedRequestAfterBackendEnds = false
         status = .stopping
         statusText = "正在停止"
         activeBackend?.interrupt()
+        flushPendingDeltas()
         finishStreamingMessages(status: "stopped")
         persistCurrentSession()
+        scheduleStopFallback()
     }
 
     func respondToPermission(requestID: String, allowed: Bool) {
@@ -508,6 +526,7 @@ final class ChatPanelState: ObservableObject {
             checkAutoCompact()
         case .finished:
             shouldStartQueuedRequestAfterBackendEnds = !isUserStopping
+            flushPendingDeltas()
             finishStreamingMessages(status: isUserStopping ? "stopped" : "done")
             setAwaitingFirstModelOutput(false)
             currentSession?.updatedAt = Date()
@@ -517,6 +536,7 @@ final class ChatPanelState: ObservableObject {
             persistCurrentSession()
         case .failed(let message):
             if isUserStopping {
+                flushPendingDeltas()
                 finishStreamingMessages(status: "stopped")
                 setAwaitingFirstModelOutput(false)
                 currentSession?.updatedAt = Date()
@@ -527,6 +547,7 @@ final class ChatPanelState: ObservableObject {
                 persistCurrentSession()
                 return
             }
+            flushPendingDeltas()
             finishStreamingMessages(status: "failed")
             appendError(message)
             setAwaitingFirstModelOutput(false)
@@ -539,9 +560,12 @@ final class ChatPanelState: ObservableObject {
     }
 
     private func backendStreamDidEnd() {
+        stopFallbackTask?.cancel()
+        stopFallbackTask = nil
         let shouldStartQueuedRequest = shouldStartQueuedRequestAfterBackendEnds
         shouldStartQueuedRequestAfterBackendEnds = false
         if status.isRunning {
+            flushPendingDeltas()
             finishStreamingMessages(status: isUserStopping ? "stopped" : "done")
             setAwaitingFirstModelOutput(false)
             currentSession?.updatedAt = Date()
@@ -560,16 +584,15 @@ final class ChatPanelState: ObservableObject {
         let key = StreamingMessageKey(kind: kind, requestID: requestID)
         let status = itemStatus.nonEmptyTrimmed ?? "streaming"
         if let activeMessageID = activeStreamingMessageIDs[key],
-           let index = messages.firstIndex(where: { $0.id == activeMessageID }),
+           messages.contains(where: { $0.id == activeMessageID }),
            shouldAppendDeltaToExistingMessage(kind: kind, requestID: requestID, activeMessageID: activeMessageID) {
-            messages[index].text += text
-            messages[index].isStreaming = true
-            messages[index].status = status
-            if messages[index].requestID == nil {
-                messages[index].requestID = requestID?.nonEmptyTrimmed
+            pendingDeltaBuffers[activeMessageID, default: ""] += text
+            pendingDeltaStatuses[activeMessageID] = status
+            if let requestID = requestID?.nonEmptyTrimmed {
+                pendingDeltaRequestIDs[activeMessageID] = requestID
             }
             if isVisibleModelOutput(kind) { setAwaitingFirstModelOutput(false) }
-            bumpTranscriptRevision()
+            scheduleDeltaFlush()
             return
         }
 
@@ -608,6 +631,7 @@ final class ChatPanelState: ObservableObject {
     }
 
     private func finishStreamingMessages(status itemStatus: String = "done") {
+        flushPendingDeltas()
         for index in messages.indices where messages[index].isStreaming {
             messages[index].isStreaming = false
             messages[index].status = itemStatus
@@ -615,6 +639,72 @@ final class ChatPanelState: ObservableObject {
         activeAssistantMessageID = nil
         activeStreamingMessageIDs.removeAll()
         bumpTranscriptRevision()
+    }
+
+    private func scheduleDeltaFlush() {
+        guard deltaFlushTask == nil else { return }
+        deltaFlushTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            await MainActor.run {
+                self?.flushPendingDeltas()
+            }
+        }
+    }
+
+    private func flushPendingDeltas() {
+        guard !pendingDeltaBuffers.isEmpty else {
+            deltaFlushTask?.cancel()
+            deltaFlushTask = nil
+            return
+        }
+        let buffers = pendingDeltaBuffers
+        let statuses = pendingDeltaStatuses
+        let requestIDs = pendingDeltaRequestIDs
+        pendingDeltaBuffers.removeAll()
+        pendingDeltaStatuses.removeAll()
+        pendingDeltaRequestIDs.removeAll()
+        deltaFlushTask?.cancel()
+        deltaFlushTask = nil
+
+        var didUpdate = false
+        for (messageID, delta) in buffers {
+            guard let index = messages.firstIndex(where: { $0.id == messageID }) else { continue }
+            messages[index].text += delta
+            messages[index].isStreaming = true
+            if let status = statuses[messageID] {
+                messages[index].status = status
+            }
+            if messages[index].requestID == nil, let requestID = requestIDs[messageID] {
+                messages[index].requestID = requestID
+            }
+            didUpdate = true
+        }
+        if didUpdate { bumpTranscriptRevision() }
+    }
+
+    private func scheduleStopFallback() {
+        stopFallbackTask?.cancel()
+        stopFallbackTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            await MainActor.run {
+                self?.completeInterruptedRunIfNeeded()
+            }
+        }
+    }
+
+    private func completeInterruptedRunIfNeeded() {
+        guard status == .stopping else { return }
+        flushPendingDeltas()
+        finishStreamingMessages(status: "stopped")
+        setAwaitingFirstModelOutput(false)
+        currentSession?.updatedAt = Date()
+        status = .completed
+        statusText = "已停止"
+        isUserStopping = false
+        shouldStartQueuedRequestAfterBackendEnds = false
+        stopFallbackTask?.cancel()
+        stopFallbackTask = nil
+        persistCurrentSession()
     }
 
     private func startNextQueuedRequestIfNeeded() {
