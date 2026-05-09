@@ -1118,7 +1118,8 @@ struct ChatPanelView: View {
               let message = chatState.messages.last(where: { $0.kind == .assistant && !$0.isStreaming }),
               lastSuggestedAssistantMessageID != message.id else { return }
         lastSuggestedAssistantMessageID = message.id
-        guard draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        guard !composerHasMarkedText,
+              draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let command = Self.extractSuggestedCommand(from: message.text) else { return }
         draftMessage = command
         suggestedCommand = ComposerSuggestedCommand(text: command)
@@ -1814,13 +1815,21 @@ private struct ChatComposerTextView: NSViewRepresentable {
         textView.onSubmit = onSubmit
         textView.onMarkedTextChanged = { context.coordinator.hasMarkedText = $0 }
         textView.onSuggestedCommandCleared = { context.coordinator.suggestedCommand = nil }
-        textView.suggestedCommand = suggestedCommand
         textView.isEditable = true
         textView.isSelectable = true
+        if textView.hasMarkedText() {
+            context.coordinator.hasMarkedText = true
+            return
+        }
+        textView.suggestedCommand = suggestedCommand
         if textView.string != text {
-            textView.string = text
-            if suggestedCommand?.text == text {
-                textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+            let isFocused = textView.window?.firstResponder === textView
+            let isProgrammaticReplacement = text.isEmpty || suggestedCommand?.text == text
+            if !isFocused || isProgrammaticReplacement {
+                textView.string = text
+                if suggestedCommand?.text == text {
+                    textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+                }
             }
         }
         textView.refreshSuggestedCommandHighlight()
@@ -1841,8 +1850,10 @@ private struct ChatComposerTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? SubmitTextView else { return }
+            let isComposing = textView.hasMarkedText()
+            hasMarkedText = isComposing
+            guard !isComposing else { return }
             text = textView.string
-            hasMarkedText = textView.hasMarkedText()
             if let suggestedCommand, textView.string != suggestedCommand.text {
                 self.suggestedCommand = nil
                 textView.suggestedCommand = nil
@@ -1879,6 +1890,7 @@ private struct ChatComposerTextView: NSViewRepresentable {
         }
 
         func refreshSuggestedCommandHighlight() {
+            guard !hasMarkedText() else { return }
             let fullRange = NSRange(location: 0, length: (string as NSString).length)
             layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: fullRange)
             layoutManager?.removeTemporaryAttribute(.font, forCharacterRange: fullRange)
@@ -1917,12 +1929,19 @@ private struct ChatComposerTextView: NSViewRepresentable {
 
         override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
             super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
-            onMarkedTextChanged?(hasMarkedText())
+            publishMarkedTextState()
         }
 
         override func unmarkText() {
             super.unmarkText()
-            onMarkedTextChanged?(hasMarkedText())
+            publishMarkedTextState()
+        }
+
+        private func publishMarkedTextState() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.onMarkedTextChanged?(self.hasMarkedText())
+            }
         }
     }
 }
