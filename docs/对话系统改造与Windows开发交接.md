@@ -1,0 +1,880 @@
+# 对话系统改造与 Windows 开发交接文档
+
+生成日期：2026-05-09  
+适用范围：ClaudeMac/Acode 内嵌 Claude Code 与 Codex 对话面板、工具调用 UI、交互请求、队列消息、循序渐进 transcript、后续 Windows 端复刻。
+
+## 1. 文档目标
+
+本文档用于把本轮会话相关改造完整沉淀为可交接资料，方便后续 Windows 开发直接按同一语义复刻，而不是重新从 macOS SwiftUI 代码里反推。
+
+核心目标：
+
+1. 解释 Claude Code 与 Codex 两条 backend 如何接入同一聊天模型。
+2. 解释命令、工具、MCP、diff、权限、选择题如何统一映射到 UI。
+3. 解释 queued messages、停止按钮、FIFO 出队、backend 生命周期之间的边界。
+4. 解释“循序渐进” transcript 的合并策略：什么时候追加同一行，什么时候新增下一行。
+5. 解释极简 IDE chat UI 的状态矩阵：user、assistant、thinking、tool、permission、interactive、loading、error。
+6. 给 Windows 端列出必须重新实现或验证的进程、管道、路径、编码、shell、环境变量和 UI 抽象。
+7. 列出已验证项、未验证项、风险和后续验收清单。
+
+非目标：
+
+1. 本文不定义 Windows 端具体技术栈，如 WPF、WinUI、Avalonia、Electron 或 React。
+2. 本文不承诺 Claude/Codex CLI 的未来协议稳定；真实协议仍需以运行样本校准。
+3. 本文不替代测试计划，但提供必须覆盖的测试与手测入口。
+
+## 2. 当前架构总览
+
+对话系统被拆成四层：
+
+| 层级 | macOS 当前实现 | 职责 | Windows 复刻建议 |
+| --- | --- | --- | --- |
+| 领域模型 | `ChatModels.swift` | 定义 message、event、run status、permission、interactive request | 保持语言无关 DTO，作为前后端/UI 共享契约 |
+| Backend 协议 | `ChatProcessBackend.swift` | 统一 Claude/Codex start、interrupt、permission、interactive、compact | Windows 用同接口语义封装 Process/pipe/JSONL |
+| 状态机 | `ChatPanelState.swift` | 会话、队列、流式合并、状态切换、持久化 | ViewModel/Store 单线程派发事件到 UI 线程 |
+| UI | `ClaudeSessionPanelView.swift` | transcript、工具折叠、thinking、队列、composer、按钮 | 抽成组件：MessageRow、ThinkingRow、ToolRow、QueueBar、Composer |
+
+关键证据：
+
+- 后端统一协议：`ClaudeMac/Services/Chat/ChatProcessBackend.swift:4`
+- 后端进程环境：`ClaudeMac/Services/Chat/ChatProcessBackend.swift:54`
+- message 类型：`ClaudeMac/Models/ChatModels.swift:174`
+- interactive request：`ClaudeMac/Models/ChatModels.swift:210`
+- run status：`ClaudeMac/Models/ChatModels.swift:227`
+- backend event：`ClaudeMac/Models/ChatModels.swift:394`
+- 队列请求模型：`ClaudeMac/ViewModels/ChatPanelState.swift:3`
+- transcript 渲染入口：`ClaudeMac/Views/ClaudeSessionPanelView.swift:140`
+
+## 3. 领域模型设计
+
+### 3.1 ChatMessageKind
+
+`ChatMessageKind` 是 UI 分发的核心，当前至少包含：
+
+- `user`：用户消息，右侧气泡。
+- `assistant`：模型回复，普通正文。
+- `reasoning`：思考内容，UI 标题显示为 `thinking`。
+- `toolCall`：工具调用或 MCP 调用。
+- `toolResult`：工具结果。
+- `command`：命令调用。
+- `commandOutput`：命令输出。
+- `diff`：文件变更或补丁。
+- `permissionRequest`：权限请求。
+- `interactiveRequest`：选择题、ABCD、多选、文本输入。
+- `error`：错误卡片。
+- `system/result/rawOutput`：保留给持久化或诊断，默认不进入主 transcript。
+
+证据：`ClaudeMac/Models/ChatModels.swift:174`
+
+Windows 复刻建议：
+
+1. 不要把 CLI 原始事件直接暴露给 UI。
+2. 先统一映射到 `ChatMessageKind`，UI 只认识这些领域类型。
+3. `system/result/rawOutput` 可以存储或诊断，但主聊天不显示。
+
+### 3.2 Interactive Request 模型
+
+用于 AskUserQuestion、Codex choice/input/question/options 等请求：
+
+- `ChatInteractiveRequest`：id、title、prompt、mode、options、allowCustomInput、placeholder、status。
+- `ChatInteractiveOption`：id、label、detail。
+- `ChatInteractiveMode`：singleChoice、multipleChoice、text。
+- `ChatInteractiveStatus`：waiting、answered、cancelled、failed。
+- `ChatInteractiveResponse`：requestID、selectedOptionIDs、customText。
+
+证据：
+
+- `ClaudeMac/Models/ChatModels.swift:210`
+- `ClaudeMac/Models/ChatModels.swift:221`
+
+Windows 复刻建议：
+
+1. 不要把选择题做成普通文本；必须有原生按钮或输入框。
+2. response 要保留 selected ids 与 custom text，方便 Claude/Codex 分别转换协议。
+3. UI 提交失败时要把 request 状态标为 failed，并显示可理解错误。
+
+### 3.3 ChatRunStatus
+
+当前 run 状态用于控制按钮、loading、队列和卡片：
+
+- `idle`：空闲。
+- `starting`：进程启动中。
+- `streaming`：模型/工具输出中。
+- `waitingPermission`：等待权限按钮。
+- `waitingInput`：等待选择题/文本输入。
+- `stopping`：用户正在停止当前 run。
+- `completed`：已完成。
+- `failed`：失败。
+- `unsupportedVersion`：CLI 或协议能力不支持。
+
+证据：`ClaudeMac/Models/ChatModels.swift:227`
+
+Windows 复刻建议：
+
+1. `isRunning` 必须覆盖 starting、streaming、waitingPermission、waitingInput、stopping。
+2. waitingPermission/waitingInput 仍属于“运行中”，此时用户继续发送应该进入队列，不应该启动第二个进程。
+3. send button 始终表示发送或加入队列，stop button 独立存在。
+
+## 4. Backend 协议统一层
+
+`ChatProcessBackend` 是 Claude 与 Codex 统一入口：
+
+- `start(prompt, options, session)`：返回 `AsyncThrowingStream<ChatBackendEvent, Error>`。
+- `interrupt()`：停止当前 run。
+- `respondToPermission(requestID, decision)`：权限回写。
+- `respondToInteractiveRequest(requestID, response)`：选择题/文本输入回写。
+- `sendCompact()`：上下文压缩。
+
+证据：`ClaudeMac/Services/Chat/ChatProcessBackend.swift:4`
+
+统一层价值：
+
+1. UI 和状态机不关心 Claude/Codex 的真实协议。
+2. 所有 backend 都必须输出同一组 `ChatBackendEvent`。
+3. Windows 端可以先复刻协议层，再分别实现 ClaudeBackend/CodexBackend。
+
+## 5. Claude Code 对接链路
+
+### 5.1 启动与通信方式
+
+Claude backend 当前以非 PTY 的 `Process + Pipe` 启动 CLI，输出走 stdout/stderr JSONL 读取。关键参数包括：
+
+- `-p <prompt>`
+- `--output-format stream-json`
+- `--verbose`
+- `--include-partial-messages`
+- `--permission-mode ...`
+- `--effort ...`
+- `--resume` / `--continue`
+
+参数兼容策略：
+
+- 如果 `--include-partial-messages` 不被当前 CLI 支持，且启动后没有任何可见输出，会自动重试移除该参数。
+- 如果 `--effort` 不被当前 CLI 支持，且启动后没有任何可见输出，会自动重试移除该参数。
+
+证据：
+
+- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:43`
+- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:48`
+- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:89`
+- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:119`
+- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:208`
+- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:221`
+
+重要限制：
+
+1. 当前 Claude backend 未给 Claude 进程设置可用 stdin 控制通道，`inputPipe` 为空；`respondToPermission` / `respondToInteractiveRequest` 即使存在，写入也会失败。
+2. 因此上层对 Claude `.ask` 权限模式做了禁用，避免展示“看似可点但无法回写”的假权限按钮。
+3. AskUserQuestion/选择题做了宽松识别，但真实 CLI 回写协议仍需要真实样本验证。
+4. Windows 端在取得真实 Claude stdin/control response 样本前，不应开启可点击权限或交互回写 UI，只能展示诊断/unsupported 状态。
+
+### 5.2 事件解析
+
+Claude 事件最终统一映射为：
+
+- assistant delta → `.appendDelta(.assistant, ...)`
+- reasoning/thinking delta → `.appendDelta(.reasoning, ...)`
+- tool use / input json delta → `.toolCall`
+- tool result → `.toolResult`
+- permission control request → `.permissionRequest`
+- AskUserQuestion / choices / options → `.interactiveRequest`
+- token usage → `.tokenUsage`
+- result/finished → `.finished`
+- failed/error → `.failed`
+
+证据：
+
+- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:325`
+- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:436`
+- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:488`
+
+Windows 复刻建议：
+
+1. 先保持 stream-json 非 PTY 模式；只有 CLI 强依赖 TTY 时再引入 ConPTY。
+2. stdout/stderr 必须并发读取，避免进程因管道阻塞卡死。
+3. JSONL 读取必须支持 UTF-8、CRLF、半包和长行。
+4. Claude 权限/AskUserQuestion 回写不要假设可用，必须用实际 CLI 样本验证后再打开 UI 入口。
+
+## 6. Codex 对接链路
+
+### 6.1 启动与 JSON-RPC
+
+Codex 使用 `app-server --listen stdio://`，通过 stdin/stdout JSONL 承载 JSON-RPC。
+
+启动流程：
+
+1. 启动 `codex app-server --listen stdio://`。
+2. 发送 `initialize`。
+3. 收到 initialize response 后发送 `initialized`。
+4. 发送 `thread/start` 或 `thread/resume`。
+5. 发送 `turn/start` 开始本轮 prompt。
+
+证据：
+
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:33`
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:208`
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:239`
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:255`
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:459`
+
+### 6.2 JSON-RPC 映射
+
+Codex backend 处理三类消息：
+
+1. response：根据 pending request id 判断 initialize/thread/turn/interrupt 结果。
+2. server request：有 method 和 id，需要客户端回写 response，例如 approval、interactive、readFile。
+3. notification：无 id，作为状态、delta、输出、diff 等事件处理。
+
+证据：
+
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:364`
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:434`
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:436`
+
+### 6.3 requestID / itemID 合并策略
+
+Codex command output 和 diff 容易出现缺少稳定 item id 的情况。当前策略：
+
+1. 优先读取 `itemId/item_id/callId/call_id/commandId/command_id/outputId/output_id/id`。
+2. 递归读取 `item` 子对象。
+3. 如果仍没有 id，使用 `activeTurnID-method-counter` 生成 fallback id。
+4. 这样避免多个 command output 全部落入 nil requestID，导致 UI 合并成一条。
+
+证据：`ClaudeMac/Services/Chat/CodexAppServerBackend.swift:521`
+
+Windows 复刻建议：
+
+1. 必须保留 output id 归一化逻辑。
+2. fallback id 必须包含 turn/method/sequence，不能只用 activeTurnID。
+3. JSON-RPC response id 要保留原始 id 类型语义，回写时不能随意变形。
+
+### 6.4 权限、选择题、readFile
+
+Codex backend 支持：
+
+- `respondToPermission`：approval/permissions 请求回写。
+- `respondToInteractiveRequest`：选择题/文本输入回写。
+- `readFile`：server request 读项目内 UTF-8 文本文件；越界、目录或非 UTF-8 文本会返回 JSON-RPC error。
+
+证据：
+
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:156`
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:179`
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:377`
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:606`
+- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:610`
+
+Windows 风险：
+
+1. `readFile` 的项目内路径校验在 Windows 上要重新处理盘符、UNC、大小写、符号链接和路径规范化。
+2. Codex 的 sandbox/approvalPolicy 在 Windows shell 下语义需实测。
+3. app-server JSON-RPC method 可能随版本变化，启发式 interactive 判断可能误判或漏判。
+
+## 7. 进程环境与自定义 API
+
+`ChatCLIEnvironment` 统一生成 CLI 子进程环境：
+
+1. 获取真实 HOME。
+2. 生成默认 PATH。
+3. 清理父进程中 Codex runtime 相关变量。
+4. 合并 `~/.claude/settings.json` 中支持的 env。
+5. 规范化 HTTP/HTTPS/ALL/NO_PROXY。
+6. 镜像大小写代理变量。
+7. 移除 `CLAUDE_CONFIG_DIR`。
+
+当前从 `~/.claude/settings.json` 合并到 CLI 子进程的 env 只允许以下范围：
+
+- proxy 相关变量：HTTP/HTTPS/ALL/NO_PROXY 及小写形式。
+- `ANTHROPIC_*`。
+- `CLAUDE_CODE_*`。
+
+未见 Codex/OpenAI 专属 env 的持久配置合并逻辑；Windows 端不要把 AppSettings、模型列表请求和 CLI 子进程环境混为一谈。
+
+证据：
+
+- `ClaudeMac/Services/Chat/ChatProcessBackend.swift:54`
+- `ClaudeMac/Services/Chat/ChatProcessBackend.swift:94`
+- `ClaudeMac/Services/Chat/ChatProcessBackend.swift:138`
+- `ClaudeMac/Services/Chat/ChatProcessBackend.swift:189`
+- `ClaudeMac/Services/Chat/ChatProcessBackend.swift:210`
+
+Windows 复刻建议：
+
+| macOS 逻辑 | Windows 需要处理 |
+| --- | --- |
+| HOME / getpwuid | USERPROFILE、HOMEDRIVE/HOMEPATH |
+| PATH 冒号分隔 | PATH 分号分隔 |
+| `/opt/homebrew/bin` 等默认路径 | where.exe、Program Files、用户 npm/bun/cargo 路径 |
+| `~/.claude/settings.json` | `%USERPROFILE%\.claude\settings.json` |
+| 代理变量大小写镜像 | Windows 环境变量大小写不敏感但 CLI 可能按大小写读取，仍建议同时设置 |
+| Process terminate/interrupt | Kill 进程树、Job Object、Ctrl+C/GenerateConsoleCtrlEvent 视情况选择 |
+
+注意：自定义 API 对 Claude Code 的实际生效依赖 CLI 是否读取这些 env。文档和 UI 不应承诺“写入 AppSettings 就一定影响 CLI”，必须用进程环境验证。
+
+## 8. ChatPanelState 状态机
+
+### 8.1 发送入口
+
+`send(...)` 做以下事情：
+
+1. trim 用户输入。
+2. 无项目时报错。
+3. 构造 `QueuedChatRequest`，保存提交瞬间的 project、cli、modelID、contextModelID、permissionMode、reasoningEffort、sessionMode、resumeSessionID。
+4. 如果当前 `status.isRunning`，只追加到 `queuedRequests`。
+5. 如果不在运行中，调用 `startRun(...)`。
+
+证据：
+
+- `ClaudeMac/ViewModels/ChatPanelState.swift:3`
+- `ClaudeMac/ViewModels/ChatPanelState.swift:173`
+- `ClaudeMac/ViewModels/ChatPanelState.swift:217`
+
+设计原因：
+
+1. 队列必须保存提交瞬间的完整上下文快照，不能只保存文本。
+2. 用户运行中切模型/项目/权限不应该改变已排队消息的语义。
+3. 运行中发送不能 interrupt 当前 run。
+
+### 8.2 启动 run
+
+`startRun(...)` 负责：
+
+1. 检查 CLI capability。
+2. 禁止不支持的模式，例如 Claude ask 回写不可靠。
+3. ensure session。
+4. append user message。
+5. 设置 awaiting first model output。
+6. 创建 Claude 或 Codex backend。
+7. 启动 async stream 并逐个 `apply(event)`。
+
+证据：`ClaudeMac/ViewModels/ChatPanelState.swift:217`
+
+### 8.3 Backend 事件落地
+
+`apply(...)` 将 backend event 写入 ViewModel：
+
+- append message / delta。
+- permission request → append permission card，状态 waitingPermission。
+- interactive request → append interactive card，状态 waitingInput。
+- token usage → 更新 context usage。
+- finished → 标记可在 backend stream 结束后出队。
+- failed → 停止当前 run，不自动出队。
+
+证据：`ClaudeMac/ViewModels/ChatPanelState.swift:433`
+
+### 8.4 Backend 结束后才出队
+
+最新设计把“收到 finished event”和“backend stream 真正结束”拆开：
+
+1. `.finished` 只设置 `shouldStartQueuedRequestAfterBackendEnds`。
+2. `backendStreamDidEnd()` 统一收尾。
+3. 只有非用户 stop 且 backend stream 已结束，才 `startNextQueuedRequestIfNeeded()`。
+
+证据：
+
+- `ClaudeMac/ViewModels/ChatPanelState.swift:541`
+- `ClaudeMac/ViewModels/ChatPanelState.swift:620`
+
+设计原因：
+
+1. 避免 CLI 还在输出工具尾部事件时下一条队列提前启动。
+2. 避免用户 stop 后队列自动续跑，造成“学习项目没完成就被下一条打断”的体验。
+3. 避免 failed 后连续刷队列，造成错误放大。
+
+## 9. 循序渐进 transcript 设计
+
+### 9.1 基本原则
+
+主 transcript 只展示用户可理解的聊天内容：
+
+- user
+- assistant
+- thinking
+- tool row
+- permission card
+- interactive card
+- loading
+- error
+
+隐藏：
+
+- raw JSON
+- system lifecycle
+- message_start/message_stop
+- done/status/raw/internal JSON
+- CLI 启动命令
+
+证据：
+
+- `ClaudeMac/Views/ClaudeSessionPanelView.swift:140`
+- `ClaudeMac/Views/ClaudeSessionPanelView.swift:172`
+
+### 9.2 Delta 合并规则
+
+`appendDelta(...)` 使用 `(kind, requestID)` 作为合并 key，但对 assistant/reasoning 加了额外约束：
+
+- 如果当前 active message 仍是最后一个可见消息，继续追加。
+- 如果中间已经出现 tool/command/diff/permission/interactive/user 等可见消息，则新建下一行。
+
+证据：
+
+- `ClaudeMac/ViewModels/ChatPanelState.swift:558`
+- `ClaudeMac/ViewModels/ChatPanelState.swift:627`
+
+设计效果：
+
+1. thinking 不会一直卡在顶部旧行。
+2. 工具调用、命令输出、后续 thinking 会按真实事件顺序向下推进。
+3. assistant 回复也不会跨工具事件错误合并。
+
+### 9.3 Tool row
+
+工具行现在是极简折叠行：
+
+- 不显示图标。
+- 标题优先显示 raw/英文工具名。
+- fallback 为 `tool`、`command`、`command output`、`diff`。
+- 展开后才显示参数、输出或 diff。
+- 最新运行中的工具行有 accent 色闪烁动画。
+- 支持 reduce motion：系统减少动态时不闪烁，只显示静态运行态。
+
+证据：
+
+- `ClaudeMac/Views/ClaudeSessionPanelView.swift:327`
+- `ClaudeMac/Views/ClaudeSessionPanelView.swift:431`
+
+Windows 复刻建议：
+
+1. ToolRow 必须有 collapsed/expanded 两态。
+2. active 状态只给最后可见且 streaming 的工具行。
+3. 动效只做 opacity/background pulse，避免布局抖动。
+4. 尊重 Windows 系统动画减少设置。
+
+### 9.4 Thinking row
+
+thinking 行设计：
+
+- 标题固定显示英文 `thinking`。
+- thinking 时自动展开。
+- thinking 完成或后续工具/回复出现后自动收缩。
+- 标题和正文使用接近普通回复的字号，不做过小二级日志样式。
+
+证据：`ClaudeMac/Views/ClaudeSessionPanelView.swift:391`
+
+Windows 复刻建议：
+
+1. ThinkingRow 永远保留标题。
+2. `isThinking = message.isStreaming && lastVisibleTranscriptMessageID == message.id`。
+3. 用户可以手动展开历史 thinking。
+4. thinking 正文字号应与 assistant 正文接近。
+
+## 10. 队列消息设计
+
+### 10.1 FIFO 语义
+
+运行中发送消息：
+
+1. 不 interrupt。
+2. 不启动新 backend。
+3. append 到 `queuedRequests`。
+4. 输入框清空。
+5. 队列区域展示在输入框上方。
+6. 当前 run 正常完成后 FIFO 出队。
+
+证据：
+
+- `ClaudeMac/ViewModels/ChatPanelState.swift:173`
+- `ClaudeMac/ViewModels/ChatPanelState.swift:620`
+- `ClaudeMac/Views/ClaudeSessionPanelView.swift:598`
+
+### 10.2 停止与失败
+
+停止当前 run：
+
+- 只停止当前 backend。
+- 不清空队列。
+- 不自动启动下一条。
+
+失败：
+
+- 标记 failed。
+- 不自动出队。
+- 保留队列，等待用户下一步。
+
+证据：`ClaudeMac/ViewModels/ChatPanelState.swift:541`
+
+设计原因：
+
+1. 用户 stop 通常表示当前任务不想继续，不能自动接下一条制造新副作用。
+2. CLI 失败时如果继续出队，会把同类失败快速放大。
+3. 队列可取消，用户可决定是否继续。
+
+### 10.3 UI 位置与密度
+
+队列消息显示在 composer 上方，贴近输入框：
+
+- 最多约 3 行高度。
+- 内部可滚动。
+- 每行显示序号、首行摘要、取消按钮。
+
+证据：`ClaudeMac/Views/ClaudeSessionPanelView.swift:598`
+
+Windows 复刻建议：
+
+1. QueueBar 放在 Composer 内部或紧贴 Composer 上沿。
+2. 不要占据 transcript 大块空间。
+3. 队列取消必须只移除未开始请求，不能影响当前 run。
+
+## 11. UI 组件矩阵
+
+| UI 组件 | 触发数据 | 默认状态 | 交互 | Windows 复刻 |
+| --- | --- | --- | --- | --- |
+| UserMessageRow | `.user` | 右侧气泡 | 复制、编辑、撤销 | Bubble + action bar |
+| AssistantMessageRow | `.assistant` | 普通文本 | 复制 | Markdown/Text renderer |
+| ThinkingRow | `.reasoning` | 标题 thinking；运行时展开，结束后收缩 | 手动展开/收起 | Expander/Disclosure |
+| ToolInvocationRow | tool/command/diff | 折叠；运行中闪烁 | 展开看详情 | Expander + active pulse |
+| PermissionCard | `.permissionRequest` | waiting | deny/allow/session allow | Card + buttons |
+| InteractiveCard | `.interactiveRequest` | waiting | 单选/多选/文本提交 | Card + inputs |
+| LoadingRow | awaiting first output | spinner + “正在生成” | 无 | Progress indicator |
+| QueueBar | queuedRequests | 最多 3 行 | 取消单条 | Scrollable compact list |
+| StopButton | status.isRunning | 显示 stop | interrupt | 独立于 send |
+| SendButton | draft nonempty | 发送/加入队列 | send | 不承担 stop 语义 |
+
+证据：
+
+- UI row 分发：`ClaudeMac/Views/ClaudeSessionPanelView.swift:253`
+- interactive card：`ClaudeMac/Views/ClaudeSessionPanelView.swift:1186`
+- send button：`ClaudeMac/Views/ClaudeSessionPanelView.swift:925`
+
+## 12. 自动滚动与 loading
+
+当前 transcript 使用 `ScrollViewReader`，监听：
+
+- `chatState.transcriptRevision`
+- `chatState.isAwaitingFirstModelOutput`
+- `chatState.queuedRequests.count`
+
+触发自动滚到底。
+
+证据：`ClaudeMac/Views/ClaudeSessionPanelView.swift:140`
+
+状态机中：
+
+- 用户消息 append 后 `isAwaitingFirstModelOutput = true`。
+- 收到第一个可见输出后置 false。
+- system/raw/result/token/session/status update 不关闭 loading。
+
+Windows 复刻建议：
+
+1. 使用 observable revision 或消息集合版本号触发滚动。
+2. 流式文本高度变化也要触发滚动，而不只是 message count 变化。
+3. 如果未来支持用户上滑暂停自动滚动，应明确“用户在底部附近才自动滚”。当前版本按需求强制到底。
+
+## 13. 历史会话与持久化
+
+本地会话：
+
+- session index 保存到本地。
+- 每个 session 的 messages 以 JSONL 保存。
+- 新增 optional 字段保持旧 JSONL 可读。
+
+外部 Claude/Codex 历史：
+
+- 扫描外部历史元信息。
+- 选中后创建本地 session，带 `externalSessionID`。
+- 发送时通过 resume/continue 尝试继续。
+- 不直接完整还原外部 transcript。
+
+子代理证据：
+
+- `ClaudeMac/Services/Chat/ChatSessionStore.swift:3`
+- `ClaudeMac/ViewModels/ChatPanelState.swift:136`
+
+Windows 复刻建议：
+
+1. 本地历史格式应保持 JSONL，便于排障。
+2. 新字段必须 optional decode。
+3. 本地 session index/messages 不应放 macOS `Library/Application Support/Acode`，应使用 `%APPDATA%` 或 `%LOCALAPPDATA%` 下的应用目录。
+4. 外部历史扫描不要假设路径与 macOS 相同，应分别处理 `%USERPROFILE%\.claude` 与 `%USERPROFILE%\.codex`。
+5. `storageKey` 和路径归一化要重写，覆盖盘符、UNC、大小写、junction/symlink；禁止沿用 POSIX “把 `/` 转成 `-`”的规则。
+
+## 14. Windows 迁移重点
+
+### 14.1 进程与管道
+
+必须抽象的能力：
+
+1. 启动可执行文件，设置工作目录。
+2. 传参数时优先使用 argv 数组，不经 shell 拼接。
+3. 并发读取 stdout/stderr。
+4. 写 stdin JSONL。
+5. 终止当前进程或进程树。
+6. 获取 exit code。
+7. 处理启动失败、可执行文件不存在、权限不足。
+
+Windows 风险：
+
+- `Process` 行为与 Foundation 不同。
+- stdout/stderr 任一管道不读都可能死锁。
+- EOF、半包、CRLF、长行需要测试。
+- Ctrl+C、TerminateProcess、Job Object 对 CLI 清理效果不同。
+- 如果 CLI 需要 TTY，可能需要 ConPTY；但优先验证纯 stdio。
+
+### 14.2 Shell 与 quoting
+
+当前 macOS capability probe 部分依赖 `/bin/zsh`、`/usr/bin/env` 和 POSIX PATH。Windows 需要：
+
+1. `where.exe claude` / `where.exe codex` 或显式路径。
+2. PowerShell/cmd 只用于探测时要严格 quoting。
+3. 真正启动 CLI 时不要拼 shell command string。
+4. 命令输出 UI 不应展示启动命令。
+
+### 14.3 路径与编码
+
+Windows 必须验证：
+
+- `C:\...` 盘符路径。
+- UNC 路径。
+- 反斜杠与正斜杠混用。
+- symlink/junction。
+- 项目内路径判断。
+- UTF-8 中文输出。
+- CRLF JSONL。
+- 控制台默认编码不是 UTF-8 的情况。
+
+### 14.4 环境变量和代理
+
+需要保留：
+
+- HTTP_PROXY / http_proxy
+- HTTPS_PROXY / https_proxy
+- ALL_PROXY / all_proxy
+- NO_PROXY / no_proxy
+- ANTHROPIC_* / CLAUDE_CODE_*
+
+Windows 注意：环境变量大小写不敏感，但不同 CLI/子进程库读取行为可能不同；仍建议同时设置大小写代理。
+
+### 14.5 安全与目录授权
+
+macOS 当前会解析项目目录并启动 security scoped resource。Windows 需要定义等价策略：
+
+1. 用户选择目录后的授权保存。
+2. CLI 工作目录限制。
+3. Codex readFile 请求不得越过项目根目录。
+4. ACL/权限失败要转换成用户可理解错误。
+
+## 15. 调试与验证建议
+
+### 15.1 CLI 能力探测
+
+- `claude --version`
+- `claude --help`
+- `codex --version`
+- `codex --help`
+- `codex app-server --help`
+
+验收：
+
+1. 能找到可执行文件。
+2. 版本输出可解析。
+3. Codex app-server 能力可识别。
+4. PATH 与用户配置路径一致。
+
+### 15.2 Claude 最小流
+
+目标：验证非 PTY stream-json 是否可用。
+
+步骤：
+
+1. 设置项目目录为 cwd。
+2. 启动 Claude stream-json。
+3. 输入普通 prompt。
+4. 验证 assistant delta、reasoning、tool、failed、finished。
+5. 验证代理环境和自定义 API 是否进入子进程。
+
+必须记录：CLI 版本、启动 argv、cwd、env diff、stdout 原始 JSONL 样本、stderr 样本、exit code、是否需要 stdin、失败截图或录屏。记录结果要保存成 Windows fixture，后续协议解析变更必须用这些样本回归。
+
+### 15.3 Codex 最小流
+
+目标：验证 app-server JSON-RPC。
+
+步骤：
+
+1. 启动 `codex app-server --listen stdio://`。
+2. 写入 initialize。
+3. 写入 initialized。
+4. 写入 thread/start 或 thread/resume。
+5. 写入 turn/start。
+6. 验证 notification/request/response。
+7. 验证 approval 与 interactive 回写。
+
+必须记录：CLI 版本、启动 argv、cwd、env diff、JSON-RPC method、id 类型、params 样本、stdout/stderr 原始 JSONL、exit code、diff/command output 是否有 itemID。记录结果要保存成 Windows fixture。
+
+### 15.4 UI 手测矩阵
+
+| 场景 | 期望 |
+| --- | --- |
+| 普通问候 | user 立即出现，loading 出现，assistant 首字后 loading 消失 |
+| thinking | 标题 thinking 常显，运行时展开，结束后收缩 |
+| 多个工具 | 每个工具按顺序下推，不合并成大组 |
+| 工具运行中 | 最新工具行有可见运行态闪烁或静态高亮 |
+| 展开工具 | 只展开当前行详情，不污染主线 |
+| diff | 默认折叠，展开看 diff |
+| permission | 卡片显示 deny/allow/session allow |
+| interactive | 单选、多选、文本输入可提交 |
+| 运行中继续发送 | 进入队列，不 interrupt 当前 run |
+| stop | 只停止当前 run，不自动启动队列下一条 |
+| failed | 显示错误，不继续刷队列 |
+| auto-scroll | 流式高度增长时滚到底 |
+| reduce motion | 动效降级为静态运行态 |
+
+## 16. 已验证项
+
+基于本轮实际执行，已验证：
+
+1. Debug build 通过。
+2. Release build 通过。
+3. DMG create/verify 通过。
+4. 工具行旧中文前缀与图标属性已从当前 UI 路径移除。
+5. `thinking` 文案替代中文思考文案。
+6. 队列出队逻辑改为 backend stream end 后触发。
+7. stop/failed 不自动出队。
+8. 最新工具行运行态增加动效，并有 reduce motion 兜底。
+
+## 17. 未验证项与风险
+
+| 风险 | 状态 | 后续动作 |
+| --- | --- | --- |
+| Claude stdin 权限回写协议 | 未验证 | 获取真实 CLI 样本，确认是否支持稳定 control response；未验证前 Windows 不得开启可点击回写 |
+| Claude AskUserQuestion 回写 | 未验证 | 不要默认开启；先用真实 AskUserQuestion 样本校准；未验证前只显示诊断/unsupported |
+| Codex app-server Windows 可用性 | 未验证 | Windows 实机运行 JSON-RPC 最小流 |
+| Codex method/schema 演进 | 风险存在 | 保留 raw 样本日志和 unsupported response |
+| ConPTY 是否必要 | 未验证 | 先跑纯 stdio；失败再引入 ConPTY |
+| Windows UTF-8/CRLF/长行 JSONL | 未验证 | 构造中文、emoji、长输出和 CRLF 样本 |
+| Windows 路径越界校验 | 未验证 | 覆盖盘符、UNC、junction、symlink、大小写 |
+| UI 动效实际观感 | 构建通过但需手测 | 安装新版应用手测工具运行态 |
+| 完整历史还原 | 当前非目标 | 如需要，另做历史 transcript parser |
+
+## 18. Windows 端开发落地顺序建议
+
+第一阶段：领域模型与 ViewModel
+
+1. 复制 ChatMessageKind、ChatRunStatus、ChatBackendEvent、InteractiveRequest 等 DTO 语义。
+2. 实现 ChatProcessBackend interface。
+3. 实现 ChatPanelState 等价 store：send、queue、apply、appendDelta、backendStreamDidEnd。
+4. 用 fake backend 写 UI 状态测试。
+
+完成条件：fake backend 能覆盖 assistant/reasoning/tool/permission/interactive/loading/error；running send 只入队；stop/failed 不自动出队；backend stream end 后 FIFO 出队。
+
+第二阶段：进程通信
+
+1. 实现 ProcessRunner：argv、cwd、env、stdout/stderr/stdin、kill tree。
+2. 实现 JSONL reader：UTF-8、CRLF、半包、长行。
+3. 接 Claude stream-json 最小流。
+4. 接 Codex app-server JSON-RPC 最小流。
+
+完成条件：stdout/stderr 并发读取无死锁；stdin JSONL 可写；kill tree 能清理子进程；保存 Claude/Codex 最小流 fixture；JSONL reader 单测覆盖 UTF-8、CRLF、半包、长行。
+
+第三阶段：UI 组件
+
+1. Transcript + auto scroll。
+2. User/Assistant/Thinking rows。
+3. ToolRow 折叠、展开、active pulse。
+4. PermissionCard 与 InteractiveCard。
+5. QueueBar 与 Composer。
+6. Stop/Send 语义拆分。
+
+完成条件：用 fake backend 手测 UI 矩阵全部通过；主 transcript 不出现 raw/system/result/internal JSON；工具行默认折叠且逐条下推；thinking 运行中展开、结束后收缩。
+
+第四阶段：真实 CLI 验证
+
+1. Claude 普通对话。
+2. Claude 工具调用。
+3. Claude 权限/AskUserQuestion 样本验证。
+4. Codex 普通对话。
+5. Codex command/diff/approval/interactive。
+6. 代理、自定义 API、OAuth 失效、CLI 版本不支持场景。
+
+完成条件：每个真实 CLI 场景都有 fixture、截图或录屏、exit code 和 env diff；Claude 权限/AskUserQuestion 未验证前保持 blocked，不开启可点击回写。
+
+第五阶段：发布前闭环
+
+1. 构建 Windows 安装包。
+2. 最小 smoke：普通对话、工具、队列、stop、error。
+3. 保存原始 JSONL 样本作为 fixture。
+4. 把未知 method 和 parse fallback 打到诊断日志，不显示在主 transcript。
+
+完成条件：安装包 smoke 通过；诊断日志能定位未知 schema；所有未验证项在发布说明中明确标注或关闭入口。
+
+## 19. 最终验收清单
+
+文档与实现都应满足：
+
+- [ ] Claude 与 Codex 都走统一 ChatBackendEvent。
+- [ ] 主 transcript 不显示 raw/system/result/internal JSON。
+- [ ] tool/command/diff 每次调用按顺序独立向下推进。
+- [ ] thinking 标题常显，运行时展开，结束后收缩。
+- [ ] 工具运行态能看出“正在使用中”。
+- [ ] running send 入队，不 interrupt。
+- [ ] stop 独立于 send。
+- [ ] stop/failed 不自动出队。
+- [ ] backend stream 完整结束后才 FIFO 出队。
+- [ ] permission 和 interactive request 有原生 UI。
+- [ ] Windows 进程层 stdout/stderr/stdin 不死锁。
+- [ ] Windows JSONL 支持 UTF-8/CRLF/长行/半包。
+- [ ] Windows 路径、代理、HOME、CLI 探测都有专门适配。
+- [ ] 未知 CLI schema 不破坏主 UI，只进入诊断或 unsupported。
+
+## 20. 关键源码索引
+
+| 主题 | 文件与行号 |
+| --- | --- |
+| backend 协议 | `ClaudeMac/Services/Chat/ChatProcessBackend.swift:4` |
+| CLI 环境 | `ClaudeMac/Services/Chat/ChatProcessBackend.swift:54` |
+| process environment | `ClaudeMac/Services/Chat/ChatProcessBackend.swift:94` |
+| 代理镜像 | `ClaudeMac/Services/Chat/ChatProcessBackend.swift:189` |
+| message kind | `ClaudeMac/Models/ChatModels.swift:174` |
+| interactive request | `ClaudeMac/Models/ChatModels.swift:210` |
+| run status | `ClaudeMac/Models/ChatModels.swift:227` |
+| backend event | `ClaudeMac/Models/ChatModels.swift:394` |
+| queued request | `ClaudeMac/ViewModels/ChatPanelState.swift:3` |
+| send | `ClaudeMac/ViewModels/ChatPanelState.swift:173` |
+| startRun | `ClaudeMac/ViewModels/ChatPanelState.swift:217` |
+| apply event | `ClaudeMac/ViewModels/ChatPanelState.swift:433` |
+| backendStreamDidEnd | `ClaudeMac/ViewModels/ChatPanelState.swift:541` |
+| appendDelta | `ClaudeMac/ViewModels/ChatPanelState.swift:558` |
+| startNextQueuedRequestIfNeeded | `ClaudeMac/ViewModels/ChatPanelState.swift:620` |
+| assistant/reasoning 合并约束 | `ClaudeMac/ViewModels/ChatPanelState.swift:627` |
+| transcript | `ClaudeMac/Views/ClaudeSessionPanelView.swift:140` |
+| transcriptItems | `ClaudeMac/Views/ClaudeSessionPanelView.swift:172` |
+| tool row | `ClaudeMac/Views/ClaudeSessionPanelView.swift:327` |
+| thinking row | `ClaudeMac/Views/ClaudeSessionPanelView.swift:391` |
+| last visible row | `ClaudeMac/Views/ClaudeSessionPanelView.swift:431` |
+| queue view | `ClaudeMac/Views/ClaudeSessionPanelView.swift:598` |
+| send button | `ClaudeMac/Views/ClaudeSessionPanelView.swift:925` |
+| interactive card | `ClaudeMac/Views/ClaudeSessionPanelView.swift:1186` |
+| Claude backend start | `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:43` |
+| Claude permission response | `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:208` |
+| Claude interactive response | `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:221` |
+| Claude interactive parsing | `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:488` |
+| Codex backend start | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:33` |
+| Codex permission response | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:156` |
+| Codex interactive response | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:179` |
+| Codex initialize | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:208` |
+| Codex turn/start | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:255` |
+| Codex output id | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:521` |
+| Codex interactive parsing | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:543` |
+
+## 21. 结论
+
+当前对话系统已经从“CLI 日志面板”改造成“IDE 风格 Agent Chat”：
+
+1. 主线只呈现用户、assistant、thinking、工具折叠、权限、选择题、loading 和 error。
+2. Claude Code 与 Codex 通过统一 backend event 接入同一状态机。
+3. 工具、命令、diff、MCP 类事件按时间顺序下推，默认折叠。
+4. thinking 与 assistant 不再错误合并到旧行。
+5. 运行中继续发送进入 FIFO 队列，不打断当前 run。
+6. 停止/失败不会自动启动队列下一条。
+7. Windows 端复刻时最大风险不在 UI，而在进程通信、stdin/stdout/stderr、JSONL、路径、编码、CLI 协议和权限回写验证。
+
+后续 Windows 开发应以本文的 DTO、状态机和 UI 状态矩阵为契约，先用 fake backend 验证 UI，再接真实 Claude/Codex CLI，最后用真实 JSONL 样本修正协议兼容。
