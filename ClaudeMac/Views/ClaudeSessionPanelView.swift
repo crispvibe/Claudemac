@@ -19,6 +19,9 @@ struct ChatPanelView: View {
     @State private var resumeInput = ""
     @State private var expandedTranscriptMessageIDs: Set<UUID> = []
     @State private var composerHasMarkedText = false
+    @State private var suggestedCommand: ComposerSuggestedCommand?
+    @State private var lastSuggestedAssistantMessageID: UUID?
+    @State private var lastTranscriptScrollAt = Date.distantPast
     private let transcriptBottomID = "chat-transcript-bottom"
 
     var body: some View {
@@ -62,6 +65,8 @@ struct ChatPanelView: View {
             applyPersistedChatSelection()
             normalizeReasoningEffort()
             syncSelectedContextWindow()
+            clearSuggestedCommand()
+            lastSuggestedAssistantMessageID = nil
             chatState.loadFromAppState(appState, modelID: selectedModelID, permissionMode: permissionMode, reasoningEffort: reasoningEffort)
         }
         .onChange(of: appState.selectedCLI) { _, _ in
@@ -75,6 +80,9 @@ struct ChatPanelView: View {
         .onChange(of: selectedModelID) { _, _ in
             syncSelectedContextWindow()
             persistChatSelection()
+        }
+        .onChange(of: chatState.transcriptRevision) { _, _ in
+            installSuggestedCommandIfNeeded()
         }
     }
 
@@ -161,10 +169,10 @@ struct ChatPanelView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color.white)
-            .onAppear { scrollTranscriptToBottom(proxy) }
-            .onChange(of: chatState.transcriptRevision) { _, _ in scrollTranscriptToBottom(proxy) }
-            .onChange(of: chatState.isAwaitingFirstModelOutput) { _, _ in scrollTranscriptToBottom(proxy) }
-            .onChange(of: chatState.queuedRequests.count) { _, _ in scrollTranscriptToBottom(proxy) }
+            .onAppear { scrollTranscriptToBottom(proxy, force: true) }
+            .onChange(of: chatState.transcriptRevision) { _, _ in scrollTranscriptToBottom(proxy, animated: false) }
+            .onChange(of: chatState.isAwaitingFirstModelOutput) { _, _ in scrollTranscriptToBottom(proxy, force: true) }
+            .onChange(of: chatState.queuedRequests.count) { _, _ in scrollTranscriptToBottom(proxy, force: true) }
         }
     }
 
@@ -185,9 +193,16 @@ struct ChatPanelView: View {
         return items
     }
 
-    private func scrollTranscriptToBottom(_ proxy: ScrollViewProxy) {
+    private func scrollTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool = true, force: Bool = false) {
+        let now = Date()
+        if !force, now.timeIntervalSince(lastTranscriptScrollAt) < 0.12 { return }
+        lastTranscriptScrollAt = now
         DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.16)) {
+            if animated {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    proxy.scrollTo(transcriptBottomID, anchor: .bottom)
+                }
+            } else {
                 proxy.scrollTo(transcriptBottomID, anchor: .bottom)
             }
         }
@@ -321,48 +336,8 @@ struct ChatPanelView: View {
 
     private func toolInvocationRow(_ message: ChatMessage) -> some View {
         let isExpanded = expandedTranscriptMessageIDs.contains(message.id)
-        let filePath = message.toolFilePath
         return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Button {
-                    toggleTranscriptMessage(message.id)
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(message.toolDisplayTitle)
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Color.secondary)
-                            .lineLimit(1)
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.secondary.opacity(0.45))
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                if let filePath {
-                    Button {
-                        appState.openFile(path: filePath)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "doc.text")
-                                .font(.system(size: 9, weight: .medium))
-                            Text(URL(fileURLWithPath: filePath).lastPathComponent)
-                                .font(.system(size: 11, weight: .medium))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.black.opacity(0.035))
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help(filePath)
-                }
-
-                Spacer(minLength: 0)
-            }
+            toolInvocationHeader(message, isExpanded: isExpanded)
 
             if isExpanded {
                 toolDetailCard(message)
@@ -373,13 +348,69 @@ struct ChatPanelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func toolInvocationHeader(_ message: ChatMessage, isExpanded: Bool) -> some View {
+        HStack(spacing: 7) {
+            Button {
+                toggleTranscriptMessage(message.id)
+            } label: {
+                HStack(spacing: 6) {
+                    Text(message.toolPrimaryTitle)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(1)
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.secondary.opacity(0.45))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if let command = message.toolExecutedCommand {
+                Text("$ \(command)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.primary.opacity(0.72))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(command)
+            }
+
+            if let filePath = message.toolFilePath {
+                toolFileButton(path: filePath)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func toolFileButton(path: String) -> some View {
+        Button {
+            appState.openFile(path: path)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 9, weight: .medium))
+                Text(URL(fileURLWithPath: path).lastPathComponent)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.black.opacity(0.035))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(path)
+    }
+
     @ViewBuilder
     private func toolDetailCard(_ message: ChatMessage) -> some View {
-        let detailText = message.toolDetailText
+        let detailText = message.isTerminalTool ? message.terminalDetailText : message.toolDetailText
         if message.kind == .diff || !detailText.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
-                    Text(message.kind == .diff ? "diff" : "details")
+                    Text(message.toolDetailLabel)
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(.tertiary)
                     Spacer(minLength: 0)
@@ -420,6 +451,8 @@ struct ChatPanelView: View {
                     }
                 }
             }
+        } else if message.isTerminalTool && !message.terminalDetailText.isEmpty {
+            terminalDetailView(message)
         } else if !message.toolDetailText.isEmpty {
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(message.toolDetailPreviewText)
@@ -429,6 +462,19 @@ struct ChatPanelView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private func terminalDetailView(_ message: ChatMessage) -> some View {
+        ScrollView(.horizontal, showsIndicators: true) {
+            Text(message.terminalDetailPreviewText)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.primary.opacity(0.78))
+                .lineSpacing(2)
+                .padding(9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color.black.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func interactiveRequestRow(_ message: ChatMessage) -> some View {
@@ -527,7 +573,7 @@ struct ChatPanelView: View {
             HStack(spacing: 7) {
                 Image(systemName: "hand.raised")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.secondary)
                     .frame(width: 14)
                 Text(message.title.isEmpty ? "需要权限" : message.title)
                     .font(.system(size: 12, weight: .medium))
@@ -569,8 +615,12 @@ struct ChatPanelView: View {
             }
         }
         .padding(10)
-        .background(Color.orange.opacity(0.07))
+        .background(Color.black.opacity(0.025))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(AppTheme.hairline, lineWidth: 1)
+        )
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -690,7 +740,7 @@ struct ChatPanelView: View {
     private var composerCard: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
-                ChatComposerTextView(text: $draftMessage, hasMarkedText: $composerHasMarkedText, onSubmit: sendMessage)
+                ChatComposerTextView(text: $draftMessage, hasMarkedText: $composerHasMarkedText, suggestedCommand: $suggestedCommand, onSubmit: sendMessage)
                     .frame(minHeight: 42, maxHeight: 60)
                     .padding(.horizontal, 14)
                     .padding(.top, 9)
@@ -747,6 +797,7 @@ struct ChatPanelView: View {
                     Button("取消") {
                         editingMessageID = nil
                         draftMessage = ""
+                        clearSuggestedCommand()
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
@@ -961,44 +1012,31 @@ struct ChatPanelView: View {
         .buttonStyle(.plain)
     }
 
-    @ViewBuilder
     private var actionButton: some View {
-        if chatState.status.isRunning && draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            stopButton
-        } else {
-            sendButton
+        Button(action: primaryAction) {
+            Image(systemName: chatState.status.isRunning ? "pause.fill" : "arrow.up")
+                .font(.system(size: chatState.status.isRunning ? 9 : 10, weight: .semibold))
+                .frame(width: 20, height: 20)
         }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .background(actionButtonBackground)
+        .clipShape(Circle())
+        .contentShape(Circle())
+        .disabled(!chatState.status.isRunning && !canSend)
+        .help(chatState.status.isRunning ? "停止当前任务" : "发送")
     }
 
-    private var stopButton: some View {
-        Button {
+    private var actionButtonBackground: Color {
+        chatState.status.isRunning || canSend ? Color.accentColor : Color.secondary.opacity(0.58)
+    }
+
+    private func primaryAction() {
+        if chatState.status.isRunning {
             chatState.interrupt()
-        } label: {
-            Image(systemName: "stop.fill")
-                .font(.system(size: 9, weight: .semibold))
-                .frame(width: 20, height: 20)
+        } else {
+            sendMessage()
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.white)
-        .background(Color.accentColor)
-        .clipShape(Circle())
-        .contentShape(Circle())
-        .help("停止当前任务")
-    }
-
-    private var sendButton: some View {
-        Button(action: sendMessage) {
-            Image(systemName: "arrow.up")
-                .font(.system(size: 10, weight: .semibold))
-                .frame(width: 20, height: 20)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.white)
-        .background(canSend ? Color.accentColor : Color.secondary.opacity(0.58))
-        .clipShape(Circle())
-        .contentShape(Circle())
-        .disabled(!canSend)
-        .help(chatState.status.isRunning ? "加入队列" : "发送")
     }
 
     private var projectName: String {
@@ -1060,6 +1098,7 @@ struct ChatPanelView: View {
         )
         if didStart {
             draftMessage = ""
+            clearSuggestedCommand()
             attachedPaths.removeAll()
         }
     }
@@ -1071,6 +1110,99 @@ struct ChatPanelView: View {
             parts.append("Attached paths:\n" + paths.joined(separator: "\n"))
         }
         return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    private func installSuggestedCommandIfNeeded() {
+        guard chatState.status == .completed,
+              editingMessageID == nil,
+              let message = chatState.messages.last(where: { $0.kind == .assistant && !$0.isStreaming }),
+              lastSuggestedAssistantMessageID != message.id else { return }
+        lastSuggestedAssistantMessageID = message.id
+        guard draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let command = Self.extractSuggestedCommand(from: message.text) else { return }
+        draftMessage = command
+        suggestedCommand = ComposerSuggestedCommand(text: command)
+    }
+
+    private func clearSuggestedCommand() {
+        suggestedCommand = nil
+    }
+
+    private static func extractSuggestedCommand(from text: String) -> String? {
+        for block in AssistantMessageBlock.parse(text) {
+            if case .code(let language, let code) = block,
+               isShellLanguage(language),
+               let command = normalizedSuggestedCommand(code) {
+                return command
+            }
+        }
+
+        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("$ "), let command = normalizedSuggestedCommand(String(trimmed.dropFirst(2))) {
+                return command
+            }
+            if let command = commandAfterSuggestionLabel(trimmed) {
+                return command
+            }
+        }
+        return nil
+    }
+
+    private static func commandAfterSuggestionLabel(_ line: String) -> String? {
+        let labels = ["建议指令：", "建议命令：", "推荐指令：", "推荐命令：", "指令：", "命令：", "运行：", "执行：", "Command:", "Suggested command:"]
+        for label in labels where line.hasPrefix(label) {
+            let value = String(line.dropFirst(label.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalizedSuggestedCommand(strippingInlineCodeDelimiters(value))
+        }
+        return nil
+    }
+
+    private static func normalizedSuggestedCommand(_ raw: String) -> String? {
+        let lines = raw
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> String in
+                let trimmed = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.hasPrefix("$ ") ? String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines) : trimmed
+            }
+            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        guard (1...4).contains(lines.count) else { return nil }
+        let command = lines.joined(separator: "\n")
+        guard command.count <= 500,
+              !command.contains("```"),
+              isShellCommandStart(lines[0]) else { return nil }
+        return command
+    }
+
+    private static func strippingInlineCodeDelimiters(_ value: String) -> String {
+        var result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        while result.hasPrefix("`") && result.hasSuffix("`") && result.count >= 2 {
+            result = String(result.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return result
+    }
+
+    private static func isShellLanguage(_ language: String) -> Bool {
+        let normalized = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["bash", "sh", "shell", "zsh", "fish", "terminal", "console", "command", "cli"].contains(normalized)
+    }
+
+    private static func isShellCommandStart(_ line: String) -> Bool {
+        let tokens = line.split { $0 == " " || $0 == "\t" }.map(String.init)
+        guard let first = tokens.first else { return false }
+        let wrappers = Set(["sudo", "env", "arch", "time", "nohup"])
+        let token = wrappers.contains(first) && tokens.count > 1 ? tokens[1] : first
+        if token.hasPrefix("./") || token.hasPrefix("../") { return true }
+        let commands = Set([
+            "brew", "bundle", "bun", "cargo", "cd", "chmod", "chown", "claude", "cmake", "codex", "cp", "curl",
+            "deno", "defaults", "docker", "docker-compose", "find", "git", "gh", "go", "gradle", "grep", "hdiutil",
+            "helm", "java", "make", "mkdir", "mvn", "node", "npm", "npx", "open", "pip", "pip3", "plutil",
+            "pnpm", "poetry", "python", "python3", "rm", "rspec", "ruby", "sed", "security", "swift", "terraform",
+            "tofu", "uv", "wget", "xcode-select", "xcodebuild", "xcrun", "yarn", "kubectl"
+        ])
+        return commands.contains(token)
     }
 
     private func openFilesForComposer() {
@@ -1142,6 +1274,7 @@ struct ChatPanelView: View {
 
     private func editQueuedRequest(_ request: QueuedChatRequest) {
         draftMessage = editableQueuedText(request.text)
+        clearSuggestedCommand()
         attachedPaths.removeAll()
         chatState.cancelQueuedRequest(request.id)
     }
@@ -1156,6 +1289,7 @@ struct ChatPanelView: View {
         guard !chatState.status.isRunning else { return }
         editingMessageID = message.id
         draftMessage = message.text
+        clearSuggestedCommand()
     }
 
     private func undoMessage(_ message: ChatMessage) {
@@ -1164,6 +1298,7 @@ struct ChatPanelView: View {
         if editingMessageID == message.id {
             editingMessageID = nil
             draftMessage = ""
+            clearSuggestedCommand()
         }
     }
 
@@ -1514,7 +1649,7 @@ private struct ChatInteractiveRequestCard: View {
             HStack(spacing: 7) {
                 Image(systemName: "questionmark.circle")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(.secondary)
                     .frame(width: 14)
                 Text(request?.title.nonEmptyTrimmed ?? message.title.nonEmptyTrimmed ?? "需要选择")
                     .font(.system(size: 12, weight: .medium))
@@ -1571,8 +1706,12 @@ private struct ChatInteractiveRequestCard: View {
             }
         }
         .padding(10)
-        .background(Color.accentColor.opacity(0.07))
+        .background(Color.black.opacity(0.025))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(AppTheme.hairline, lineWidth: 1)
+        )
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -1580,7 +1719,7 @@ private struct ChatInteractiveRequestCard: View {
         HStack(spacing: 7) {
             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.45))
+                .foregroundStyle(selected ? Color.primary : Color.secondary.opacity(0.45))
             VStack(alignment: .leading, spacing: 2) {
                 Text(option.label)
                     .font(.system(size: 11, weight: .medium))
@@ -1623,13 +1762,18 @@ private struct ChatInteractiveRequestCard: View {
     }
 }
 
+private struct ComposerSuggestedCommand: Equatable {
+    let text: String
+}
+
 private struct ChatComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var hasMarkedText: Bool
+    @Binding var suggestedCommand: ComposerSuggestedCommand?
     let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, hasMarkedText: $hasMarkedText, onSubmit: onSubmit)
+        Coordinator(text: $text, hasMarkedText: $hasMarkedText, suggestedCommand: $suggestedCommand, onSubmit: onSubmit)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -1643,6 +1787,8 @@ private struct ChatComposerTextView: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.onSubmit = onSubmit
         textView.onMarkedTextChanged = { context.coordinator.hasMarkedText = $0 }
+        textView.onSuggestedCommandCleared = { context.coordinator.suggestedCommand = nil }
+        textView.suggestedCommand = suggestedCommand
         textView.string = text
         textView.font = .systemFont(ofSize: 12)
         textView.drawsBackground = false
@@ -1667,37 +1813,54 @@ private struct ChatComposerTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? SubmitTextView else { return }
         textView.onSubmit = onSubmit
         textView.onMarkedTextChanged = { context.coordinator.hasMarkedText = $0 }
+        textView.onSuggestedCommandCleared = { context.coordinator.suggestedCommand = nil }
+        textView.suggestedCommand = suggestedCommand
         textView.isEditable = true
         textView.isSelectable = true
         if textView.string != text {
             textView.string = text
+            if suggestedCommand?.text == text {
+                textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+            }
         }
+        textView.refreshSuggestedCommandHighlight()
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding var text: String
         @Binding var hasMarkedText: Bool
+        @Binding var suggestedCommand: ComposerSuggestedCommand?
         let onSubmit: () -> Void
 
-        init(text: Binding<String>, hasMarkedText: Binding<Bool>, onSubmit: @escaping () -> Void) {
+        init(text: Binding<String>, hasMarkedText: Binding<Bool>, suggestedCommand: Binding<ComposerSuggestedCommand?>, onSubmit: @escaping () -> Void) {
             _text = text
             _hasMarkedText = hasMarkedText
+            _suggestedCommand = suggestedCommand
             self.onSubmit = onSubmit
         }
 
         func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
+            guard let textView = notification.object as? SubmitTextView else { return }
             text = textView.string
             hasMarkedText = textView.hasMarkedText()
+            if let suggestedCommand, textView.string != suggestedCommand.text {
+                self.suggestedCommand = nil
+                textView.suggestedCommand = nil
+            }
+            textView.refreshSuggestedCommandHighlight()
         }
     }
 
     final class SubmitTextView: NSTextView {
         var onSubmit: (() -> Void)?
         var onMarkedTextChanged: ((Bool) -> Void)?
+        var onSuggestedCommandCleared: (() -> Void)?
+        var suggestedCommand: ComposerSuggestedCommand?
 
         override func keyDown(with event: NSEvent) {
             let isReturn = event.keyCode == 36 || event.keyCode == 76
+            let isBackspace = event.keyCode == 51
+            let isForwardDelete = event.keyCode == 117
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let hasSubmitModifier = flags.contains(.shift) || flags.contains(.option) || flags.contains(.control) || flags.contains(.command)
             if isReturn, hasMarkedText() {
@@ -1709,7 +1872,47 @@ private struct ChatComposerTextView: NSViewRepresentable {
                 onSubmit?()
                 return
             }
+            if !hasMarkedText(), isSuggestedCommandDeletion(backspace: isBackspace, forwardDelete: isForwardDelete), deleteSuggestedCommand(backspace: isBackspace) {
+                return
+            }
             super.keyDown(with: event)
+        }
+
+        func refreshSuggestedCommandHighlight() {
+            let fullRange = NSRange(location: 0, length: (string as NSString).length)
+            layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: fullRange)
+            layoutManager?.removeTemporaryAttribute(.font, forCharacterRange: fullRange)
+            guard let suggestedCommand, string == suggestedCommand.text, fullRange.length > 0 else { return }
+            layoutManager?.addTemporaryAttributes([
+                .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.12),
+                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+            ], forCharacterRange: fullRange)
+        }
+
+        private func isSuggestedCommandDeletion(backspace: Bool, forwardDelete: Bool) -> Bool {
+            backspace || forwardDelete
+        }
+
+        private func deleteSuggestedCommand(backspace: Bool) -> Bool {
+            guard let suggestedCommand, string == suggestedCommand.text else { return false }
+            let fullRange = NSRange(location: 0, length: (string as NSString).length)
+            guard fullRange.length > 0 else { return false }
+            let selection = selectedRange()
+            let shouldDelete: Bool
+            if selection.length > 0 {
+                shouldDelete = NSIntersectionRange(selection, fullRange).length > 0
+            } else if backspace {
+                shouldDelete = selection.location > 0 && selection.location <= NSMaxRange(fullRange)
+            } else {
+                shouldDelete = selection.location >= fullRange.location && selection.location < NSMaxRange(fullRange)
+            }
+            guard shouldDelete, shouldChangeText(in: fullRange, replacementString: "") else { return false }
+            textStorage?.replaceCharacters(in: fullRange, with: "")
+            didChangeText()
+            self.suggestedCommand = nil
+            onSuggestedCommandCleared?()
+            refreshSuggestedCommandHighlight()
+            return true
         }
 
         override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
@@ -1746,19 +1949,77 @@ private extension ChatMessageKind {
 
 private extension ChatMessage {
     var toolDisplayTitle: String {
-        if !toolName.isEmpty { return toolName }
+        toolPrimaryTitle
+    }
+
+    var toolPrimaryTitle: String {
+        if let name = normalizedToolName(title) ?? normalizedToolName(subtitle) {
+            return displayToolName(name)
+        }
         switch kind {
         case .toolCall, .toolResult:
             return "tool"
         case .command:
             return "command"
         case .commandOutput:
-            return "command output"
+            return "output"
         case .diff:
             return "diff"
         default:
             return "tool"
         }
+    }
+
+    var toolDetailLabel: String {
+        if kind == .diff { return "diff" }
+        if isTerminalTool { return "terminal" }
+        return "details"
+    }
+
+    var isTerminalTool: Bool {
+        if kind == .command || kind == .commandOutput { return true }
+        let values = [title, subtitle, toolPrimaryTitle].map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        return values.contains { value in
+            value == "bash" || value == "shell" || value == "command" || value == "exec" || value.contains("commandexecution")
+        }
+    }
+
+    var toolExecutedCommand: String? {
+        guard !isBackendLaunchCommand else { return nil }
+        if let value = firstToolStringValue(keys: ["command", "cmd", "shell_command", "shellCommand"], in: text) {
+            return value
+        }
+        return textCommandValue(from: text)
+    }
+
+    var terminalOutputText: String {
+        if let value = firstToolStringValue(keys: ["stderr", "stdout", "output", "result", "error", "message", "text"], in: text) {
+            return value
+        }
+        guard kind == .commandOutput || kind == .toolResult else { return "" }
+        return toolDetailText
+    }
+
+    var terminalDetailText: String {
+        var parts: [String] = []
+        let commandText = toolExecutedCommand
+        if let commandText {
+            parts.append("$ \(commandText)")
+        }
+        let output = terminalOutputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !output.isEmpty {
+            if let commandText, output == commandText {
+                return parts.joined(separator: "\n\n")
+            }
+            parts.append(output)
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    var terminalDetailPreviewText: String {
+        let detail = terminalDetailText
+        guard detail.count > 16_000 else { return detail }
+        return String(detail.prefix(16_000)) + "\n\n…终端输出过长，已暂停完整渲染；复制详情可获取完整内容。"
     }
 
     var toolDetailText: String {
@@ -1806,12 +2067,107 @@ private extension ChatMessage {
     }
 
     private var toolName: String {
-        let candidates = [title, subtitle]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return candidates.first { value in
-            !value.contains("{") && !value.contains("}") && value != "tool_use" && !value.contains("json_delta")
-        } ?? ""
+        (normalizedToolName(title) ?? normalizedToolName(subtitle)) ?? ""
+    }
+
+    private func normalizedToolName(_ raw: String) -> String? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !value.contains("{"), !value.contains("}") else { return nil }
+        let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
+        let blocked = Set([
+            "tool use", "tool result", "input json delta", "json delta", "content block", "content block delta",
+            "item started", "item completed", "message start", "message stop", "raw", "done"
+        ])
+        guard !blocked.contains(normalized), !normalized.contains("json delta") else { return nil }
+        if value.contains("/") && value.lowercased().contains("item/") { return nil }
+        return value
+    }
+
+    private func displayToolName(_ value: String) -> String {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "bash": return "Bash"
+        case "read": return "Read"
+        case "edit": return "Edit"
+        case "write": return "Write"
+        default: return value
+        }
+    }
+
+    private func firstToolStringValue(keys: [String], in body: String) -> String? {
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        if let data = body.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data),
+           let value = firstToolStringValue(in: object, keySet: Set(keys.map { $0.lowercased() })) {
+            return value
+        }
+        return looseToolStringValue(keys: keys, in: body)
+    }
+
+    private func firstToolStringValue(in object: Any, keySet: Set<String>) -> String? {
+        if let dictionary = object as? [String: Any] {
+            for (key, value) in dictionary where keySet.contains(key.lowercased()) {
+                if let text = readableToolValue(value) {
+                    return text
+                }
+            }
+            for value in dictionary.values {
+                if let text = firstToolStringValue(in: value, keySet: keySet) {
+                    return text
+                }
+            }
+        }
+        if let array = object as? [Any] {
+            for value in array {
+                if let text = firstToolStringValue(in: value, keySet: keySet) {
+                    return text
+                }
+            }
+        }
+        return nil
+    }
+
+    private func looseToolStringValue(keys: [String], in body: String) -> String? {
+        for key in keys {
+            let quotedMarkers = ["\"\(key)\":\"", "\"\(key)\": \""]
+            for marker in quotedMarkers {
+                guard let range = body.range(of: marker) else { continue }
+                let tail = body[range.upperBound...]
+                var value = ""
+                var isEscaped = false
+                for character in tail {
+                    if isEscaped {
+                        value.append(character)
+                        isEscaped = false
+                    } else if character == "\\" {
+                        isEscaped = true
+                    } else if character == "\"" {
+                        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty { return trimmed }
+                        break
+                    } else {
+                        value.append(character)
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    private func textCommandValue(from value: String) -> String? {
+        let lines = value.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("$ ") {
+                let command = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !command.isEmpty { return command }
+            }
+            let prefixes = ["command:", "cmd:"]
+            for prefix in prefixes where trimmed.lowercased().hasPrefix(prefix) {
+                let command = String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !command.isEmpty { return command }
+            }
+        }
+        return nil
     }
 
     private func jsonToolFilePath(from body: String) -> String? {

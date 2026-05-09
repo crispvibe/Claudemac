@@ -451,13 +451,15 @@ Windows 复刻建议：
 
 ### 9.4 Tool row
 
-工具行现在是极简折叠行：
+工具行现在是 IDE 风格折叠卡片：
 
-- 不显示图标。
-- 标题优先显示 raw/英文工具名。
-- fallback 为 `tool`、`command`、`command output`、`diff`。
-- 展开后用带边框的详情卡片显示参数、输出或 diff。
-- 详情卡片保留复制入口，长命令、长 JSON、diff 支持横向滚动。
+- 不显示大图标，主线保持轻量。
+- 标题优先显示工具名，例如 `Read`、`Edit`、`Write`、`Bash`，不显示 `tool_use/tool_result/input_json_delta` 等协议名。
+- 文件工具必须显示工具名 + 文件名；文件名以 chip 展示，点击后在编辑器打开目标文件。
+- `Read/Edit/Write` 等文件操作可从 JSON/text/diff 中提取 path/file/filePath/file_path，无法提取时降级为普通工具行。
+- `Bash`、`command`、`commandOutput` 等终端类工具折叠态必须显示执行命令摘要，长命令单行截断并保留完整 tooltip。
+- 展开后用带边框的详情卡片显示参数、输出或 diff；终端类工具使用 `$ command` + stdout/stderr/output 的终端式卡片。
+- 详情卡片保留复制入口，复制终端详情时应包含命令和输出；长命令、长 JSON、diff 支持横向滚动。
 - 工具详情展示层过滤 `id/type/index/session/timestamp/message_start/message_stop/done` 等内部噪音，只保留 command/path/input/output/result/error/message/text/diff 等可理解字段，不能丢失错误原因。
 - 最新运行中的工具行只用静态字体/颜色强调，不做闪烁或 repeat 动画。
 - 执行完成后工具行自动恢复普通静态样式。
@@ -470,10 +472,12 @@ Windows 复刻建议：
 Windows 复刻建议：
 
 1. ToolRow 必须有 collapsed/expanded 两态。
-2. active 状态只给最后可见且 streaming 的工具行。
-3. 展开区必须是卡片，不直接裸露大段文字。
-4. 运行态只做静态 font/color 差异，避免闪烁动画和布局抖动。
-5. 原始事件仍可进诊断日志，但主 UI 和详情卡片默认不显示内部 envelope。
+2. 文件工具卡片必须提供 click-to-open 文件 chip，打开逻辑要限制在当前项目内。
+3. 终端命令卡片必须在 collapsed 态显示命令，在 expanded 态显示命令与输出回馈。
+4. active 状态只给最后可见且 streaming 的工具行。
+5. 展开区必须是卡片，不直接裸露大段文字。
+6. 运行态只做静态 font/color 差异，避免闪烁动画和布局抖动。
+7. 原始事件仍可进诊断日志，但主 UI 和详情卡片默认不显示内部 envelope。
 
 ### 9.5 Thinking row
 
@@ -560,6 +564,8 @@ Windows 复刻建议：
 | AssistantMessageRow | `.assistant` | Markdown 段落、代码块、表格 | 整条复制、代码块复制 | Lightweight Markdown renderer + code/table cards |
 | ThinkingRow | `.reasoning` | 标题 thinking；运行时展开，结束后收缩 | 手动展开/收起 | Expander/Disclosure |
 | ToolInvocationRow | tool/command/diff | 折叠；运行中静态强调 | 展开详情卡片、复制详情 | Expander + static active style + detail card |
+| FileToolCard | Read/Edit/Write/path 工具 | 显示工具名 + 文件名 chip | 点击文件名打开编辑器文件 | Tool row variant + current-project open-file guard |
+| TerminalCommandCard | Bash/command/commandOutput | 折叠态显示执行命令 | 展开 `$ command` + 输出/错误，复制详情 | Terminal-style card with command/output feedback |
 | PermissionCard | `.permissionRequest` | waiting | deny/allow/session allow | Card + buttons |
 | InteractiveCard | `.interactiveRequest` | waiting | 单选/多选/文本提交 | Card + inputs |
 | LoadingRow | awaiting first output | spinner + “正在生成” | 无 | Progress indicator |
@@ -753,6 +759,10 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 | 工具运行中 | 最新工具行只有静态字体/颜色强调，不闪烁 |
 | 展开工具 | 只展开当前行详情卡片，不污染主线 |
 | 工具噪音过滤 | 展开卡片不显示 id/type/index/session/timestamp/done 等内部 envelope，但必须保留 error/message/text |
+| Read 工具 | 折叠行显示 `Read` + 文件名 chip；点击文件名打开编辑器文件 |
+| Edit 工具 | 折叠行显示 `Edit` + 文件名 chip；展开仍能看到改动参数或 diff 摘要 |
+| Write 工具 | 折叠行显示 `Write` + 文件名 chip；新文件写入后点击文件名可打开 |
+| Bash/终端命令 | 折叠行显示执行命令；展开显示 `$ command` 和 stdout/stderr/output 回馈 |
 | diff | 默认折叠，展开看 diff |
 | permission | 卡片显示 deny/allow/session allow |
 | interactive | 单选、多选、文本输入可提交 |
@@ -817,11 +827,13 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 1. Transcript + auto scroll。
 2. User/Assistant/Thinking rows。
 3. ToolRow 折叠、展开、静态运行态。
-4. PermissionCard 与 InteractiveCard。
-5. QueueBar 与 Composer。
-6. Stop/Send 语义拆分。
+4. FileToolCard：Read/Edit/Write 显示工具名 + 文件名 chip，并支持点击打开项目内文件。
+5. TerminalCommandCard：Bash/command 折叠态显示命令，展开显示 `$ command` + 输出/错误回馈。
+6. PermissionCard 与 InteractiveCard。
+7. QueueBar 与 Composer。
+8. Stop/Send 语义拆分。
 
-完成条件：用 fake backend 手测 UI 矩阵全部通过；主 transcript 不出现 raw/system/result/internal JSON；工具行默认折叠且逐条下推；thinking 运行中展开、结束后收缩。
+完成条件：用 fake backend 手测 UI 矩阵全部通过；主 transcript 不出现 raw/system/result/internal JSON；工具行默认折叠且逐条下推；文件工具可点击打开；终端命令能看到命令和输出；thinking 运行中展开、结束后收缩。
 
 第四阶段：真实 CLI 验证
 
@@ -850,6 +862,10 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 - [ ] Claude 与 Codex 都走统一 ChatBackendEvent。
 - [ ] 主 transcript 不显示 raw/system/result/internal JSON。
 - [ ] tool/command/diff 每次调用按顺序独立向下推进。
+- [ ] Read/Edit/Write 等文件工具显示工具名和文件名。
+- [ ] 文件名 chip 可点击并打开当前项目内目标文件。
+- [ ] Bash/终端命令折叠态显示执行命令。
+- [ ] Bash/终端命令展开态显示 `$ command` 与输出/错误回馈。
 - [ ] thinking 标题常显，运行时展开，结束后收缩。
 - [ ] 工具运行态能看出“正在使用中”。
 - [ ] running send 入队，不 interrupt。
@@ -884,8 +900,11 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 | assistant/reasoning 合并约束 | `ClaudeMac/ViewModels/ChatPanelState.swift:627` |
 | transcript | `ClaudeMac/Views/ClaudeSessionPanelView.swift:140` |
 | transcriptItems | `ClaudeMac/Views/ClaudeSessionPanelView.swift:172` |
-| tool row | `ClaudeMac/Views/ClaudeSessionPanelView.swift:327` |
-| thinking row | `ClaudeMac/Views/ClaudeSessionPanelView.swift:391` |
+| tool row | `ClaudeMac/Views/ClaudeSessionPanelView.swift:337` |
+| file tool chip/open | `ClaudeMac/Views/ClaudeSessionPanelView.swift:386` / `ClaudeMac/ViewModels/AppState.swift:226` |
+| terminal detail card | `ClaudeMac/Views/ClaudeSessionPanelView.swift:467` |
+| tool display helpers | `ClaudeMac/Views/ClaudeSessionPanelView.swift:1955` |
+| thinking row | `ClaudeMac/Views/ClaudeSessionPanelView.swift:484` |
 | last visible row | `ClaudeMac/Views/ClaudeSessionPanelView.swift:431` |
 | queue view | `ClaudeMac/Views/ClaudeSessionPanelView.swift:598` |
 | send button | `ClaudeMac/Views/ClaudeSessionPanelView.swift:925` |
@@ -909,9 +928,11 @@ macOS 当前会解析项目目录并启动 security scoped resource。Windows �
 1. 主线只呈现用户、assistant、thinking、工具折叠、权限、选择题、loading 和 error。
 2. Claude Code 与 Codex 通过统一 backend event 接入同一状态机。
 3. 工具、命令、diff、MCP 类事件按时间顺序下推，默认折叠。
-4. thinking 与 assistant 不再错误合并到旧行。
-5. 运行中继续发送进入 FIFO 队列，不打断当前 run。
-6. 停止/失败不会自动启动队列下一条。
-7. Windows 端复刻时最大风险不在 UI，而在进程通信、stdin/stdout/stderr、JSONL、路径、编码、CLI 协议和权限回写验证。
+4. Read/Edit/Write 等文件工具按 IDE 卡片显示工具名与文件名，文件名可点击打开。
+5. Bash/终端命令按终端卡片显示执行命令与输出回馈。
+6. thinking 与 assistant 不再错误合并到旧行。
+7. 运行中继续发送进入 FIFO 队列，不打断当前 run。
+8. 停止/失败不会自动启动队列下一条。
+9. Windows 端复刻时最大风险不在 UI，而在进程通信、stdin/stdout/stderr、JSONL、路径、编码、CLI 协议和权限回写验证。
 
 后续 Windows 开发应以本文的 DTO、状态机和 UI 状态矩阵为契约，先用 fake backend 验证 UI，再接真实 Claude/Codex CLI，最后用真实 JSONL 样本修正协议兼容。
