@@ -2,10 +2,13 @@ import SwiftUI
 
 struct EditorTabBarView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var accountAuth: AccountAuthViewModel
+    var onLoginButtonTap: () -> Void = {}
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            Color.clear
+            WindowDraggableArea()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .bottom, spacing: 0) {
@@ -15,9 +18,48 @@ struct EditorTabBarView: View {
                     addTabButton
                 }
                 .padding(.horizontal, 0)
+                .padding(.trailing, 96)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            loginButton
+                .padding(.top, 6)
+                .padding(.trailing, 12)
+        }
         .frame(height: 39)
+    }
+
+    private var loginButton: some View {
+        Button(action: onLoginButtonTap) {
+            HStack(spacing: 5) {
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 12, weight: .medium))
+                Text(loginButtonTitle)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(AppTheme.controlSurface)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule().stroke(AppTheme.hairline, lineWidth: 1)
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("登录 AnnaCode 账号")
+    }
+
+    private var loginButtonTitle: String {
+        switch accountAuth.gateState {
+        case .checking:
+            "检查中"
+        case .unauthenticated:
+            "登录"
+        case .authenticated:
+            accountAuth.maskedAccount.isEmpty ? "已登录" : accountAuth.maskedAccount
+        }
     }
 
     private var addTabButton: some View {
@@ -49,10 +91,8 @@ struct EditorTabBarView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .medium))
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MiniIconButtonStyle(width: 22, height: 22))
             .foregroundStyle(.secondary.opacity(selected ? 0.74 : 0.52))
         }
         .padding(.leading, selected ? 16 : 14)
@@ -61,13 +101,13 @@ struct EditorTabBarView: View {
         .background {
             if selected {
                 TopRoundedTabShape(radius: 18)
-                    .fill(Color.white)
+                    .fill(AppTheme.editorBackground)
             }
         }
         .overlay(alignment: .bottom) {
             if selected {
                 Rectangle()
-                    .fill(Color.white)
+                    .fill(AppTheme.editorBackground)
                     .frame(height: 2)
             }
         }
@@ -100,4 +140,3 @@ private struct TopRoundedTabShape: Shape {
         return path
     }
 }
-

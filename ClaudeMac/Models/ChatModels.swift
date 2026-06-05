@@ -1,9 +1,23 @@
 import Foundation
+import ChatCore
 
 struct ChatModelOption: Identifiable, Codable, Equatable {
     let id: String
     let title: String
     let cli: CLIType
+    let contextWindow: Int?
+
+    init(id: String, title: String, cli: CLIType, contextWindow: Int? = nil) {
+        self.id = id
+        self.title = title
+        self.cli = cli
+        self.contextWindow = contextWindow
+    }
+}
+
+enum ChatModelReasoningFamily: Equatable {
+    case claude
+    case gpt
 }
 
 enum ChatModelCatalog {
@@ -15,14 +29,14 @@ enum ChatModelCatalog {
         case .claude:
             return [
                 ChatModelOption(id: defaultClaudeModelID, title: "默认", cli: .claude),
-                ChatModelOption(id: "claude-opus-4-7", title: "Opus 4.7 1M", cli: .claude),
+                ChatModelOption(id: "claude-opus-4-7", title: "Opus 4.7 1M", cli: .claude, contextWindow: 1_000_000),
                 ChatModelOption(id: "claude-opus-4-6", title: "Opus 4.6", cli: .claude),
                 ChatModelOption(id: "claude-sonnet-4-6", title: "Sonnet 4.6", cli: .claude),
                 ChatModelOption(id: "claude-haiku-4-5", title: "Haiku 4.5", cli: .claude)
             ]
         case .codex:
             return [
-                ChatModelOption(id: "gpt-5.5", title: "GPT-5.5", cli: .codex),
+                ChatModelOption(id: "gpt-5.5", title: "GPT-5.5", cli: .codex, contextWindow: 275_000),
                 ChatModelOption(id: defaultCodexModelID, title: "GPT-5.3 Codex", cli: .codex),
                 ChatModelOption(id: "gpt-5.4", title: "GPT-5.4", cli: .codex),
                 ChatModelOption(id: "gpt-5.2-codex", title: "GPT-5.2 Codex", cli: .codex),
@@ -42,8 +56,71 @@ enum ChatModelCatalog {
         cli.visibleValue == .codex ? defaultCodexModelID : defaultClaudeModelID
     }
 
+    static func compatibleModelID(_ id: String, cli: CLIType) -> String {
+        let normalized = executionModelID(for: id)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else { return defaultModelID(for: cli) }
+        switch cli.visibleValue {
+        case .claude:
+            return isKnownGPTModelID(normalized) ? defaultClaudeModelID : id
+        case .codex:
+            return normalized == defaultClaudeModelID || isKnownClaudeModelID(normalized) ? defaultCodexModelID : id
+        case .gemini, .custom:
+            return compatibleModelID(id, cli: .claude)
+        }
+    }
+
     static func executionModelID(for id: String) -> String {
         id.replacingOccurrences(of: "[1m]", with: "")
+    }
+
+    static func contextWindow(for id: String, cli: CLIType, metadataWindow: Int? = nil) -> Int {
+        if let metadataWindow, metadataWindow > 0 {
+            return metadataWindow
+        }
+
+        let raw = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let executionID = executionModelID(for: raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        if executionID == "gpt-5.5" || executionID == "gpt5.5" {
+            return 275_000
+        }
+        if executionID == "claude-opus-4-7"
+            || raw.contains("[1m]")
+            || raw.contains("1m")
+            || raw.contains("1000k") {
+            return 1_000_000
+        }
+        return 200_000
+    }
+
+    static func reasoningFamily(for id: String, cli: CLIType) -> ChatModelReasoningFamily {
+        let normalized = executionModelID(for: id)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if isKnownClaudeModelID(normalized) {
+            return .claude
+        }
+
+        if isKnownGPTModelID(normalized) {
+            return .gpt
+        }
+
+        return cli.visibleValue == .codex ? .gpt : .claude
+    }
+
+    private static func isKnownClaudeModelID(_ normalized: String) -> Bool {
+        normalized.hasPrefix("claude-") || normalized.hasPrefix("anthropic/claude-")
+    }
+
+    private static func isKnownGPTModelID(_ normalized: String) -> Bool {
+        normalized.hasPrefix("gpt-")
+            || normalized.hasPrefix("openai/")
+            || normalized.hasPrefix("o1")
+            || normalized.hasPrefix("o3")
+            || normalized.hasPrefix("o4")
+            || normalized.contains("codex")
     }
 }
 
@@ -104,21 +181,27 @@ enum ChatReasoningEffort: String, CaseIterable, Codable, Identifiable, Equatable
     var id: String { rawValue }
 
     static func options(for cli: CLIType) -> [ChatReasoningEffort] {
-        switch cli.visibleValue {
+        options(for: cli, modelID: ChatModelCatalog.defaultModelID(for: cli))
+    }
+
+    static func options(for cli: CLIType, modelID: String) -> [ChatReasoningEffort] {
+        switch ChatModelCatalog.reasoningFamily(for: modelID, cli: cli) {
         case .claude:
             return [.low, .medium, .high, .xhigh, .max]
-        case .codex:
-            return [.low, .medium, .high, .xhigh]
-        case .gemini, .custom:
+        case .gpt:
             return [.low, .medium, .high, .xhigh]
         }
     }
 
     func title(for cli: CLIType) -> String {
-        switch cli.visibleValue {
+        title(for: cli, modelID: ChatModelCatalog.defaultModelID(for: cli))
+    }
+
+    func title(for cli: CLIType, modelID: String) -> String {
+        switch ChatModelCatalog.reasoningFamily(for: modelID, cli: cli) {
         case .claude:
             return rawValue
-        case .codex, .gemini, .custom:
+        case .gpt:
             switch self {
             case .low: return "低"
             case .medium: return "中"
@@ -130,7 +213,11 @@ enum ChatReasoningEffort: String, CaseIterable, Codable, Identifiable, Equatable
     }
 
     func menuTitle(for cli: CLIType) -> String {
-        title(for: cli)
+        menuTitle(for: cli, modelID: ChatModelCatalog.defaultModelID(for: cli))
+    }
+
+    func menuTitle(for cli: CLIType, modelID: String) -> String {
+        title(for: cli, modelID: modelID)
     }
 
     var claudeArgument: String {
@@ -171,58 +258,12 @@ enum ChatPermissionDecision: String, Codable, Equatable {
     }
 }
 
-enum ChatMessageKind: String, Codable, Equatable, Hashable {
-    case user
-    case assistant
-    case reasoning
-    case toolCall
-    case toolResult
-    case command
-    case commandOutput
-    case permissionRequest
-    case interactiveRequest
-    case diff
-    case error
-    case system
-    case result
-    case rawOutput
-}
-
-enum ChatInteractiveMode: String, Codable, Equatable {
-    case singleChoice
-    case multipleChoice
-    case text
-}
-
-enum ChatInteractiveStatus: String, Codable, Equatable {
-    case waiting
-    case answered
-    case cancelled
-    case failed
-}
-
-struct ChatInteractiveOption: Identifiable, Codable, Equatable {
-    var id: String
-    var label: String
-    var detail: String
-}
-
-struct ChatInteractiveRequest: Identifiable, Codable, Equatable {
-    var id: String
-    var title: String
-    var prompt: String
-    var mode: ChatInteractiveMode
-    var options: [ChatInteractiveOption]
-    var allowCustomInput: Bool
-    var placeholder: String
-    var status: ChatInteractiveStatus
-}
-
-struct ChatInteractiveResponse: Codable, Equatable {
-    var requestID: String
-    var selectedOptionIDs: [String]
-    var customText: String?
-}
+typealias ChatMessageKind = ChatCore.ChatMessageKind
+typealias ChatInteractiveMode = ChatCore.ChatInteractiveMode
+typealias ChatInteractiveStatus = ChatCore.ChatInteractiveStatus
+typealias ChatInteractiveOption = ChatCore.ChatInteractiveOption
+typealias ChatInteractiveRequest = ChatCore.ChatInteractiveRequest
+typealias ChatInteractiveResponse = ChatCore.ChatInteractiveResponse
 
 enum ChatRunStatus: String, Codable, Equatable {
     case idle
@@ -246,10 +287,14 @@ enum ChatRunStatus: String, Codable, Equatable {
 struct QueuedChatRequest: Identifiable, Codable, Equatable {
     let id: UUID
     let text: String
+    let displayText: String
+    let appendRuleText: String?
+    let attachments: [ChatMessageAttachment]
     let project: ProjectItem
     let cli: CLIType
     let modelID: String
     let contextModelID: String?
+    let contextWindow: Int?
     let permissionMode: ChatPermissionMode
     let reasoningEffort: ChatReasoningEffort
     let sessionMode: SessionMode
@@ -259,10 +304,14 @@ struct QueuedChatRequest: Identifiable, Codable, Equatable {
     init(
         id: UUID = UUID(),
         text: String,
+        displayText: String? = nil,
+        appendRuleText: String? = nil,
+        attachments: [ChatMessageAttachment] = [],
         project: ProjectItem,
         cli: CLIType,
         modelID: String,
         contextModelID: String?,
+        contextWindow: Int? = nil,
         permissionMode: ChatPermissionMode,
         reasoningEffort: ChatReasoningEffort,
         sessionMode: SessionMode,
@@ -271,15 +320,56 @@ struct QueuedChatRequest: Identifiable, Codable, Equatable {
     ) {
         self.id = id
         self.text = text
+        self.displayText = displayText ?? text
+        self.appendRuleText = appendRuleText?.nonEmptyTrimmed
+        self.attachments = attachments
         self.project = project
         self.cli = cli.visibleValue
         self.modelID = modelID
         self.contextModelID = contextModelID
+        self.contextWindow = contextWindow
         self.permissionMode = permissionMode
         self.reasoningEffort = reasoningEffort
         self.sessionMode = sessionMode
         self.resumeSessionID = resumeSessionID
         self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case text
+        case displayText
+        case appendRuleText
+        case attachments
+        case project
+        case cli
+        case modelID
+        case contextModelID
+        case contextWindow
+        case permissionMode
+        case reasoningEffort
+        case sessionMode
+        case resumeSessionID
+        case createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        text = try values.decode(String.self, forKey: .text)
+        displayText = try values.decodeIfPresent(String.self, forKey: .displayText) ?? text
+        appendRuleText = try values.decodeIfPresent(String.self, forKey: .appendRuleText)?.nonEmptyTrimmed
+        attachments = try values.decodeIfPresent([ChatMessageAttachment].self, forKey: .attachments) ?? []
+        project = try values.decode(ProjectItem.self, forKey: .project)
+        cli = (try values.decode(CLIType.self, forKey: .cli)).visibleValue
+        modelID = try values.decode(String.self, forKey: .modelID)
+        contextModelID = try values.decodeIfPresent(String.self, forKey: .contextModelID)
+        contextWindow = try values.decodeIfPresent(Int.self, forKey: .contextWindow)
+        permissionMode = try values.decode(ChatPermissionMode.self, forKey: .permissionMode)
+        reasoningEffort = try values.decodeIfPresent(ChatReasoningEffort.self, forKey: .reasoningEffort) ?? .high
+        sessionMode = try values.decode(SessionMode.self, forKey: .sessionMode)
+        resumeSessionID = try values.decodeIfPresent(String.self, forKey: .resumeSessionID)
+        createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }
 
@@ -291,58 +381,10 @@ struct ChatSessionActivity: Equatable {
     var activeRunStartedAt: Date?
 }
 
-struct ChatMessage: Identifiable, Codable, Equatable {
-    var id: UUID
-    var sessionID: UUID
-    var kind: ChatMessageKind
-    var title: String
-    var subtitle: String
-    var text: String
-    var status: String
-    var createdAt: Date
-    var parentUserMessageID: UUID?
-    var requestID: String?
-    var isStreaming: Bool
-    var interactiveRequest: ChatInteractiveRequest?
+typealias ChatMessage = ChatCore.ChatMessage
 
-    init(
-        id: UUID = UUID(),
-        sessionID: UUID,
-        kind: ChatMessageKind,
-        title: String = "",
-        subtitle: String = "",
-        text: String,
-        status: String = "",
-        createdAt: Date = Date(),
-        parentUserMessageID: UUID? = nil,
-        requestID: String? = nil,
-        isStreaming: Bool = false,
-        interactiveRequest: ChatInteractiveRequest? = nil
-    ) {
-        self.id = id
-        self.sessionID = sessionID
-        self.kind = kind
-        self.title = title
-        self.subtitle = subtitle
-        self.text = text
-        self.status = status
-        self.createdAt = createdAt
-        self.parentUserMessageID = parentUserMessageID
-        self.requestID = requestID
-        self.isStreaming = isStreaming
-        self.interactiveRequest = interactiveRequest
-    }
-
-    var timestampText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "H:mm"
-        return formatter.string(from: createdAt)
-    }
-
-    var diffLines: [String] {
-        text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    }
-}
+typealias ChatMessageAttachment = ChatCore.ChatMessageAttachment
+typealias ChatMessageAttachmentKind = ChatCore.ChatMessageAttachmentKind
 
 struct ChatSessionRecord: Identifiable, Codable, Equatable {
     var id: UUID
@@ -479,16 +521,19 @@ struct ChatRunOptions: Equatable {
     var reasoningEffort: ChatReasoningEffort
     var sessionMode: SessionMode
     var resumeSessionID: String?
+    var supportsStreamJSONInput: Bool
 }
 
 enum ChatBackendEvent: Equatable {
     case appendMessage(kind: ChatMessageKind, title: String, subtitle: String, text: String, status: String, requestID: String?)
     case appendDelta(kind: ChatMessageKind, title: String, subtitle: String, text: String, status: String, requestID: String?)
+    case finishStreamingMessage(kind: ChatMessageKind, requestID: String?, status: String)
     case updateStreamingStatus(String)
+    case backendActivity(String)
     case sessionID(String)
     case permissionRequest(id: String, title: String, text: String)
     case interactiveRequest(ChatInteractiveRequest)
-    case tokenUsage(used: Int, total: Int)
+    case tokenUsage(used: Int, total: Int, output: Int?)
     case finished
     case failed(String)
 }

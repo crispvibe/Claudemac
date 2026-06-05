@@ -13,6 +13,46 @@ enum ProjectStoreError: LocalizedError {
     }
 }
 
+private final class FileTreeStatePersistenceQueue {
+    static let shared = FileTreeStatePersistenceQueue()
+
+    private let queue = DispatchQueue(label: "vin.anna.acode.filetree-state-persist", qos: .utility)
+    private let lock = NSLock()
+    private var pending: [String: Set<String>] = [:]
+    private var flushScheduled = false
+    private let debounceInterval: TimeInterval = 1.0
+
+    private init() {}
+
+    func enqueue(paths: Set<String>, projectPath: String) {
+        lock.lock()
+        pending[projectPath] = paths
+        let alreadyScheduled = flushScheduled
+        flushScheduled = true
+        lock.unlock()
+        guard !alreadyScheduled else { return }
+        queue.asyncAfter(deadline: .now() + debounceInterval) { [weak self] in
+            self?.flushIfNeeded()
+        }
+    }
+
+    func flushImmediately() {
+        queue.sync { [weak self] in
+            self?.flushIfNeeded()
+        }
+    }
+
+    private func flushIfNeeded() {
+        lock.lock()
+        let snapshot = pending
+        pending.removeAll(keepingCapacity: true)
+        flushScheduled = false
+        lock.unlock()
+        guard !snapshot.isEmpty else { return }
+        try? ProjectStore.writeExpandedStateMerged(snapshot)
+    }
+}
+
 struct ProjectStore {
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -80,6 +120,14 @@ struct ProjectStore {
     }
 
     static func loadSettings() -> AppSettings {
+        var settings = loadSettingsRaw()
+        if migrateLegacyUserDefaults(into: &settings) {
+            try? saveSettings(settings)
+        }
+        return settings
+    }
+
+    private static func loadSettingsRaw() -> AppSettings {
         do {
             let url = try settingsURL
             guard FileManager.default.fileExists(atPath: url.path) else { return .default }
@@ -95,6 +143,42 @@ struct ProjectStore {
         try data.write(to: settingsURL, options: [.atomic])
     }
 
+    /// One-time migration of legacy UserDefaults keys into AppSettings.
+    /// Idempotent: subsequent calls become no-ops once `settingsSchemaVersion >= 1`.
+    /// Returns true when settings was mutated and should be written back to disk.
+    static func migrateLegacyUserDefaults(into settings: inout AppSettings) -> Bool {
+        guard settings.settingsSchemaVersion < 1 else { return false }
+        let defaults = UserDefaults.standard
+
+        if defaults.object(forKey: "remoteChatServerEnabled") != nil {
+            settings.remoteChatServerEnabled = defaults.bool(forKey: "remoteChatServerEnabled")
+        }
+        let port = defaults.integer(forKey: "remoteChatServerPort")
+        if port > 0, port <= Int(UInt16.max) {
+            settings.remoteChatServerPort = port
+        }
+        if defaults.object(forKey: "remoteChatServerBindLAN") != nil {
+            settings.remoteChatServerBindLAN = defaults.bool(forKey: "remoteChatServerBindLAN")
+        }
+        if let token = defaults.string(forKey: "remoteChatServerToken"),
+           !token.isEmpty,
+           settings.remoteChatServerToken.isEmpty {
+            settings.remoteChatServerToken = token
+        }
+        if let claudeModels = defaults.stringArray(forKey: "customClaudeModelIDs"), !claudeModels.isEmpty {
+            settings.customClaudeModelIDs = claudeModels
+        }
+        if let codexModels = defaults.stringArray(forKey: "customCodexModelIDs"), !codexModels.isEmpty {
+            settings.customCodexModelIDs = codexModels
+        }
+        if let width = defaults.object(forKey: "root.chatPanelWidth") as? Double, width > 0 {
+            settings.chatPanelWidth = width
+        }
+
+        settings.settingsSchemaVersion = 1
+        return true
+    }
+
     static func loadExpandedFileTreePaths(for projectPath: String) -> Set<String> {
         do {
             let url = try fileTreeStateURL
@@ -108,15 +192,15 @@ struct ProjectStore {
     }
 
     static func saveExpandedFileTreePaths(_ paths: Set<String>, for projectPath: String) throws {
-        let url = try fileTreeStateURL
-        var state: [String: [String]] = [:]
-        if FileManager.default.fileExists(atPath: url.path) {
-            let data = try Data(contentsOf: url)
-            state = (try? decoder.decode([String: [String]].self, from: data)) ?? [:]
-        }
-        state[normalizedProjectPath(projectPath)] = paths.sorted()
-        let data = try encoder.encode(state)
-        try data.write(to: url, options: [.atomic])
+        FileTreeStatePersistenceQueue.shared.enqueue(paths: paths, projectPath: projectPath)
+    }
+
+    static func saveExpandedFileTreePathsImmediately(_ paths: Set<String>, for projectPath: String) throws {
+        try writeExpandedStateMerged([projectPath: paths])
+    }
+
+    static func flushPendingFileTreeState() {
+        FileTreeStatePersistenceQueue.shared.flushImmediately()
     }
 
     static func loadConfigProfiles() -> ConfigProfileCollection {
@@ -135,6 +219,20 @@ struct ProjectStore {
         let url = try configProfilesURL
         try data.write(to: url, options: [.atomic])
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    fileprivate static func writeExpandedStateMerged(_ snapshot: [String: Set<String>]) throws {
+        let url = try fileTreeStateURL
+        var state: [String: [String]] = [:]
+        if FileManager.default.fileExists(atPath: url.path) {
+            let data = try Data(contentsOf: url)
+            state = (try? decoder.decode([String: [String]].self, from: data)) ?? [:]
+        }
+        for (projectPath, paths) in snapshot {
+            state[normalizedProjectPath(projectPath)] = paths.sorted()
+        }
+        let data = try encoder.encode(state)
+        try data.write(to: url, options: [.atomic])
     }
 
     private static func normalizedProjectPath(_ value: String) -> String {

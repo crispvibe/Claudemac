@@ -88,8 +88,37 @@ struct FileNode: Identifiable, Hashable {
     let url: URL
     let name: String
     let isDirectory: Bool
+    var isPendingCreation: Bool = false
 
     var id: String { url.path }
+}
+
+struct ImagePreviewDescriptor: Equatable {
+    let url: URL
+    let byteCount: Int
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let modifiedAt: Date?
+    let bookmarkData: Data?
+}
+
+enum EditorPreview: Equatable {
+    case image(ImagePreviewDescriptor)
+    case pdf(Data, isValid: Bool)
+
+    var byteCount: Int {
+        switch self {
+        case .image(let descriptor): descriptor.byteCount
+        case .pdf(let data, _): data.count
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .image: "图片预览"
+        case .pdf: "PDF 预览"
+        }
+    }
 }
 
 struct EditorTab: Identifiable, Equatable {
@@ -104,6 +133,27 @@ struct EditorTab: Identifiable, Equatable {
     var openedAt: Date
     var lastActiveAt: Date
     var modifiedAt: Date
+    var preview: EditorPreview?
+    var isLoadingContent: Bool = false
+    var loadErrorMessage: String?
+
+    var isTextEditable: Bool { preview == nil && loadErrorMessage == nil }
+
+    var byteCount: Int { preview?.byteCount ?? text.utf8.count }
+}
+
+struct EditorJumpRequest: Identifiable, Equatable {
+    let id: UUID
+    let tabID: UUID
+    let line: Int
+    let column: Int
+
+    init(tabID: UUID, line: Int, column: Int = 1) {
+        self.id = UUID()
+        self.tabID = tabID
+        self.line = max(1, line)
+        self.column = max(1, column)
+    }
 }
 
 struct LaunchRecord: Identifiable, Codable, Equatable {
@@ -147,6 +197,14 @@ struct CLIHistorySession: Identifiable, Equatable {
     }
 }
 
+struct AuthorizedFolder: Identifiable, Codable, Equatable {
+    var id: UUID
+    var name: String
+    var path: String
+    var bookmarkData: Data
+    var createdAt: Date
+}
+
 struct AppSettings: Codable, Equatable {
     var defaultTerminal: TerminalType
     var defaultCLI: CLIType
@@ -154,28 +212,61 @@ struct AppSettings: Codable, Equatable {
     var chatPermissionMode: ChatPermissionMode
     var selectedClaudeModelID: String
     var selectedCodexModelID: String
+    var selectedClaudeReasoningEffort: ChatReasoningEffort
+    var selectedCodexReasoningEffort: ChatReasoningEffort
     var showCommandPreview: Bool
+    var appendRuleEnabled: Bool
+    var appendRuleText: String
     var ignoredFolders: [String]
-    var enableClaudeHistoryScan: Bool
     var apiBaseURL: String
     var apiKey: String
+    var authorizedFolders: [AuthorizedFolder]
+    var hasSeenFolderPermissionOnboarding: Bool
     var lastSelectedProjectPath: String?
     var lastSelectedCLIHistoryID: String?
+    // Remote chat server (previously stored in UserDefaults; migrated on first launch).
+    var remoteChatServerEnabled: Bool
+    var remoteChatServerPort: Int
+    var remoteChatServerBindLAN: Bool
+    var remoteChatServerToken: String
+    // Custom model IDs (previously stored in UserDefaults).
+    var customClaudeModelIDs: [String]
+    var customCodexModelIDs: [String]
+    // Chat panel width (previously stored via @AppStorage).
+    var chatPanelWidth: Double
+    var sidebarProjectSectionHeight: Double
+    /// Bumped whenever we add new fields whose defaults need to be migrated from
+    /// UserDefaults. AppState consults this on launch to run migration once.
+    var settingsSchemaVersion: Int
 
     static let `default` = AppSettings(
         defaultTerminal: .terminal,
         defaultCLI: .claude,
         chatCLI: .claude,
-        chatPermissionMode: .ask,
+        chatPermissionMode: .autoEdit,
         selectedClaudeModelID: ChatModelCatalog.defaultClaudeModelID,
         selectedCodexModelID: ChatModelCatalog.defaultCodexModelID,
+        selectedClaudeReasoningEffort: .high,
+        selectedCodexReasoningEffort: .high,
         showCommandPreview: true,
+        appendRuleEnabled: false,
+        appendRuleText: "",
         ignoredFolders: FileTreeScanner.defaultIgnoredNames.sorted(),
-        enableClaudeHistoryScan: true,
         apiBaseURL: "",
         apiKey: "",
+        authorizedFolders: [],
+        hasSeenFolderPermissionOnboarding: false,
         lastSelectedProjectPath: nil,
-        lastSelectedCLIHistoryID: nil
+        lastSelectedCLIHistoryID: nil,
+        remoteChatServerEnabled: true,
+        remoteChatServerPort: 18765,
+        remoteChatServerBindLAN: false,
+        remoteChatServerToken: "",
+        customClaudeModelIDs: [],
+        customCodexModelIDs: [],
+        chatPanelWidth: 420,
+        sidebarProjectSectionHeight: 252,
+        settingsSchemaVersion: 0
     )
 
     init(
@@ -185,13 +276,27 @@ struct AppSettings: Codable, Equatable {
         chatPermissionMode: ChatPermissionMode,
         selectedClaudeModelID: String,
         selectedCodexModelID: String,
+        selectedClaudeReasoningEffort: ChatReasoningEffort = .high,
+        selectedCodexReasoningEffort: ChatReasoningEffort = .high,
         showCommandPreview: Bool,
+        appendRuleEnabled: Bool,
+        appendRuleText: String,
         ignoredFolders: [String],
-        enableClaudeHistoryScan: Bool,
         apiBaseURL: String,
         apiKey: String,
+        authorizedFolders: [AuthorizedFolder] = [],
+        hasSeenFolderPermissionOnboarding: Bool = false,
         lastSelectedProjectPath: String?,
-        lastSelectedCLIHistoryID: String?
+        lastSelectedCLIHistoryID: String?,
+        remoteChatServerEnabled: Bool = true,
+        remoteChatServerPort: Int = 18765,
+        remoteChatServerBindLAN: Bool = false,
+        remoteChatServerToken: String = "",
+        customClaudeModelIDs: [String] = [],
+        customCodexModelIDs: [String] = [],
+        chatPanelWidth: Double = 420,
+        sidebarProjectSectionHeight: Double = 252,
+        settingsSchemaVersion: Int = 0
     ) {
         self.defaultTerminal = defaultTerminal
         self.defaultCLI = defaultCLI
@@ -199,13 +304,27 @@ struct AppSettings: Codable, Equatable {
         self.chatPermissionMode = chatPermissionMode
         self.selectedClaudeModelID = selectedClaudeModelID
         self.selectedCodexModelID = selectedCodexModelID
+        self.selectedClaudeReasoningEffort = selectedClaudeReasoningEffort
+        self.selectedCodexReasoningEffort = selectedCodexReasoningEffort
         self.showCommandPreview = showCommandPreview
+        self.appendRuleEnabled = appendRuleEnabled
+        self.appendRuleText = appendRuleText
         self.ignoredFolders = ignoredFolders
-        self.enableClaudeHistoryScan = enableClaudeHistoryScan
         self.apiBaseURL = apiBaseURL
         self.apiKey = apiKey
+        self.authorizedFolders = authorizedFolders
+        self.hasSeenFolderPermissionOnboarding = hasSeenFolderPermissionOnboarding
         self.lastSelectedProjectPath = lastSelectedProjectPath
         self.lastSelectedCLIHistoryID = lastSelectedCLIHistoryID
+        self.remoteChatServerEnabled = remoteChatServerEnabled
+        self.remoteChatServerPort = remoteChatServerPort
+        self.remoteChatServerBindLAN = remoteChatServerBindLAN
+        self.remoteChatServerToken = remoteChatServerToken
+        self.customClaudeModelIDs = customClaudeModelIDs
+        self.customCodexModelIDs = customCodexModelIDs
+        self.chatPanelWidth = chatPanelWidth
+        self.sidebarProjectSectionHeight = sidebarProjectSectionHeight
+        self.settingsSchemaVersion = settingsSchemaVersion
     }
 
     init(from decoder: Decoder) throws {
@@ -213,20 +332,34 @@ struct AppSettings: Codable, Equatable {
         defaultTerminal = try values.decodeIfPresent(TerminalType.self, forKey: .defaultTerminal) ?? .terminal
         defaultCLI = try values.decodeIfPresent(CLIType.self, forKey: .defaultCLI) ?? .claude
         chatCLI = (try values.decodeIfPresent(CLIType.self, forKey: .chatCLI) ?? defaultCLI).visibleValue
-        chatPermissionMode = try values.decodeIfPresent(ChatPermissionMode.self, forKey: .chatPermissionMode) ?? .ask
+        chatPermissionMode = try values.decodeIfPresent(ChatPermissionMode.self, forKey: .chatPermissionMode) ?? .autoEdit
         selectedClaudeModelID = try values.decodeIfPresent(String.self, forKey: .selectedClaudeModelID) ?? ChatModelCatalog.defaultClaudeModelID
         selectedCodexModelID = try values.decodeIfPresent(String.self, forKey: .selectedCodexModelID) ?? ChatModelCatalog.defaultCodexModelID
+        selectedClaudeReasoningEffort = try values.decodeIfPresent(ChatReasoningEffort.self, forKey: .selectedClaudeReasoningEffort) ?? .high
+        selectedCodexReasoningEffort = try values.decodeIfPresent(ChatReasoningEffort.self, forKey: .selectedCodexReasoningEffort) ?? .high
         showCommandPreview = try values.decodeIfPresent(Bool.self, forKey: .showCommandPreview) ?? true
+        appendRuleEnabled = try values.decodeIfPresent(Bool.self, forKey: .appendRuleEnabled) ?? false
+        appendRuleText = try values.decodeIfPresent(String.self, forKey: .appendRuleText) ?? ""
         ignoredFolders = try values.decodeIfPresent([String].self, forKey: .ignoredFolders) ?? FileTreeScanner.defaultIgnoredNames.sorted()
-        enableClaudeHistoryScan = try values.decodeIfPresent(Bool.self, forKey: .enableClaudeHistoryScan) ?? true
         apiBaseURL = try values.decodeIfPresent(String.self, forKey: .apiBaseURL) ?? ""
         apiKey = try values.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        authorizedFolders = try values.decodeIfPresent([AuthorizedFolder].self, forKey: .authorizedFolders) ?? []
+        hasSeenFolderPermissionOnboarding = try values.decodeIfPresent(Bool.self, forKey: .hasSeenFolderPermissionOnboarding) ?? false
         lastSelectedProjectPath = try values.decodeIfPresent(String.self, forKey: .lastSelectedProjectPath)
         lastSelectedCLIHistoryID = try values.decodeIfPresent(String.self, forKey: .lastSelectedCLIHistoryID)
+        remoteChatServerEnabled = try values.decodeIfPresent(Bool.self, forKey: .remoteChatServerEnabled) ?? true
+        remoteChatServerPort = try values.decodeIfPresent(Int.self, forKey: .remoteChatServerPort) ?? 18765
+        remoteChatServerBindLAN = try values.decodeIfPresent(Bool.self, forKey: .remoteChatServerBindLAN) ?? false
+        remoteChatServerToken = try values.decodeIfPresent(String.self, forKey: .remoteChatServerToken) ?? ""
+        customClaudeModelIDs = try values.decodeIfPresent([String].self, forKey: .customClaudeModelIDs) ?? []
+        customCodexModelIDs = try values.decodeIfPresent([String].self, forKey: .customCodexModelIDs) ?? []
+        chatPanelWidth = try values.decodeIfPresent(Double.self, forKey: .chatPanelWidth) ?? 420
+        sidebarProjectSectionHeight = try values.decodeIfPresent(Double.self, forKey: .sidebarProjectSectionHeight) ?? 252
+        settingsSchemaVersion = try values.decodeIfPresent(Int.self, forKey: .settingsSchemaVersion) ?? 0
     }
 }
 
-struct ClaudeRelayProfile: Identifiable, Codable, Equatable {
+struct ClaudeRelayProfile: Identifiable, Codable, Equatable, Sendable {
     var id: UUID
     var name: String
     var baseURL: String
@@ -241,7 +374,7 @@ struct ClaudeRelayProfile: Identifiable, Codable, Equatable {
     var updatedAt: Date
 }
 
-struct CodexConfigProfile: Identifiable, Codable, Equatable {
+struct CodexConfigProfile: Identifiable, Codable, Equatable, Sendable {
     var id: UUID
     var name: String
     var authMode: String
@@ -253,7 +386,7 @@ struct CodexConfigProfile: Identifiable, Codable, Equatable {
     var updatedAt: Date
 }
 
-struct ConfigProfileCollection: Codable, Equatable {
+struct ConfigProfileCollection: Codable, Equatable, Sendable {
     var activeClaudeRelayProfileID: UUID?
     var activeCodexProfileID: UUID?
     var claudeRelayProfiles: [ClaudeRelayProfile]

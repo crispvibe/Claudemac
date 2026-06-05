@@ -1,11 +1,15 @@
+import AppKit
 import SwiftUI
 
 struct SettingsPageView: View {
     private enum SettingsCategory: String, CaseIterable, Identifiable {
         case general
+        case accountSecurity
         case claude
         case codex
-        case update
+        case remoteChat
+        case appendRules
+        case globalRules
         case about
 
         var id: String { rawValue }
@@ -13,41 +17,112 @@ struct SettingsPageView: View {
         var title: String {
             switch self {
             case .general: "通用"
+            case .accountSecurity: "账号与安全"
             case .claude: "Claude Code"
             case .codex: "Codex"
-            case .update: "版本"
-            case .about: "关于"
+            case .remoteChat: "设备连接"
+            case .appendRules: "追加规则"
+            case .globalRules: "全局规则"
+            case .about: "关于与版本"
             }
         }
 
         var systemImage: String {
             switch self {
             case .general: "gearshape"
+            case .accountSecurity: "person.crop.circle.badge.checkmark"
             case .claude: "terminal"
             case .codex: "cpu"
-            case .update: "arrow.triangle.2.circlepath"
+            case .remoteChat: "display"
+            case .appendRules: "text.badge.checkmark"
+            case .globalRules: "doc.text"
             case .about: "info.circle"
             }
         }
     }
 
-    private enum CodexAuthMode: String, CaseIterable, Identifiable, Hashable {
-        case account
+    private enum CodexAuthMode: String, Identifiable, Hashable, Sendable {
         case apiKey
+
+        var id: String { rawValue }
+        var title: String { "API Key / 中转站" }
+    }
+
+    private enum GlobalRuleKind: String, CaseIterable, Identifiable, Hashable, Sendable {
+        case claude
+        case codex
 
         var id: String { rawValue }
 
         var title: String {
             switch self {
-            case .account: "账号登录"
-            case .apiKey: "API Key / 中转站"
+            case .claude: "Claude Code"
+            case .codex: "Codex"
             }
         }
     }
 
+    private enum ModelFetchOutcome: Sendable {
+        case success([String])
+        case failure(String)
+    }
+
+    private struct ClaudeSettingsSnapshot: Sendable {
+        var baseURL = ""
+        var authToken = ""
+        var model = ""
+        var haikuModel = ""
+        var sonnetModel = ""
+        var opusModel = ""
+        var httpProxy = ""
+        var httpsProxy = ""
+    }
+
+    private struct CodexSettingsSnapshot: Sendable {
+        var model = ""
+        var baseURL = ""
+        var apiKey = ""
+        var wireApi = "responses"
+        var authMode: CodexAuthMode = .apiKey
+    }
+
+    private struct GlobalRuleSnapshot: Sendable {
+        var text: String
+        var status: String
+        var isTooLarge: Bool
+    }
+
+    private struct AppUpdateCheckResponse: Decodable {
+        let updateAvailable: Bool
+        let latestVersion: String
+        let latestBuildNumber: String
+        let packageArch: String?
+        let releaseNotes: String
+        let updateType: String
+        let downloadUrl: String
+        let appStoreUrl: String
+        let forceUpdate: Bool
+    }
+
+    private struct SettingsDiskSnapshot: Sendable {
+        var claude: ClaudeSettingsSnapshot
+        var codex: CodexSettingsSnapshot
+        var profiles: ConfigProfileCollection
+        var globalRule: GlobalRuleSnapshot
+    }
+
+    private struct ModelMenuItems {
+        var items: [String]
+        var hiddenCount: Int
+    }
+
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var modelService: ChatModelService
+    @EnvironmentObject private var accountAuth: AccountAuthViewModel
+    @EnvironmentObject private var deviceProvisioning: DeviceProvisioningViewModel
     private let showsBackButton: Bool
+    private let accountDeletionWaiveDisplayText = "确认放弃电脑端服务权益"
+    private let accountDeletionWaiveBackendText = "不要这些权益"
 
     init(showsBackButton: Bool = true) {
         self.showsBackButton = showsBackButton
@@ -57,7 +132,8 @@ struct SettingsPageView: View {
     @State private var defaultCLI: CLIType = .claude
     @State private var defaultTerminal: TerminalType = .terminal
     @State private var showCommandPreview = true
-    @State private var enableClaudeHistoryScan = true
+    @State private var appendRuleEnabled = false
+    @State private var appendRuleText = ""
     @State private var ignoredFoldersText = ""
 
     // 中转站配置（直接读写 ~/.claude/settings.json）
@@ -75,6 +151,7 @@ struct SettingsPageView: View {
     @State private var configProfiles: ConfigProfileCollection = .empty
     @State private var selectedClaudeProfileID: UUID?
     @State private var newClaudeProfileName = ""
+    @State private var editingClaudeProfile: ClaudeRelayProfile?
 
     // Codex 配置（读写 ~/.codex/config.toml + auth.json）
     @State private var codexModel = ""
@@ -82,12 +159,32 @@ struct SettingsPageView: View {
     @State private var codexApiKey = ""
     @State private var codexWireApi = "responses"
     @State private var codexAuthMode: CodexAuthMode = .apiKey
-    @State private var codexAccountStatus = ""
     @State private var codexSaveStatus = ""
     @State private var codexModelList: [String] = []
     @State private var isFetchingCodexModels = false
     @State private var selectedCodexProfileID: UUID?
     @State private var newCodexProfileName = ""
+    @State private var editingCodexProfile: CodexConfigProfile?
+
+    @State private var remoteChatEnabled = true
+    @State private var remoteChatStatus = ""
+
+    @State private var selectedGlobalRuleKind: GlobalRuleKind = .claude
+    @State private var globalRuleText = ""
+    @State private var globalRuleStatus = ""
+    @State private var isGlobalRuleTooLarge = false
+    @State private var settingsLoadTask: Task<Void, Never>?
+    @State private var codexSettingsLoadTask: Task<Void, Never>?
+    @State private var globalRuleLoadTask: Task<Void, Never>?
+    @State private var claudeModelFetchTask: Task<Void, Never>?
+    @State private var codexModelFetchTask: Task<Void, Never>?
+    @State private var updateCheckStatus = ""
+    @State private var updateDownloadURL: URL?
+    @State private var isCheckingForUpdate = false
+    @State private var deleteConfirmAccount = ""
+    @State private var deleteConfirmDestroy = ""
+    @State private var deleteConfirmWaiveRights = ""
+    @State private var deleteReason = ""
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知"
@@ -97,63 +194,136 @@ struct SettingsPageView: View {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
     }
 
-    private static let realHomeDir: URL = {
+    nonisolated private static let realHomeDir: URL = {
         if let pw = getpwuid(getuid()), let home = pw.pointee.pw_dir {
             return URL(fileURLWithPath: String(cString: home))
         }
         return FileManager.default.homeDirectoryForCurrentUser
     }()
 
-    private static let claudeSettingsURL: URL = {
+    nonisolated private static let claudeSettingsURL: URL = {
         realHomeDir.appendingPathComponent(".claude/settings.json")
     }()
 
-    private static let codexConfigURL: URL = {
+    nonisolated private static let codexConfigURL: URL = {
         realHomeDir.appendingPathComponent(".codex/config.toml")
     }()
 
-    private static let codexAuthURL: URL = {
+    nonisolated private static let codexAuthURL: URL = {
         realHomeDir.appendingPathComponent(".codex/auth.json")
     }()
 
-    private static let ccSwitchCodexOAuthURL: URL = {
-        realHomeDir.appendingPathComponent(".cc-switch/codex_oauth_auth.json")
+    nonisolated private static let claudeGlobalRulesURL: URL = {
+        realHomeDir.appendingPathComponent(".claude/CLAUDE.md")
     }()
 
+    nonisolated private static let codexGlobalRulesURL: URL = {
+        realHomeDir.appendingPathComponent(".codex/AGENTS.md")
+    }()
+
+    nonisolated private static let maxEditableGlobalRuleBytes = 1_000_000
+    nonisolated private static let modelMenuLimit = 300
+
     private var codexAvailableModels: [String] {
+        codexAvailableModels(including: codexModel)
+    }
+
+    private func codexAvailableModels(including currentModel: String) -> [String] {
         var models = ChatModelCatalog.options(for: .codex).map(\.id)
         models.append(contentsOf: codexModelList)
-        if !codexModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            models.insert(codexModel, at: 0)
+        if !currentModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            models.insert(currentModel, at: 0)
         }
         return uniqueStrings(models)
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().opacity(0.18)
-            HStack(alignment: .top, spacing: 18) {
-                categoryTabs
-                    .frame(width: 178)
-                ScrollView {
-                    selectedSettingsContent
-                        .padding(.trailing, 28)
-                        .padding(.vertical, 24)
-                        .frame(maxWidth: 760)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+        HStack(alignment: .top, spacing: 6) {
+            settingsSidebar
+
+            ScrollView {
+                selectedSettingsContent
+                    .padding(.vertical, 24)
+                    .padding(.horizontal, 24)
+                    .frame(maxWidth: 920)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.leading, 28)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AppTheme.editorSurface.opacity(0.86))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(AppTheme.hairline, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .shadow(color: AppTheme.softShadow, radius: 16, y: 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.white)
         .onAppear {
             loadSettings()
-            loadClaudeSettings()
-            loadCodexSettings()
-            loadConfigProfiles()
+            loadSettingsSnapshot()
         }
+        .onDisappear {
+            cancelSettingsTasks()
+        }
+        .onChange(of: selectedGlobalRuleKind) { _, _ in
+            loadGlobalRuleText()
+        }
+        .sheet(item: $editingClaudeProfile) { profile in
+            claudeProfileEditorSheet(profile)
+        }
+        .sheet(item: $editingCodexProfile) { profile in
+            codexProfileEditorSheet(profile)
+        }
+        .sheet(item: legalDocumentBinding) { document in
+            LegalDocumentSheet(document: document)
+        }
+    }
+
+    private var settingsSidebar: some View {
+        GlassPanel {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("设置")
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                .padding(.bottom, 12)
+
+                Divider().opacity(0.24)
+                    .padding(.horizontal, 14)
+
+                categoryTabs
+                    .padding(.horizontal, 10)
+                    .padding(.top, 8)
+                    .frame(maxHeight: .infinity, alignment: .top)
+
+                Divider().opacity(0.24)
+                    .padding(.horizontal, 14)
+
+                if showsBackButton {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            appState.showSettings = false
+                        }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("返回")
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    .buttonStyle(SettingsSidebarReturnButtonStyle())
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                }
+            }
+        }
+        .frame(width: 228)
+        .frame(maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -161,19 +331,25 @@ struct SettingsPageView: View {
         switch selectedCategory {
         case .general:
             generalSection
+        case .accountSecurity:
+            accountSecuritySection
         case .claude:
             relaySection
         case .codex:
             codexSection
-        case .update:
-            updateSection
+        case .remoteChat:
+            remoteChatSection
+        case .appendRules:
+            appendRulesSection
+        case .globalRules:
+            globalRulesSection
         case .about:
             aboutSection
         }
     }
 
     private var categoryTabs: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(SettingsCategory.allCases) { category in
                 Button {
                     withAnimation(.easeOut(duration: 0.14)) {
@@ -186,60 +362,21 @@ struct SettingsPageView: View {
                             .frame(width: 16)
                             .foregroundStyle(selectedCategory == category ? Color.accentColor : .secondary)
                         Text(category.title)
-                            .font(.system(size: 13, weight: selectedCategory == category ? .semibold : .medium))
+                            .font(.system(size: 13, weight: selectedCategory == category ? .semibold : .regular))
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 13)
-                    .frame(height: 38)
-                    .foregroundStyle(selectedCategory == category ? .primary : .secondary)
-                    .background(selectedCategory == category ? AppTheme.selectedSurface : Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.weakHairline, lineWidth: 1))
-                    .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.top, 24)
-        .padding(.bottom, 24)
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack {
-            if showsBackButton {
-                Button(action: { appState.showSettings = false }) {
-                    HStack(spacing: 7) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .bold))
-                        Text("返回")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .padding(.horizontal, 12)
+                    .padding(.leading, 11)
+                    .padding(.trailing, 10)
                     .padding(.vertical, 8)
-                    .background(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+                    .foregroundStyle(selectedCategory == category ? .primary : .secondary)
+                    .background(selectedCategory == category ? AppTheme.selectedSurface : AppTheme.controlSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(AppTheme.weakHairline, lineWidth: 1))
+                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-            } else {
-                Color.clear.frame(width: 76, height: 34)
             }
-
-            Spacer()
-
-            Text("设置")
-                .font(.system(size: 16, weight: .semibold))
-
-            Spacer()
-
-            Color.clear.frame(width: 76, height: 34)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 14)
     }
 
     // MARK: - General
@@ -258,9 +395,6 @@ struct SettingsPageView: View {
                     selection: $defaultTerminal,
                     options: TerminalType.allCases.map { ($0, $0.displayName) }
                 )
-
-                settingsToggle(title: "显示命令预览", isOn: $showCommandPreview)
-                settingsToggle(title: "扫描 Claude / Codex 历史会话", isOn: $enableClaudeHistoryScan)
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -271,13 +405,15 @@ struct SettingsPageView: View {
                     .scrollContentBackground(.hidden)
                     .padding(10)
                     .frame(minHeight: 132)
-                    .background(Color.white)
+                    .background(AppTheme.inputSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
                 Text("每行一个目录名")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
+
+            authorizedFoldersSection
 
             HStack {
                 Button("恢复默认") {
@@ -292,86 +428,447 @@ struct SettingsPageView: View {
         }
     }
 
+    private var authorizedFoldersSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("授权文件夹")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("启动提示和这里添加的目录都会通过系统面板授权；添加桌面、下载或常用工作目录后，打开其中的外部文件会优先复用目录授权。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 12)
+                Button("添加文件夹") {
+                    appState.addAuthorizedFolder()
+                }
+                .buttonStyle(SettingsSecondaryButtonStyle())
+            }
+
+            if appState.settings.authorizedFolders.isEmpty {
+                Text("尚未添加授权文件夹")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 10)
+                    .frame(height: 34, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppTheme.secondaryCardSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(appState.settings.authorizedFolders) { folder in
+                        HStack(spacing: 10) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 18)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(folder.name)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .lineLimit(1)
+                                Text(folder.path)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer(minLength: 8)
+                            Button("移除") {
+                                appState.removeAuthorizedFolder(folder)
+                            }
+                            .buttonStyle(SettingsSecondaryButtonStyle(compact: true))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AppTheme.secondaryCardSurface)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Account & Security
+
+    private var accountSecuritySection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            settingsCard(title: "账号与安全") {
+                accountSummaryRow
+
+                Divider().opacity(0.28)
+
+                settingsGrid {
+                    changePasswordForm
+                    accountDangerPanel
+                }
+            }
+        }
+        .task {
+            await accountAuth.loadLegalDocumentsIfNeeded()
+        }
+    }
+
+    private var accountSummaryRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "person.crop.circle.fill.badge.checkmark")
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(accountAuth.currentSession.map { accountRemoteDisplayAccount($0.user) } ?? "未登录")
+                    .font(.system(size: 15, weight: .semibold))
+                Text(accountAuth.currentSession.map { "账号状态：\($0.user.status)" } ?? "登录后可以管理密码、退出登录和注销账号")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            Button("退出登录") {
+                Task { await accountAuth.logout() }
+            }
+            .buttonStyle(SettingsSecondaryButtonStyle())
+            .disabled(accountAuth.currentSession == nil)
+        }
+        .padding(14)
+        .background(AppTheme.inputSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+    }
+
+    private var changePasswordForm: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            settingsFormHeader(title: "修改密码", subtitle: "修改成功后会清除本机登录状态，需要重新登录。")
+            SecureField("当前密码", text: $accountAuth.changePasswordCurrent)
+                .settingsTextFieldChrome()
+            SecureField("新密码", text: $accountAuth.changePasswordNew)
+                .settingsTextFieldChrome()
+            SecureField("确认新密码", text: $accountAuth.changePasswordConfirm)
+                .settingsTextFieldChrome()
+            if let message = accountAuth.changePasswordMessage {
+                settingsInlineMessage(message)
+            }
+            Button(accountAuth.changePasswordSubmitting ? "修改中…" : "确认修改") {
+                Task { await accountAuth.requestChangePassword() }
+            }
+            .buttonStyle(SettingsPrimaryButtonStyle())
+            .disabled(!accountAuth.canSubmitChangePassword)
+        }
+        .padding(14)
+        .background(AppTheme.secondaryCardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.weakHairline, lineWidth: 1))
+    }
+
+    private var accountDangerPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            settingsFormHeader(title: "注销账号", subtitle: "注销会删除远程账号主数据，操作不可恢复。")
+            TextField("输入：我确认注销账号", text: $deleteConfirmAccount)
+                .settingsTextFieldChrome()
+            TextField("输入：确认销毁", text: $deleteConfirmDestroy)
+                .settingsTextFieldChrome()
+            TextField("输入：\(accountDeletionWaiveDisplayText)", text: $deleteConfirmWaiveRights)
+                .settingsTextFieldChrome()
+            TextField("注销原因（选填）", text: $deleteReason)
+                .settingsTextFieldChrome()
+            if let message = accountAuth.accountDeletionMessage {
+                settingsInlineMessage(message)
+            }
+            Button(accountAuth.accountDeletionSubmitting ? "注销中…" : "确认注销账号") {
+                Task {
+                    let ok = await accountAuth.requestAccountDeletion(
+                        confirmAccount: deleteConfirmAccount,
+                        confirmDestroy: deleteConfirmDestroy,
+                        confirmWaiveRights: accountDeletionWaiveBackendText,
+                        reason: deleteReason
+                    )
+                    if ok {
+                        deleteConfirmAccount = ""
+                        deleteConfirmDestroy = ""
+                        deleteConfirmWaiveRights = ""
+                        deleteReason = ""
+                    }
+                }
+            }
+            .buttonStyle(SettingsDestructiveButtonStyle())
+            .disabled(!canSubmitAccountDeletion || accountAuth.accountDeletionSubmitting || accountAuth.currentSession == nil)
+        }
+        .padding(14)
+        .background(AppTheme.secondaryCardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.weakHairline, lineWidth: 1))
+    }
+
+    private var canSubmitAccountDeletion: Bool {
+        deleteConfirmAccount.trimmingCharacters(in: .whitespacesAndNewlines) == "我确认注销账号"
+            && deleteConfirmDestroy.trimmingCharacters(in: .whitespacesAndNewlines) == "确认销毁"
+            && deleteConfirmWaiveRights.trimmingCharacters(in: .whitespacesAndNewlines) == accountDeletionWaiveDisplayText
+    }
+
+    private func settingsFormHeader(title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+            Text(subtitle)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func settingsInlineMessage(_ message: String) -> some View {
+        Text(message)
+            .font(.system(size: 12))
+            .foregroundStyle(message.contains("失败") || message.contains("失效") ? Color.red.opacity(0.88) : Color.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Device Connection
+
+    private var remoteChatSection: some View {
+        VStack(spacing: 18) {
+            settingsCard(title: "设备连接") {
+                deviceConnectionOverview
+                remoteChatControlPanel
+                remoteAccountPanel
+            }
+        }
+    }
+
+    private var deviceConnectionOverview: some View {
+        let diagnostics = deviceProvisioning.remoteChatDiagnostics
+        let isSignedIn = accountAuth.gateState == .authenticated
+        let isServerReady = remoteChatEnabled && RemoteChatServerController.shared.isRunning
+        let connectionCount = diagnostics.activeWebSocketCount + diagnostics.remoteConnectionIDs.count
+
+        return VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("手机、Mac、项目会话")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("这里管理 iOS 设备连接到这台 Mac 后的访问入口、信令和本地会话同步状态。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 16)
+                connectionStatusBadge(title: isServerReady ? "服务已开启" : "服务未开启", isGood: isServerReady)
+            }
+
+            HStack(alignment: .center, spacing: 16) {
+                connectionNode(
+                    title: "iPhone",
+                    subtitle: isSignedIn ? "同账号设备" : "等待登录",
+                    systemImage: "iphone",
+                    isActive: isSignedIn
+                )
+                connectionRail(isActive: isSignedIn && isServerReady)
+                connectionNode(
+                    title: deviceProvisioning.device?.deviceName ?? "AnnaCode Mac",
+                    subtitle: deviceProvisioning.device.map { "设备 #\($0.id)" } ?? "本机设备",
+                    systemImage: "desktopcomputer",
+                    isActive: isServerReady
+                )
+                connectionRail(isActive: connectionCount > 0)
+                connectionNode(
+                    title: "项目会话",
+                    subtitle: connectionCount > 0 ? "\(connectionCount) 个连接" : "等待连接",
+                    systemImage: "bubble.left.and.text.bubble.right",
+                    isActive: connectionCount > 0
+                )
+            }
+
+            HStack(spacing: 10) {
+                metricChip(title: "连接方式", value: "账号信令 / WebRTC")
+                metricChip(title: "本机端口", value: "\(RemoteChatServerController.defaultPort)")
+                metricChip(title: "WebSocket", value: diagnostics.activeWebSocketCount > 0 ? "\(diagnostics.activeWebSocketCount) 个在线" : "空闲")
+            }
+        }
+        .padding(18)
+        .background(AppTheme.inputSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private var remoteAccountPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Divider().opacity(0.28)
+            switch accountAuth.gateState {
+            case .checking:
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("正在检查登录状态…")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+            case .unauthenticated:
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("登录后会把这台 Mac 注册为可连接设备。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    AccountAuthRootView()
+                        .frame(maxWidth: 400, alignment: .leading)
+                }
+            case .authenticated:
+                AccountRemoteControlPanel()
+            }
+        }
+    }
+
+    private var remoteChatControlPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            remoteSettingToggle(
+                title: "设备连接服务",
+                subtitle: remoteChatEnabled ? "允许设备码和同账号设备连接这台 Mac" : "关闭后其他设备不能连接这台 Mac",
+                isOn: $remoteChatEnabled
+            )
+
+            HStack(alignment: .center, spacing: 12) {
+                if !remoteChatStatus.isEmpty {
+                    Text(remoteChatStatus)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 12)
+                Button("保存") { saveRemoteChatSettings() }
+                    .buttonStyle(SettingsPrimaryButtonStyle())
+            }
+        }
+    }
+
+    private func remoteSettingToggle(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.inputSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+    }
+
+    private func connectionNode(title: String, subtitle: String, systemImage: String, isActive: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(isActive ? Color.primary : Color.secondary)
+                .frame(width: 44, height: 44)
+                .background(isActive ? AppTheme.secondaryCardSurface : AppTheme.toolMutedSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isActive ? relayProfileCardBackground(isActive: true) : AppTheme.secondaryCardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(AppTheme.weakHairline, lineWidth: 1))
+    }
+
+    private func connectionRail(isActive: Bool) -> some View {
+        Capsule()
+            .fill(isActive ? Color.primary.opacity(0.22) : Color.secondary.opacity(0.12))
+            .frame(width: 52, height: 5)
+    }
+
+    private func connectionStatusBadge(title: String, isGood: Bool) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(isGood ? Color.green : Color.secondary.opacity(0.55))
+                .frame(width: 7, height: 7)
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isGood ? Color.primary : Color.secondary)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .background(AppTheme.buttonSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(AppTheme.weakHairline, lineWidth: 1))
+    }
+
+    private func metricChip(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 50, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.secondaryCardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.weakHairline, lineWidth: 1))
+    }
+
+    // MARK: - Append Rules
+
+    private var appendRulesSection: some View {
+        settingsCard(title: "追加规则") {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("发送时追加到实际 prompt")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("聊天气泡仍显示原始输入，追加内容会随请求一起发送给当前 CLI。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 12)
+                Toggle("启用", isOn: $appendRuleEnabled)
+                    .toggleStyle(.switch)
+                    .font(.system(size: 12))
+            }
+
+            TextEditor(text: $appendRuleText)
+                .font(.system(size: 13))
+                .scrollContentBackground(.hidden)
+                .padding(10)
+                .frame(minHeight: 220)
+                .background(AppTheme.inputSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+
+            HStack {
+                Button("清空") {
+                    appendRuleText = ""
+                }
+                .buttonStyle(SettingsSecondaryButtonStyle())
+                Spacer()
+                Button("保存") { saveAppSettings() }
+                    .buttonStyle(SettingsPrimaryButtonStyle())
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+    }
+
     // MARK: - Relay / Proxy
 
     private var relaySection: some View {
         settingsCard(title: "中转站（Claude Code）") {
-            claudeProfileSelector
+            claudeRelayProfileList
 
-            settingsGrid {
-                envField(label: "ANTHROPIC_BASE_URL", placeholder: "https://api.anthropic.com", text: $anthropicBaseURL)
-                envField(label: "ANTHROPIC_AUTH_TOKEN", placeholder: "sk-...", text: $anthropicAuthToken, secure: true)
-            }
-
-            Divider().opacity(0.3)
-
-            Group {
-                HStack {
-                    Text("模型配置")
-                        .font(.system(size: 13, weight: .semibold))
-                    Spacer()
-                    Button(action: fetchClaudeModels) {
-                        HStack(spacing: 4) {
-                            if isFetchingClaudeModels {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 11))
-                            }
-                            Text("拉取模型")
-                                .font(.system(size: 12))
-                        }
-                    }
-                    .buttonStyle(SettingsSecondaryButtonStyle(compact: true))
-                    .disabled(isFetchingClaudeModels || anthropicBaseURL.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-                .padding(.top, 4)
-
-                if !claudeModelList.isEmpty {
-                    settingsGrid {
-                        modelPicker(label: "ANTHROPIC_MODEL", selection: $anthropicModel, models: claudeModelList)
-                        modelPicker(label: "ANTHROPIC_DEFAULT_HAIKU_MODEL", selection: $anthropicHaikuModel, models: claudeModelList)
-                        modelPicker(label: "ANTHROPIC_DEFAULT_SONNET_MODEL", selection: $anthropicSonnetModel, models: claudeModelList)
-                        modelPicker(label: "ANTHROPIC_DEFAULT_OPUS_MODEL", selection: $anthropicOpusModel, models: claudeModelList)
-                    }
-                } else {
-                    settingsGrid {
-                        envField(label: "ANTHROPIC_MODEL", placeholder: "claude-sonnet-4-6", text: $anthropicModel)
-                        envField(label: "ANTHROPIC_DEFAULT_HAIKU_MODEL", placeholder: "claude-haiku-4-5-20251001", text: $anthropicHaikuModel)
-                        envField(label: "ANTHROPIC_DEFAULT_SONNET_MODEL", placeholder: "claude-sonnet-4-6", text: $anthropicSonnetModel)
-                        envField(label: "ANTHROPIC_DEFAULT_OPUS_MODEL", placeholder: "claude-opus-4-7", text: $anthropicOpusModel)
-                    }
-                }
-            }
-
-            Divider().opacity(0.3)
-
-            Group {
-                Text("全局代理（Claude Code / Codex）")
-                    .font(.system(size: 13, weight: .semibold))
-                    .padding(.top, 4)
-
-                settingsGrid {
-                    envField(label: "HTTP_PROXY", placeholder: "http://127.0.0.1:7890", text: $httpProxy)
-                    envField(label: "HTTPS_PROXY", placeholder: "http://127.0.0.1:7890", text: $httpsProxy)
-                }
-            }
-
-            HStack {
-                if !relaySaveStatus.isEmpty {
-                    Text(relaySaveStatus)
-                        .font(.system(size: 12))
-                        .foregroundStyle(relaySaveStatus.contains("成功") ? .green : .red)
-                }
-                Spacer()
-                Button("保存到 ~/.claude/settings.json") {
-                    saveClaudeSettings()
-                }
-                .buttonStyle(SettingsPrimaryButtonStyle())
-            }
-
-            Text("Claude API、模型和代理字段会从 ~/.claude/settings.json 注入到新启动的 Claude Code / Codex 子进程。留空的字段不会写入配置文件。")
+            Text("列表只展示名称、API 地址和模型摘要；密钥、模型和代理配置在编辑弹窗里维护。“设为当前”才会写入 ~/.claude/settings.json 并影响新启动的 Claude Code 会话。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -381,200 +878,469 @@ struct SettingsPageView: View {
 
     private var codexSection: some View {
         settingsCard(title: "Codex") {
-            codexProfileSelector
+            codexConfigProfileList
 
-            Group {
-                settingsGrid {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("认证方式")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                        inlineSegmentedPicker(
-                            selection: $codexAuthMode,
-                            options: CodexAuthMode.allCases.map { ($0, $0.title) }
-                        )
-                    }
-
-                }
-
-                HStack {
-                    Text("模型")
-                        .font(.system(size: 13, weight: .semibold))
-                    Spacer()
-                    if codexAuthMode == .apiKey {
-                        Button(action: fetchCodexModels) {
-                            HStack(spacing: 4) {
-                                if isFetchingCodexModels {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                } else {
-                                    Image(systemName: "arrow.clockwise")
-                                        .font(.system(size: 11))
-                                }
-                                Text("拉取模型")
-                                    .font(.system(size: 12))
-                            }
-                        }
-                        .buttonStyle(SettingsSecondaryButtonStyle(compact: true))
-                        .disabled(isFetchingCodexModels || codexBaseURL.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                }
-
-                settingsGrid {
-                    if !codexAvailableModels.isEmpty {
-                        modelPicker(label: "model", selection: $codexModel, models: codexAvailableModels)
-                    } else {
-                        envField(label: "model", placeholder: "gpt-5.5", text: $codexModel)
-                    }
-
-                    if codexAuthMode == .apiKey {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("wire_api")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                            inlineSegmentedPicker(
-                                selection: $codexWireApi,
-                                options: [("responses", "responses"), ("chat", "chat")]
-                            )
-                        }
-                    }
-                }
-
-                if codexAuthMode == .apiKey {
-                    settingsGrid {
-                        envField(label: "base_url", placeholder: "https://api.openai.com/v1", text: $codexBaseURL)
-                        envField(label: "OPENAI_API_KEY", placeholder: "sk-...", text: $codexApiKey, secure: true)
-                    }
-                } else {
-                    codexAccountLoginStatusView
-                }
-            }
-
-            HStack {
-                if !codexSaveStatus.isEmpty {
-                    Text(codexSaveStatus)
-                        .font(.system(size: 12))
-                        .foregroundStyle(codexSaveStatusColor)
-                }
-                Spacer()
-                Button("保存到 ~/.codex/") {
-                    saveCodexSettings()
-                }
-                .buttonStyle(SettingsPrimaryButtonStyle())
-            }
-
-            Text(codexAuthMode == .apiKey
-                 ? "修改 ~/.codex/config.toml 和 ~/.codex/auth.json。保存后新启动的 Codex 会话将使用新配置。"
-                 : "账号登录模式只修改 ~/.codex/config.toml 的模型配置，认证复用 Codex CLI 的 OAuth 登录态。")
+            Text("Codex 中转站同样按列表管理；编辑弹窗维护 base_url、OPENAI_API_KEY、wire_api 和模型。设为当前后才写入 ~/.codex/config.toml 与 auth.json。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
     }
 
-    private var claudeProfileSelector: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var globalRulesSection: some View {
+        settingsCard(title: "全局规则") {
+            VStack(alignment: .leading, spacing: 10) {
+                inlineSegmentedPicker(
+                    selection: $selectedGlobalRuleKind,
+                    options: GlobalRuleKind.allCases.map { ($0, $0.title) }
+                )
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("文件路径")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Text(globalRuleURL.path)
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+
+            Group {
+                if isGlobalRuleTooLarge {
+                    VStack(spacing: 8) {
+                        Image(systemName: "doc.zipper")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.tertiary)
+                        Text("规则文件过大，已跳过载入编辑器。")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("请使用外部编辑器修改这个文件。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 360)
+                } else {
+                    TextEditor(text: $globalRuleText)
+                        .font(.system(size: 13, design: .monospaced))
+                        .scrollContentBackground(.hidden)
+                        .padding(10)
+                        .frame(minHeight: 260)
+                }
+            }
+            .background(AppTheme.inputSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+
             HStack {
-                Text("配置列表")
-                    .font(.system(size: 13, weight: .semibold))
+                if !globalRuleStatus.isEmpty {
+                    Text(globalRuleStatus)
+                        .font(.system(size: 12))
+                        .foregroundStyle(globalRuleStatus.contains("失败") ? .red : .secondary)
+                }
                 Spacer()
-                Text("选中后会立即写入 ~/.claude/settings.json")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                Button("重新读取") { loadGlobalRuleText() }
+                    .buttonStyle(SettingsSecondaryButtonStyle())
+                Button("保存") { saveGlobalRuleText() }
+                    .buttonStyle(SettingsPrimaryButtonStyle())
+                    .disabled(isGlobalRuleTooLarge || globalRuleStatus.hasPrefix("读取失败"))
+            }
+
+            Text("保存后需要重启 ClaudeMac 或开启新的 CLI 会话后生效。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var claudeRelayProfileList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Claude Code 中转站列表")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("一行一个配置，点击编辑再维护完整字段。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("新增中转站") { openNewClaudeProfile() }
+                    .buttonStyle(SettingsSecondaryButtonStyle())
             }
 
             if configProfiles.claudeRelayProfiles.isEmpty {
-                emptyProfileText("还没有中转站配置，可填写下方字段后添加。")
+                emptyProfileText("还没有中转站配置，点击“新增中转站”创建一个空白配置。")
             } else {
-                profileChips(
-                    profiles: configProfiles.claudeRelayProfiles,
-                    selectedID: selectedClaudeProfileID,
-                    title: \.name,
-                    select: selectClaudeProfile,
-                    delete: deleteClaudeProfile
-                )
+                profileListHeader
+                ForEach(configProfiles.claudeRelayProfiles) { profile in
+                    claudeRelayProfileRow(profile)
+                }
             }
 
-            addProfileRow(
-                placeholder: "配置名称，例如 Anna Relay",
-                text: $newClaudeProfileName,
-                action: addClaudeProfile
-            )
+            if !relaySaveStatus.isEmpty {
+                Text(relaySaveStatus)
+                    .font(.system(size: 12))
+                    .foregroundStyle(relaySaveStatusColor)
+            }
         }
-        .padding(14)
-        .background(Color.white)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
     }
 
-    private var codexProfileSelector: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("配置列表")
-                    .font(.system(size: 13, weight: .semibold))
+    private func claudeRelayProfileRow(_ profile: ClaudeRelayProfile) -> some View {
+        profileListRow(
+            isActive: selectedClaudeProfileID == profile.id,
+            name: profile.name,
+            subtitle: profile.httpProxy.isEmpty && profile.httpsProxy.isEmpty ? "未配置代理" : "已配置代理",
+            apiAddress: profile.baseURL,
+            modelSummary: claudeModelSummary(profile),
+            edit: { editingClaudeProfile = profile },
+            activate: { activateClaudeProfile(profile) },
+            delete: { deleteClaudeProfile(profile) }
+        )
+    }
+
+    private var codexConfigProfileList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Codex 中转站列表")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("一行一个配置，编辑弹窗维护 API Key 和 wire_api。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                Text("选中后会立即写入 ~/.codex/")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                Button("新增中转站") { openNewCodexProfile() }
+                    .buttonStyle(SettingsSecondaryButtonStyle())
             }
 
             if configProfiles.codexProfiles.isEmpty {
-                emptyProfileText("还没有 Codex 配置，可填写下方字段后添加。")
+                emptyProfileText("还没有 Codex 配置，点击“新增中转站”创建一个空白配置。")
             } else {
-                profileChips(
-                    profiles: configProfiles.codexProfiles,
-                    selectedID: selectedCodexProfileID,
-                    title: \.name,
-                    select: selectCodexProfile,
-                    delete: deleteCodexProfile
-                )
+                profileListHeader
+                ForEach(configProfiles.codexProfiles) { profile in
+                    codexConfigProfileRow(profile)
+                }
             }
 
-            addProfileRow(
-                placeholder: "配置名称，例如 Codex OpenAI",
-                text: $newCodexProfileName,
-                action: addCodexProfile
-            )
+            if !codexSaveStatus.isEmpty {
+                Text(codexSaveStatus)
+                    .font(.system(size: 12))
+                    .foregroundStyle(codexSaveStatusColor)
+            }
         }
-        .padding(14)
-        .background(Color.white)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
     }
 
-    private var codexSaveStatusColor: Color {
-        if codexSaveStatus.contains("成功") || codexSaveStatus.contains("已导入") { return .green }
-        if codexSaveStatus.contains("请先") { return .orange }
+    private func codexConfigProfileRow(_ profile: CodexConfigProfile) -> some View {
+        profileListRow(
+            isActive: selectedCodexProfileID == profile.id,
+            name: profile.name,
+            subtitle: profile.wireApi.isEmpty ? "responses" : profile.wireApi,
+            apiAddress: profile.baseURL,
+            modelSummary: profile.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未设置模型" : profile.model,
+            edit: { editingCodexProfile = profile },
+            activate: { activateCodexProfile(profile) },
+            delete: { deleteCodexProfile(profile) }
+        )
+    }
+
+    private var profileListHeader: some View {
+        HStack(spacing: 14) {
+            Text("状态").frame(width: 74, alignment: .leading)
+            Text("名称").frame(width: 220, alignment: .leading)
+            Text("API 地址").frame(maxWidth: .infinity, alignment: .leading)
+            Text("模型").frame(width: 140, alignment: .leading)
+            Text("操作").frame(width: 246, alignment: .leading)
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 16)
+        .frame(height: 42)
+        .background(AppTheme.secondaryCardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func profileListRow(
+        isActive: Bool,
+        name: String,
+        subtitle: String,
+        apiAddress: String,
+        modelSummary: String,
+        edit: @escaping () -> Void,
+        activate: @escaping () -> Void,
+        delete: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 14) {
+            profileStatusBadge(isActive: isActive)
+                .frame(width: 74, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未命名中转站" : name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(width: 220, alignment: .leading)
+
+            Text(apiAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未填写 API 地址" : apiAddress)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(apiAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary : Color.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(modelSummary)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 140, alignment: .leading)
+
+            HStack(spacing: 8) {
+                Button("编辑", action: edit)
+                    .buttonStyle(SettingsSecondaryButtonStyle(compact: true))
+                Button("设为当前", action: activate)
+                    .buttonStyle(SettingsPrimaryButtonStyle(compact: true))
+                    .disabled(isActive)
+                Button("删除", role: .destructive, action: delete)
+                    .buttonStyle(SettingsSecondaryButtonStyle(compact: true))
+            }
+            .frame(width: 246, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 74)
+        .background(relayProfileCardBackground(isActive: isActive))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(isActive ? AppTheme.hairline : AppTheme.weakHairline, lineWidth: 1))
+    }
+
+    private func claudeModelSummary(_ profile: ClaudeRelayProfile) -> String {
+        let values = [profile.model, profile.haikuModel, profile.sonnetModel, profile.opusModel]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if values.isEmpty { return "未设置模型" }
+        return values.count == 1 ? values[0] : "\(values.count) 个模型"
+    }
+
+    private func claudeProfileEditorSheet(_ profile: ClaudeRelayProfile) -> some View {
+        let draft = Binding<ClaudeRelayProfile>(
+            get: { editingClaudeProfile ?? profile },
+            set: { editingClaudeProfile = $0 }
+        )
+        return profileEditorShell(
+            title: "编辑 Claude 中转站",
+            subtitle: "配置名称、API 地址、密钥、模型和代理都在这里维护。"
+        ) {
+            settingsGrid {
+                envField(label: "配置名称", placeholder: "主力 Claude 中转站", text: draft.name)
+                envField(label: "ANTHROPIC_BASE_URL", placeholder: "https://api.anthropic.com", text: draft.baseURL)
+                envField(label: "ANTHROPIC_API_KEY", placeholder: "sk-...", text: draft.authToken, secure: true)
+            }
+
+            editorSectionHeader("模型配置") {
+                fetchClaudeModels(for: draft.wrappedValue)
+            } isFetching: {
+                isFetchingClaudeModels
+            } disabled: {
+                draft.wrappedValue.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isFetchingClaudeModels
+            }
+
+            if !claudeModelList.isEmpty {
+                settingsGrid {
+                    modelPicker(label: "ANTHROPIC_MODEL", selection: draft.model, models: claudeModelList)
+                    modelPicker(label: "ANTHROPIC_DEFAULT_HAIKU_MODEL", selection: draft.haikuModel, models: claudeModelList)
+                    modelPicker(label: "ANTHROPIC_DEFAULT_SONNET_MODEL", selection: draft.sonnetModel, models: claudeModelList)
+                    modelPicker(label: "ANTHROPIC_DEFAULT_OPUS_MODEL", selection: draft.opusModel, models: claudeModelList)
+                }
+            } else {
+                settingsGrid {
+                    envField(label: "ANTHROPIC_MODEL", placeholder: "claude-sonnet-4-6", text: draft.model)
+                    envField(label: "ANTHROPIC_DEFAULT_HAIKU_MODEL", placeholder: "claude-haiku-4-5-20251001", text: draft.haikuModel)
+                    envField(label: "ANTHROPIC_DEFAULT_SONNET_MODEL", placeholder: "claude-sonnet-4-6", text: draft.sonnetModel)
+                    envField(label: "ANTHROPIC_DEFAULT_OPUS_MODEL", placeholder: "claude-opus-4-7", text: draft.opusModel)
+                }
+            }
+
+            editorSectionHeader("代理") {} isFetching: { false } disabled: { true }
+
+            settingsGrid {
+                envField(label: "HTTP_PROXY", placeholder: "http://127.0.0.1:7890", text: draft.httpProxy)
+                envField(label: "HTTPS_PROXY", placeholder: "http://127.0.0.1:7890", text: draft.httpsProxy)
+            }
+
+            profileEditorFooter(
+                save: {
+                    if let editingClaudeProfile {
+                        saveClaudeProfileDraft(editingClaudeProfile)
+                    }
+                    editingClaudeProfile = nil
+                },
+                saveAndActivate: {
+                    if let editingClaudeProfile, let saved = saveClaudeProfileDraft(editingClaudeProfile) {
+                        activateClaudeProfile(saved)
+                    }
+                    editingClaudeProfile = nil
+                },
+                cancel: { editingClaudeProfile = nil }
+            )
+        }
+    }
+
+    private func codexProfileEditorSheet(_ profile: CodexConfigProfile) -> some View {
+        let draft = Binding<CodexConfigProfile>(
+            get: { editingCodexProfile ?? profile },
+            set: { editingCodexProfile = $0 }
+        )
+        let availableModels = codexAvailableModels(including: draft.wrappedValue.model)
+        return profileEditorShell(
+            title: "编辑 Codex 中转站",
+            subtitle: "配置 OpenAI 兼容接口、API Key、模型和 wire_api。"
+        ) {
+            settingsGrid {
+                envField(label: "配置名称", placeholder: "Codex 配置", text: draft.name)
+                envField(label: "base_url", placeholder: "https://api.openai.com/v1", text: draft.baseURL)
+                envField(label: "OPENAI_API_KEY", placeholder: "sk-...", text: draft.apiKey, secure: true)
+            }
+
+            editorSectionHeader("模型与协议") {
+                fetchCodexModels(for: draft.wrappedValue)
+            } isFetching: {
+                isFetchingCodexModels
+            } disabled: {
+                draft.wrappedValue.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isFetchingCodexModels
+            }
+
+            settingsGrid {
+                if !availableModels.isEmpty {
+                    modelPicker(label: "model", selection: draft.model, models: availableModels)
+                } else {
+                    envField(label: "model", placeholder: "gpt-5.5", text: draft.model)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("wire_api")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    inlineSegmentedPicker(
+                        selection: draft.wireApi,
+                        options: [("responses", "responses"), ("chat", "chat")]
+                    )
+                }
+            }
+
+            profileEditorFooter(
+                save: {
+                    if let editingCodexProfile {
+                        saveCodexProfileDraft(editingCodexProfile)
+                    }
+                    editingCodexProfile = nil
+                },
+                saveAndActivate: {
+                    if let editingCodexProfile, let saved = saveCodexProfileDraft(editingCodexProfile) {
+                        activateCodexProfile(saved)
+                    }
+                    editingCodexProfile = nil
+                },
+                cancel: { editingCodexProfile = nil }
+            )
+        }
+    }
+
+    private func profileEditorShell<Content: View>(
+        title: String,
+        subtitle: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 22, weight: .bold))
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                content()
+            }
+            .padding(26)
+        }
+        .frame(width: 760)
+        .frame(minHeight: 520)
+        .background(AppTheme.cardSurface)
+    }
+
+    private func editorSectionHeader(
+        _ title: String,
+        fetch: @escaping () -> Void,
+        isFetching: @escaping () -> Bool,
+        disabled: @escaping () -> Bool
+    ) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+            Spacer()
+            if !disabled() || isFetching() {
+                Button(action: fetch) {
+                    fetchModelsButtonLabel(isFetching: isFetching())
+                }
+                .buttonStyle(SettingsSecondaryButtonStyle(compact: true))
+                .disabled(disabled())
+            }
+        }
+    }
+
+    private func profileEditorFooter(save: @escaping () -> Void, saveAndActivate: @escaping () -> Void, cancel: @escaping () -> Void) -> some View {
+        HStack(spacing: 10) {
+            Button("取消", action: cancel)
+                .buttonStyle(SettingsSecondaryButtonStyle())
+            Spacer()
+            Button("保存", action: save)
+                .buttonStyle(SettingsSecondaryButtonStyle())
+            Button("保存并设为当前", action: saveAndActivate)
+                .buttonStyle(SettingsPrimaryButtonStyle())
+        }
+        .padding(.top, 4)
+    }
+
+    private func relayProfileCardBackground(isActive: Bool) -> Color {
+        guard isActive else { return AppTheme.inputSurface }
+        return AppTheme.relayActiveGlassSurface
+    }
+
+    private func profileStatusBadge(isActive: Bool) -> some View {
+        Text(isActive ? "当前" : "未启用")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(isActive ? Color.green : Color.secondary)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(AppTheme.buttonSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(AppTheme.weakHairline, lineWidth: 1))
+    }
+
+    private func fetchModelsButtonLabel(isFetching: Bool) -> some View {
+        HStack(spacing: 4) {
+            if isFetching {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11))
+            }
+            Text("拉取模型")
+                .font(.system(size: 12))
+        }
+    }
+
+    private var relaySaveStatusColor: Color {
+        if relaySaveStatus.contains("成功") || relaySaveStatus.contains("已") { return .green }
+        if relaySaveStatus.contains("请") { return .orange }
         return .red
     }
 
-    private var codexAccountLoginStatusView: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: codexAccountStatus.contains("检测到") || codexAccountStatus.contains("已导入") ? "checkmark.circle" : "info.circle")
-                    .foregroundStyle(codexAccountStatus.contains("检测到") || codexAccountStatus.contains("已导入") ? .green : .secondary)
-                Text(codexAccountStatus.isEmpty ? "未检测到 Codex 账号登录态。请先在终端运行 codex login，或从 cc-switch 导入登录态。" : codexAccountStatus)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack(spacing: 10) {
-                Button("从 cc-switch 导入登录态") {
-                    importCodexOAuthFromCCSwitch()
-                }
-                .buttonStyle(SettingsSecondaryButtonStyle())
-                .disabled(!FileManager.default.fileExists(atPath: Self.ccSwitchCodexOAuthURL.path))
-
-                Button("重新检测") {
-                    loadCodexSettings()
-                }
-                .buttonStyle(SettingsSecondaryButtonStyle())
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+    private var codexSaveStatusColor: Color {
+        if codexSaveStatus.contains("成功") || codexSaveStatus.contains("已") { return .green }
+        if codexSaveStatus.contains("请") { return .orange }
+        return .red
     }
 
     private var updateSection: some View {
@@ -583,11 +1349,23 @@ struct SettingsPageView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("当前版本：\(appVersion)（\(buildNumber)）")
                         .font(.system(size: 13))
+                    if !updateCheckStatus.isEmpty {
+                        Text(updateCheckStatus)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
-                Button("检查更新") {
-                    // TODO: Implement update check
+                if let updateDownloadURL {
+                    Button("下载更新") {
+                        NSWorkspace.shared.open(updateDownloadURL)
+                    }
+                    .buttonStyle(SettingsSecondaryButtonStyle())
                 }
+                Button("检查更新") {
+                    checkForUpdates()
+                }
+                .disabled(isCheckingForUpdate)
                 .buttonStyle(SettingsSecondaryButtonStyle())
             }
         }
@@ -596,18 +1374,69 @@ struct SettingsPageView: View {
     // MARK: - About
 
     private var aboutSection: some View {
-        settingsCard(title: "关于") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Acode")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("一个轻量级的 Claude Code / Codex 桌面客户端")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            settingsCard(title: "关于") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("AnnaCode")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("一个轻量级的 Claude Code / Codex 桌面客户端")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            updateSection
+
+            settingsCard(title: "协议与隐私") {
+                VStack(spacing: 0) {
+                    ForEach(RemoteLegalDocumentType.allCases, id: \.self) { type in
+                        Button {
+                            accountAuth.presentLegalDocument(type)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "doc.text")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 28, height: 28)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(type.title)
+                                        .font(.system(size: 13, weight: .semibold))
+                                    Text(accountAuth.legalDocuments[type]?.version ?? "点击查看")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.vertical, 10)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        if type != RemoteLegalDocumentType.allCases.last {
+                            Divider().opacity(0.22)
+                        }
+                    }
+                }
+                if let message = accountAuth.documentMessage {
+                    settingsInlineMessage(message)
+                }
+            }
+            .task {
+                await accountAuth.loadLegalDocumentsIfNeeded()
             }
         }
     }
 
     // MARK: - UI Helpers
+
+    private var legalDocumentBinding: Binding<RemoteLegalDocument?> {
+        Binding(
+            get: { accountAuth.selectedLegalDocument },
+            set: { _ in accountAuth.dismissLegalDocument() }
+        )
+    }
 
     @ViewBuilder
     private func envField(label: String, placeholder: String, text: Binding<String>, secure: Bool = false) -> some View {
@@ -621,6 +1450,30 @@ struct SettingsPageView: View {
                 }
             }
             .settingsTextFieldChrome()
+        }
+    }
+
+    private func multilineField(label: String, placeholder: String, text: Binding<String>, minHeight: CGFloat = 82) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            fieldLabel(label)
+            TextEditor(text: text)
+                .font(.system(size: 12, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(minHeight: minHeight)
+                .background(AppTheme.inputSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+                .overlay(alignment: .topLeading) {
+                    if text.wrappedValue.isEmpty {
+                        Text(placeholder)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 14)
+                            .allowsHitTesting(false)
+                    }
+                }
         }
     }
 
@@ -648,7 +1501,7 @@ struct SettingsPageView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color.white)
+                    .fill(AppTheme.cardSurface)
             }
             .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
         }
@@ -658,37 +1511,6 @@ struct SettingsPageView: View {
         Text(label)
             .font(.system(size: 12, weight: .semibold, design: .monospaced))
             .foregroundStyle(.secondary)
-    }
-
-    private func settingsToggle(title: String, isOn: Binding<Bool>) -> some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.16)) {
-                isOn.wrappedValue.toggle()
-            }
-        } label: {
-            HStack(spacing: 12) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-                Spacer(minLength: 12)
-                ZStack(alignment: isOn.wrappedValue ? .trailing : .leading) {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(isOn.wrappedValue ? Color.accentColor.opacity(0.82) : Color.black.opacity(0.08))
-                        .frame(width: 46, height: 26)
-                    Circle()
-                        .fill(Color.white.opacity(0.96))
-                        .frame(width: 20, height: 20)
-                        .shadow(color: Color.black.opacity(0.12), radius: 3, y: 1)
-                        .padding(.horizontal, 3)
-                }
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 44)
-            .background(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
     }
 
     private func optionSelector<Value: Hashable>(title: String, selection: Binding<Value>, options: [(Value, String)]) -> some View {
@@ -717,12 +1539,16 @@ struct SettingsPageView: View {
                         .frame(height: 34)
                         .background(isSelected ? AppTheme.selectedSurface : Color.clear)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        // Without an explicit contentShape the unselected segments only
+                        // hit-test the underlying Text, because their background is
+                        // Color.clear. Force the entire pill to be tappable.
+                        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(4)
-        .background(Color.white)
+        .background(AppTheme.inputSurface)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
     }
@@ -734,7 +1560,7 @@ struct SettingsPageView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(Color.white)
+            .background(AppTheme.inputSurface)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
@@ -749,7 +1575,7 @@ struct SettingsPageView: View {
             HStack(spacing: 8) {
                 ForEach(profiles) { profile in
                     let isSelected = selectedID == profile.id
-                    HStack(spacing: 6) {
+                    HStack(spacing: 0) {
                         Button {
                             select(profile)
                         } label: {
@@ -758,7 +1584,9 @@ struct SettingsPageView: View {
                                 .lineLimit(1)
                                 .foregroundStyle(isSelected ? .primary : .secondary)
                                 .padding(.leading, 12)
+                                .padding(.trailing, 6)
                                 .padding(.vertical, 8)
+                                .contentShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
                         }
                         .buttonStyle(.plain)
 
@@ -767,14 +1595,12 @@ struct SettingsPageView: View {
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.system(size: 8, weight: .bold))
-                                .frame(width: 18, height: 18)
-                                .contentShape(Circle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CircularIconButtonStyle(size: 24))
                         .foregroundStyle(.tertiary)
-                        .padding(.trailing, 8)
+                        .padding(.trailing, 4)
                     }
-                    .background(isSelected ? AppTheme.selectedSurface : Color.white)
+                    .background(isSelected ? AppTheme.selectedSurface : AppTheme.buttonSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).stroke(isSelected ? AppTheme.hairline : AppTheme.weakHairline, lineWidth: 1))
                 }
@@ -792,6 +1618,279 @@ struct SettingsPageView: View {
         }
     }
 
+    private func loadSettingsSnapshot() {
+        settingsLoadTask?.cancel()
+        let ruleKind = selectedGlobalRuleKind
+        settingsLoadTask = Task {
+            let snapshot = await Task.detached(priority: .utility) {
+                SettingsDiskSnapshot(
+                    claude: Self.readClaudeSettingsSnapshot(),
+                    codex: Self.readCodexSettingsSnapshot(),
+                    profiles: ProjectStore.loadConfigProfiles(),
+                    globalRule: Self.readGlobalRuleSnapshot(kind: ruleKind)
+                )
+            }.value
+            guard !Task.isCancelled else { return }
+            applyClaudeSettings(snapshot.claude)
+            applyCodexSettings(snapshot.codex)
+            applyConfigProfiles(snapshot.profiles)
+            if selectedGlobalRuleKind == ruleKind {
+                applyGlobalRuleSnapshot(snapshot.globalRule)
+            }
+        }
+    }
+
+    private func loadCodexSettingsSnapshot() {
+        codexSettingsLoadTask?.cancel()
+        codexSettingsLoadTask = Task {
+            let snapshot = await Task.detached(priority: .utility) {
+                Self.readCodexSettingsSnapshot()
+            }.value
+            guard !Task.isCancelled else { return }
+            applyCodexSettings(snapshot)
+        }
+    }
+
+    private func cancelSettingsTasks() {
+        settingsLoadTask?.cancel()
+        codexSettingsLoadTask?.cancel()
+        globalRuleLoadTask?.cancel()
+        claudeModelFetchTask?.cancel()
+        codexModelFetchTask?.cancel()
+        isFetchingClaudeModels = false
+        isFetchingCodexModels = false
+    }
+
+    private func applyClaudeSettings(_ snapshot: ClaudeSettingsSnapshot) {
+        anthropicBaseURL = snapshot.baseURL
+        anthropicAuthToken = snapshot.authToken
+        anthropicModel = snapshot.model
+        anthropicHaikuModel = snapshot.haikuModel
+        anthropicSonnetModel = snapshot.sonnetModel
+        anthropicOpusModel = snapshot.opusModel
+        httpProxy = snapshot.httpProxy
+        httpsProxy = snapshot.httpsProxy
+    }
+
+    private func applyCodexSettings(_ snapshot: CodexSettingsSnapshot) {
+        codexApiKey = snapshot.apiKey
+        codexModel = snapshot.model
+        codexBaseURL = snapshot.baseURL
+        codexWireApi = snapshot.wireApi
+        codexAuthMode = snapshot.authMode
+    }
+
+    private func applyConfigProfiles(_ profiles: ConfigProfileCollection) {
+        configProfiles = profiles
+        selectedClaudeProfileID = profiles.activeClaudeRelayProfileID
+        selectedCodexProfileID = profiles.activeCodexProfileID
+
+        if let id = selectedClaudeProfileID,
+           let profile = profiles.claudeRelayProfiles.first(where: { $0.id == id }) {
+            applyClaudeProfile(profile)
+        }
+        if let id = selectedCodexProfileID,
+           let profile = profiles.codexProfiles.first(where: { $0.id == id }) {
+            applyCodexProfile(profile)
+        }
+    }
+
+    private func applyGlobalRuleSnapshot(_ snapshot: GlobalRuleSnapshot) {
+        globalRuleText = snapshot.text
+        globalRuleStatus = snapshot.status
+        isGlobalRuleTooLarge = snapshot.isTooLarge
+    }
+
+    private nonisolated static func readClaudeSettingsSnapshot() -> ClaudeSettingsSnapshot {
+        var snapshot = ClaudeSettingsSnapshot()
+        guard let data = try? Data(contentsOf: claudeSettingsURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let env = json["env"] as? [String: Any] else { return snapshot }
+        snapshot.baseURL = env["ANTHROPIC_BASE_URL"] as? String ?? ""
+        snapshot.authToken = env["ANTHROPIC_API_KEY"] as? String ?? env["ANTHROPIC_AUTH_TOKEN"] as? String ?? ""
+        snapshot.model = env["ANTHROPIC_MODEL"] as? String ?? ""
+        snapshot.haikuModel = env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] as? String ?? ""
+        snapshot.sonnetModel = env["ANTHROPIC_DEFAULT_SONNET_MODEL"] as? String ?? ""
+        snapshot.opusModel = env["ANTHROPIC_DEFAULT_OPUS_MODEL"] as? String ?? ""
+        snapshot.httpProxy = env["HTTP_PROXY"] as? String ?? ""
+        snapshot.httpsProxy = env["HTTPS_PROXY"] as? String ?? ""
+        return snapshot
+    }
+
+    private nonisolated static func readCodexSettingsSnapshot() -> CodexSettingsSnapshot {
+        var snapshot = CodexSettingsSnapshot()
+        var configuredProvider = ""
+
+        if let text = try? String(contentsOf: codexConfigURL, encoding: .utf8) {
+            snapshot.model = tomlValue(in: text, key: "model") ?? ""
+            configuredProvider = tomlValue(in: text, key: "model_provider") ?? ""
+
+            let providerSection = configuredProvider.isEmpty ? "acode_custom" : configuredProvider
+            if let customSection = tomlSection(in: text, section: "model_providers.\(providerSection)") {
+                snapshot.baseURL = tomlValue(in: customSection, key: "base_url") ?? ""
+                snapshot.wireApi = tomlValue(in: customSection, key: "wire_api") ?? "responses"
+            }
+        }
+
+        if let data = try? Data(contentsOf: codexAuthURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            snapshot.apiKey = json["OPENAI_API_KEY"] as? String ?? ""
+        }
+
+        snapshot.authMode = .apiKey
+        return snapshot
+    }
+
+    private nonisolated static func settingsError(_ message: String) -> NSError {
+        NSError(domain: "AnnaCodeSettings", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private nonisolated static func tomlRawValue(in text: String, key: String) -> String? {
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = stripTomlComment(String(rawLine)).trimmingCharacters(in: .whitespaces)
+            guard isTomlAssignment(line, key: key) else { continue }
+            let parts = line.split(separator: "=", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespaces) }
+            guard parts.count == 2 else { continue }
+            return parts[1]
+        }
+        return nil
+    }
+
+    private nonisolated static func splitTomlCommaValues(_ text: String) -> [String] {
+        var values: [String] = []
+        var current = ""
+        var isQuoted = false
+        var isEscaped = false
+        for character in text {
+            if isEscaped {
+                current.append(character)
+                isEscaped = false
+                continue
+            }
+            if character == "\\" {
+                current.append(character)
+                isEscaped = true
+                continue
+            }
+            if character == "\"" {
+                current.append(character)
+                isQuoted.toggle()
+                continue
+            }
+            if character == ",", !isQuoted {
+                values.append(current)
+                current = ""
+            } else {
+                current.append(character)
+            }
+        }
+        if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            values.append(current)
+        }
+        return values
+    }
+
+    private nonisolated static func tomlUnquoted(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("\""), trimmed.hasSuffix("\"") else { return trimmed.isEmpty ? nil : trimmed }
+        var result = ""
+        var isEscaped = false
+        for character in trimmed.dropFirst().dropLast() {
+            if isEscaped {
+                switch character {
+                case "\\": result.append("\\")
+                case "\"": result.append("\"")
+                case "n": result.append("\n")
+                case "t": result.append("\t")
+                default: result.append(character)
+                }
+                isEscaped = false
+            } else if character == "\\" {
+                isEscaped = true
+            } else {
+                result.append(character)
+            }
+        }
+        return result
+    }
+
+    private nonisolated static func stripTomlComment(_ line: String) -> String {
+        var result = ""
+        var isQuoted = false
+        var isEscaped = false
+        for character in line {
+            if isEscaped {
+                result.append(character)
+                isEscaped = false
+                continue
+            }
+            if character == "\\" {
+                result.append(character)
+                isEscaped = true
+                continue
+            }
+            if character == "\"" {
+                result.append(character)
+                isQuoted.toggle()
+                continue
+            }
+            if character == "#", !isQuoted {
+                break
+            }
+            result.append(character)
+        }
+        return result
+    }
+
+    private nonisolated static func readGlobalRuleSnapshot(kind: GlobalRuleKind) -> GlobalRuleSnapshot {
+        let url = globalRuleURL(for: kind)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return GlobalRuleSnapshot(text: "", status: "文件不存在，保存时会创建", isTooLarge: false)
+        }
+        do {
+            if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+               let size = attributes[.size] as? NSNumber,
+               size.intValue > maxEditableGlobalRuleBytes {
+                let sizeText = ByteCountFormatter.string(fromByteCount: size.int64Value, countStyle: .file)
+                return GlobalRuleSnapshot(text: "", status: "文件大小为 \(sizeText)，已跳过载入以避免卡顿", isTooLarge: true)
+            }
+            let text = try String(contentsOf: url, encoding: .utf8)
+            return GlobalRuleSnapshot(text: text, status: "已读取", isTooLarge: false)
+        } catch {
+            return GlobalRuleSnapshot(text: "", status: "读取失败：\(error.localizedDescription)", isTooLarge: false)
+        }
+    }
+
+    private nonisolated static func globalRuleURL(for kind: GlobalRuleKind) -> URL {
+        switch kind {
+        case .claude: claudeGlobalRulesURL
+        case .codex: codexGlobalRulesURL
+        }
+    }
+
+    private nonisolated static func tomlValue(in text: String, key: String) -> String? {
+        guard let rawValue = tomlRawValue(in: text, key: key) else { return nil }
+        return tomlUnquoted(rawValue)
+    }
+
+    private nonisolated static func tomlSection(in text: String, section: String) -> String? {
+        var lines: [String] = []
+        var isInsideSection = false
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(rawLine)
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
+                if isInsideSection { break }
+                isInsideSection = trimmed.dropFirst().dropLast() == section
+                continue
+            }
+            if isInsideSection {
+                lines.append(line)
+            }
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
     // MARK: - App Settings
 
     private func loadSettings() {
@@ -799,8 +1898,31 @@ struct SettingsPageView: View {
         defaultCLI = s.defaultCLI.visibleValue
         defaultTerminal = s.defaultTerminal
         showCommandPreview = s.showCommandPreview
-        enableClaudeHistoryScan = s.enableClaudeHistoryScan
+        appendRuleEnabled = s.appendRuleEnabled
+        appendRuleText = s.appendRuleText
         ignoredFoldersText = s.ignoredFolders.joined(separator: "\n")
+        loadRemoteChatSettings()
+    }
+
+    private func loadRemoteChatSettings() {
+        let s = appState.settings
+        remoteChatEnabled = s.remoteChatServerEnabled
+    }
+
+    private func saveRemoteChatSettings() {
+        var settings = appState.settings
+        settings.remoteChatServerEnabled = remoteChatEnabled
+        settings.remoteChatServerPort = Int(RemoteChatServerController.defaultPort)
+        settings.remoteChatServerBindLAN = false
+        do {
+            try ProjectStore.saveSettings(settings)
+            appState.settings = settings
+        } catch {
+            remoteChatStatus = "保存失败：\(error.localizedDescription)"
+            return
+        }
+        RemoteChatServerController.shared.restart()
+        remoteChatStatus = remoteChatEnabled ? "已保存，设备连接服务已更新。" : "已保存，设备连接服务已关闭。"
     }
 
     private func saveAppSettings() {
@@ -808,12 +1930,47 @@ struct SettingsPageView: View {
             defaultCLI: defaultCLI,
             defaultTerminal: defaultTerminal,
             showCommandPreview: showCommandPreview,
-            enableClaudeHistoryScan: enableClaudeHistoryScan,
+            appendRuleEnabled: appendRuleEnabled,
+            appendRuleText: appendRuleText,
             ignoredFolders: ignoredFoldersText
                 .split(whereSeparator: \.isNewline)
                 .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
         )
+    }
+
+    private var globalRuleURL: URL {
+        Self.globalRuleURL(for: selectedGlobalRuleKind)
+    }
+
+    private func loadGlobalRuleText() {
+        globalRuleLoadTask?.cancel()
+        let kind = selectedGlobalRuleKind
+        globalRuleLoadTask = Task {
+            let snapshot = await Task.detached(priority: .utility) {
+                Self.readGlobalRuleSnapshot(kind: kind)
+            }.value
+            guard !Task.isCancelled, selectedGlobalRuleKind == kind else { return }
+            applyGlobalRuleSnapshot(snapshot)
+        }
+    }
+
+    private func saveGlobalRuleText() {
+        guard !isGlobalRuleTooLarge else {
+            globalRuleStatus = "文件过大，未载入编辑内容，已取消保存"
+            return
+        }
+        guard !globalRuleStatus.hasPrefix("读取失败") else {
+            globalRuleStatus = "读取失败，未载入内容，已取消保存"
+            return
+        }
+        do {
+            try FileManager.default.createDirectory(at: globalRuleURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try globalRuleText.write(to: globalRuleURL, atomically: true, encoding: .utf8)
+            globalRuleStatus = "已保存，重启 ClaudeMac 或开启新 CLI 会话后生效"
+        } catch {
+            globalRuleStatus = "保存失败：\(error.localizedDescription)"
+        }
     }
 
     // MARK: - Config Profiles
@@ -837,29 +1994,96 @@ struct SettingsPageView: View {
         try ProjectStore.saveConfigProfiles(configProfiles)
     }
 
+    private func openNewClaudeProfile() {
+        editingClaudeProfile = emptyClaudeProfile(
+            named: nextProfileName(newClaudeProfileName, fallback: "Claude 中转站", count: configProfiles.claudeRelayProfiles.count)
+        )
+        newClaudeProfileName = ""
+    }
+
+    private func openNewCodexProfile() {
+        editingCodexProfile = emptyCodexProfile(
+            named: nextProfileName(newCodexProfileName, fallback: "Codex 配置", count: configProfiles.codexProfiles.count)
+        )
+        newCodexProfileName = ""
+    }
+
+    @discardableResult
+    private func saveClaudeProfileDraft(_ profile: ClaudeRelayProfile) -> ClaudeRelayProfile? {
+        do {
+            let saved: ClaudeRelayProfile
+            if configProfiles.claudeRelayProfiles.contains(where: { $0.id == profile.id }) {
+                saved = try persistedClaudeProfile(profile)
+            } else {
+                saved = try insertedClaudeProfile(profile)
+            }
+            if selectedClaudeProfileID == saved.id {
+                applyClaudeProfile(saved)
+                try writeClaudeSettings(updateSelectedProfile: false)
+            }
+            relaySaveStatus = selectedClaudeProfileID == saved.id ? "已保存并更新当前配置" : "已保存配置：\(saved.name)"
+            return saved
+        } catch {
+            relaySaveStatus = "保存失败：\(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    @discardableResult
+    private func saveCodexProfileDraft(_ profile: CodexConfigProfile) -> CodexConfigProfile? {
+        do {
+            let saved: CodexConfigProfile
+            if configProfiles.codexProfiles.contains(where: { $0.id == profile.id }) {
+                saved = try persistedCodexProfile(profile)
+            } else {
+                saved = try insertedCodexProfile(profile)
+            }
+            if selectedCodexProfileID == saved.id {
+                applyCodexProfile(saved)
+                try writeCodexSettings(updateSelectedProfile: false)
+            }
+            codexSaveStatus = selectedCodexProfileID == saved.id ? "已保存并更新当前配置" : "已保存配置：\(saved.name)"
+            return saved
+        } catch {
+            codexSaveStatus = "保存失败：\(error.localizedDescription)"
+            return nil
+        }
+    }
+
     private func addClaudeProfile() {
-        let profile = currentClaudeProfile(named: nextProfileName(newClaudeProfileName, fallback: "Claude 中转站", count: configProfiles.claudeRelayProfiles.count))
+        let profile = emptyClaudeProfile(named: nextProfileName(newClaudeProfileName, fallback: "Claude 中转站", count: configProfiles.claudeRelayProfiles.count))
         configProfiles.claudeRelayProfiles.insert(profile, at: 0)
-        configProfiles.activeClaudeRelayProfileID = profile.id
-        selectedClaudeProfileID = profile.id
         newClaudeProfileName = ""
         do {
             try persistConfigProfiles()
-            try writeClaudeSettings(updateSelectedProfile: false)
-            relaySaveStatus = "已添加并切换配置"
+            relaySaveStatus = "已新增中转站，请填写后保存或设为当前"
+        } catch {
+            relaySaveStatus = "新增失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func saveClaudeProfile(_ profile: ClaudeRelayProfile) {
+        do {
+            let saved = try persistedClaudeProfile(profile)
+            if selectedClaudeProfileID == saved.id {
+                applyClaudeProfile(saved)
+                try writeClaudeSettings(updateSelectedProfile: false)
+            }
+            relaySaveStatus = selectedClaudeProfileID == saved.id ? "已保存并更新当前配置" : "已保存配置：\(saved.name)"
         } catch {
             relaySaveStatus = "保存失败：\(error.localizedDescription)"
         }
     }
 
-    private func selectClaudeProfile(_ profile: ClaudeRelayProfile) {
-        applyClaudeProfile(profile)
-        selectedClaudeProfileID = profile.id
-        configProfiles.activeClaudeRelayProfileID = profile.id
+    private func activateClaudeProfile(_ profile: ClaudeRelayProfile) {
         do {
+            let saved = try persistedClaudeProfile(profile)
+            selectedClaudeProfileID = saved.id
+            configProfiles.activeClaudeRelayProfileID = saved.id
             try persistConfigProfiles()
+            applyClaudeProfile(saved)
             try writeClaudeSettings(updateSelectedProfile: false)
-            relaySaveStatus = "已切换配置：\(profile.name)"
+            relaySaveStatus = "已设为当前：\(saved.name)"
         } catch {
             relaySaveStatus = "切换失败：\(error.localizedDescription)"
         }
@@ -871,14 +2095,13 @@ struct SettingsPageView: View {
         if wasSelected {
             selectedClaudeProfileID = configProfiles.claudeRelayProfiles.first?.id
             configProfiles.activeClaudeRelayProfileID = selectedClaudeProfileID
-            if let selectedClaudeProfileID,
-               let next = configProfiles.claudeRelayProfiles.first(where: { $0.id == selectedClaudeProfileID }) {
-                applyClaudeProfile(next)
-            }
         }
         do {
             try persistConfigProfiles()
-            if wasSelected, selectedClaudeProfileID != nil {
+            if wasSelected,
+               let selectedClaudeProfileID,
+               let next = configProfiles.claudeRelayProfiles.first(where: { $0.id == selectedClaudeProfileID }) {
+                applyClaudeProfile(next)
                 try writeClaudeSettings(updateSelectedProfile: false)
             }
             relaySaveStatus = "已删除配置"
@@ -888,28 +2111,39 @@ struct SettingsPageView: View {
     }
 
     private func addCodexProfile() {
-        let profile = currentCodexProfile(named: nextProfileName(newCodexProfileName, fallback: "Codex 配置", count: configProfiles.codexProfiles.count))
+        let profile = emptyCodexProfile(named: nextProfileName(newCodexProfileName, fallback: "Codex 配置", count: configProfiles.codexProfiles.count))
         configProfiles.codexProfiles.insert(profile, at: 0)
-        configProfiles.activeCodexProfileID = profile.id
-        selectedCodexProfileID = profile.id
         newCodexProfileName = ""
         do {
             try persistConfigProfiles()
-            try writeCodexSettings(updateSelectedProfile: false)
-            codexSaveStatus = "已添加并切换配置"
+            codexSaveStatus = "已新增中转站，请填写后保存或设为当前"
+        } catch {
+            codexSaveStatus = "新增失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func saveCodexProfile(_ profile: CodexConfigProfile) {
+        do {
+            let saved = try persistedCodexProfile(profile)
+            if selectedCodexProfileID == saved.id {
+                applyCodexProfile(saved)
+                try writeCodexSettings(updateSelectedProfile: false)
+            }
+            codexSaveStatus = selectedCodexProfileID == saved.id ? "已保存并更新当前配置" : "已保存配置：\(saved.name)"
         } catch {
             codexSaveStatus = "保存失败：\(error.localizedDescription)"
         }
     }
 
-    private func selectCodexProfile(_ profile: CodexConfigProfile) {
-        applyCodexProfile(profile)
-        selectedCodexProfileID = profile.id
-        configProfiles.activeCodexProfileID = profile.id
+    private func activateCodexProfile(_ profile: CodexConfigProfile) {
         do {
+            let saved = try persistedCodexProfile(profile)
+            selectedCodexProfileID = saved.id
+            configProfiles.activeCodexProfileID = saved.id
             try persistConfigProfiles()
+            applyCodexProfile(saved)
             try writeCodexSettings(updateSelectedProfile: false)
-            codexSaveStatus = "已切换配置：\(profile.name)"
+            codexSaveStatus = "已设为当前：\(saved.name)"
         } catch {
             codexSaveStatus = "切换失败：\(error.localizedDescription)"
         }
@@ -921,20 +2155,120 @@ struct SettingsPageView: View {
         if wasSelected {
             selectedCodexProfileID = configProfiles.codexProfiles.first?.id
             configProfiles.activeCodexProfileID = selectedCodexProfileID
-            if let selectedCodexProfileID,
-               let next = configProfiles.codexProfiles.first(where: { $0.id == selectedCodexProfileID }) {
-                applyCodexProfile(next)
-            }
         }
         do {
             try persistConfigProfiles()
-            if wasSelected, selectedCodexProfileID != nil {
+            if wasSelected,
+               let selectedCodexProfileID,
+               let next = configProfiles.codexProfiles.first(where: { $0.id == selectedCodexProfileID }) {
+                applyCodexProfile(next)
                 try writeCodexSettings(updateSelectedProfile: false)
             }
             codexSaveStatus = "已删除配置"
         } catch {
             codexSaveStatus = "删除失败：\(error.localizedDescription)"
         }
+    }
+
+    private func emptyClaudeProfile(named name: String) -> ClaudeRelayProfile {
+        let now = Date()
+        return ClaudeRelayProfile(
+            id: UUID(),
+            name: name,
+            baseURL: "",
+            authToken: "",
+            model: "",
+            haikuModel: "",
+            sonnetModel: "",
+            opusModel: "",
+            httpProxy: "",
+            httpsProxy: "",
+            createdAt: now,
+            updatedAt: now
+        )
+    }
+
+    private func emptyCodexProfile(named name: String) -> CodexConfigProfile {
+        let now = Date()
+        return CodexConfigProfile(
+            id: UUID(),
+            name: name,
+            authMode: CodexAuthMode.apiKey.rawValue,
+            model: "",
+            baseURL: "",
+            apiKey: "",
+            wireApi: "responses",
+            createdAt: now,
+            updatedAt: now
+        )
+    }
+
+    private func persistedClaudeProfile(_ profile: ClaudeRelayProfile) throws -> ClaudeRelayProfile {
+        guard let index = configProfiles.claudeRelayProfiles.firstIndex(where: { $0.id == profile.id }) else {
+            throw Self.settingsError("配置不存在")
+        }
+        let trimmedName = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            throw Self.settingsError("配置名称不能为空")
+        }
+        var saved = profile
+        saved.name = trimmedName
+        saved.createdAt = configProfiles.claudeRelayProfiles[index].createdAt
+        saved.updatedAt = Date()
+        configProfiles.claudeRelayProfiles[index] = saved
+        try persistConfigProfiles()
+        return saved
+    }
+
+    private func insertedClaudeProfile(_ profile: ClaudeRelayProfile) throws -> ClaudeRelayProfile {
+        let trimmedName = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            throw Self.settingsError("配置名称不能为空")
+        }
+        var saved = profile
+        let now = Date()
+        saved.name = trimmedName
+        saved.createdAt = now
+        saved.updatedAt = now
+        configProfiles.claudeRelayProfiles.insert(saved, at: 0)
+        try persistConfigProfiles()
+        return saved
+    }
+
+    private func persistedCodexProfile(_ profile: CodexConfigProfile) throws -> CodexConfigProfile {
+        guard let index = configProfiles.codexProfiles.firstIndex(where: { $0.id == profile.id }) else {
+            throw Self.settingsError("配置不存在")
+        }
+        let trimmedName = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            throw Self.settingsError("配置名称不能为空")
+        }
+        var saved = profile
+        saved.name = trimmedName
+        saved.authMode = CodexAuthMode.apiKey.rawValue
+        saved.wireApi = saved.wireApi.isEmpty ? "responses" : saved.wireApi
+        saved.createdAt = configProfiles.codexProfiles[index].createdAt
+        saved.updatedAt = Date()
+        configProfiles.codexProfiles[index] = saved
+        try persistConfigProfiles()
+        return saved
+    }
+
+    private func insertedCodexProfile(_ profile: CodexConfigProfile) throws -> CodexConfigProfile {
+        let trimmedName = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            throw Self.settingsError("配置名称不能为空")
+        }
+        var saved = profile
+        let now = Date()
+        saved.name = trimmedName
+        saved.authMode = CodexAuthMode.apiKey.rawValue
+        saved.wireApi = saved.wireApi.isEmpty ? "responses" : saved.wireApi
+        saved.createdAt = now
+        saved.updatedAt = now
+        configProfiles.codexProfiles.insert(saved, at: 0)
+        try persistConfigProfiles()
+        return saved
     }
 
     private func applyClaudeProfile(_ profile: ClaudeRelayProfile) {
@@ -949,7 +2283,7 @@ struct SettingsPageView: View {
     }
 
     private func applyCodexProfile(_ profile: CodexConfigProfile) {
-        codexAuthMode = profile.authMode == CodexAuthMode.account.rawValue ? .account : .apiKey
+        codexAuthMode = .apiKey
         codexModel = profile.model
         codexBaseURL = profile.baseURL
         codexApiKey = profile.apiKey
@@ -979,7 +2313,7 @@ struct SettingsPageView: View {
         return CodexConfigProfile(
             id: id,
             name: name,
-            authMode: codexAuthMode.rawValue,
+            authMode: CodexAuthMode.apiKey.rawValue,
             model: codexModel,
             baseURL: codexBaseURL,
             apiKey: codexApiKey,
@@ -1024,7 +2358,7 @@ struct SettingsPageView: View {
               let env = json["env"] as? [String: Any] else { return }
 
         anthropicBaseURL = env["ANTHROPIC_BASE_URL"] as? String ?? ""
-        anthropicAuthToken = env["ANTHROPIC_AUTH_TOKEN"] as? String ?? ""
+        anthropicAuthToken = env["ANTHROPIC_API_KEY"] as? String ?? env["ANTHROPIC_AUTH_TOKEN"] as? String ?? ""
         anthropicModel = env["ANTHROPIC_MODEL"] as? String ?? ""
         anthropicHaikuModel = env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] as? String ?? ""
         anthropicSonnetModel = env["ANTHROPIC_DEFAULT_SONNET_MODEL"] as? String ?? ""
@@ -1058,7 +2392,7 @@ struct SettingsPageView: View {
 
         let fields: [(String, String)] = [
             ("ANTHROPIC_BASE_URL", anthropicBaseURL),
-            ("ANTHROPIC_AUTH_TOKEN", anthropicAuthToken),
+            ("ANTHROPIC_API_KEY", anthropicAuthToken),
             ("ANTHROPIC_MODEL", anthropicModel),
             ("ANTHROPIC_DEFAULT_HAIKU_MODEL", anthropicHaikuModel),
             ("ANTHROPIC_DEFAULT_SONNET_MODEL", anthropicSonnetModel),
@@ -1075,6 +2409,7 @@ struct SettingsPageView: View {
                 env[key] = trimmed
             }
         }
+        env.removeValue(forKey: "ANTHROPIC_AUTH_TOKEN")
 
         json["env"] = env
 
@@ -1090,7 +2425,6 @@ struct SettingsPageView: View {
     // MARK: - Codex Settings
 
     private func loadCodexSettings() {
-        codexAccountStatus = ""
         codexApiKey = ""
         var configuredProvider = ""
 
@@ -1108,30 +2442,12 @@ struct SettingsPageView: View {
 
         // 读取 auth.json
         if let data = try? Data(contentsOf: Self.codexAuthURL),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let key = json["OPENAI_API_KEY"] as? String {
-                codexApiKey = key
-            }
-            if let status = codexOAuthStatus(from: json) {
-                codexAccountStatus = status
-            }
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let key = json["OPENAI_API_KEY"] as? String {
+            codexApiKey = key
         }
 
-        if codexAccountStatus.isEmpty {
-            if FileManager.default.fileExists(atPath: Self.ccSwitchCodexOAuthURL.path) {
-                codexAccountStatus = "未在 ~/.codex/auth.json 检测到账号登录态，但 cc-switch 有可导入的 Codex OAuth 登录态。"
-            } else if !codexApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                codexAccountStatus = "~/.codex/auth.json 当前是 API Key。账号登录请运行 codex login，或从 cc-switch 导入 OAuth 登录态。"
-            } else {
-                codexAccountStatus = "未检测到账号登录态。可在终端运行 codex login。"
-            }
-        }
-
-        if configuredProvider == "custom" || configuredProvider == "acode_custom" {
-            codexAuthMode = .apiKey
-        } else {
-            codexAuthMode = .account
-        }
+        codexAuthMode = .apiKey
     }
 
     private func saveCodexSettings() {
@@ -1139,9 +2455,7 @@ struct SettingsPageView: View {
 
         do {
             try writeCodexSettings(updateSelectedProfile: true)
-            codexSaveStatus = codexAuthMode == .apiKey
-                ? "保存成功（API Key）"
-                : (codexAccountStatus.contains("检测到") || codexAccountStatus.contains("已导入") ? "保存成功（账号登录）" : "已保存模型；请先运行 codex login")
+            codexSaveStatus = "保存成功（中转站）"
         } catch {
             codexSaveStatus = "保存失败：\(error.localizedDescription)"
         }
@@ -1156,41 +2470,32 @@ struct SettingsPageView: View {
 
         do {
             let providerID = "acode_custom"
+            codexAuthMode = .apiKey
             var configText = (try? String(contentsOf: Self.codexConfigURL, encoding: .utf8)) ?? ""
             configText = updateTomlValue(configText, key: "model", value: codexModel.isEmpty ? "gpt-5.5" : codexModel)
+            configText = updateTomlValue(configText, key: "model_provider", value: providerID)
+            configText = updateTomlSectionValue(configText, section: "model_providers.\(providerID)", key: "name", value: providerID)
+            configText = updateTomlSectionValue(configText, section: "model_providers.\(providerID)", key: "base_url", value: codexBaseURL)
+            configText = updateTomlSectionValue(configText, section: "model_providers.\(providerID)", key: "wire_api", value: codexWireApi)
+            configText = updateTomlSectionRawValue(configText, section: "model_providers.\(providerID)", key: "requires_openai_auth", value: "true")
 
-            var authDataToWrite: Data?
-            if codexAuthMode == .apiKey {
-                configText = updateTomlValue(configText, key: "model_provider", value: providerID)
-                configText = updateTomlSectionValue(configText, section: "model_providers.\(providerID)", key: "name", value: providerID)
-                configText = updateTomlSectionValue(configText, section: "model_providers.\(providerID)", key: "base_url", value: codexBaseURL)
-                configText = updateTomlSectionValue(configText, section: "model_providers.\(providerID)", key: "wire_api", value: codexWireApi)
-                configText = updateTomlSectionRawValue(configText, section: "model_providers.\(providerID)", key: "requires_openai_auth", value: "true")
-
-                var authJson: [String: Any] = [:]
-                if let data = try? Data(contentsOf: Self.codexAuthURL),
-                   let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    authJson = existing
-                }
-
-                let trimmedKey = codexApiKey.trimmingCharacters(in: .whitespaces)
-                if trimmedKey.isEmpty {
-                    authJson.removeValue(forKey: "OPENAI_API_KEY")
-                } else {
-                    authJson["OPENAI_API_KEY"] = trimmedKey
-                }
-                authDataToWrite = try JSONSerialization.data(withJSONObject: authJson, options: [.prettyPrinted, .sortedKeys])
-            } else {
-                configText = removeTopLevelTomlValue(configText, key: "model_provider")
+            var authJson: [String: Any] = [:]
+            if let data = try? Data(contentsOf: Self.codexAuthURL),
+               let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                authJson = existing
             }
+
+            let trimmedKey = codexApiKey.trimmingCharacters(in: .whitespaces)
+            if trimmedKey.isEmpty {
+                authJson.removeValue(forKey: "OPENAI_API_KEY")
+            } else {
+                authJson["OPENAI_API_KEY"] = trimmedKey
+            }
+            let authDataToWrite = try JSONSerialization.data(withJSONObject: authJson, options: [.prettyPrinted, .sortedKeys])
 
             try configText.write(to: Self.codexConfigURL, atomically: true, encoding: .utf8)
-            if let authDataToWrite {
-                try authDataToWrite.write(to: Self.codexAuthURL, options: .atomic)
-                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.codexAuthURL.path)
-            } else {
-                refreshCodexAccountStatus()
-            }
+            try authDataToWrite.write(to: Self.codexAuthURL, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.codexAuthURL.path)
 
             if updateSelectedProfile {
                 try updateSelectedCodexProfile()
@@ -1202,77 +2507,6 @@ struct SettingsPageView: View {
             restoreFile(at: Self.codexAuthURL, data: previousAuthData)
             throw error
         }
-    }
-
-    private func importCodexOAuthFromCCSwitch() {
-        codexSaveStatus = ""
-
-        do {
-            let data = try Data(contentsOf: Self.ccSwitchCodexOAuthURL)
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  codexOAuthStatus(from: json) != nil else {
-                codexSaveStatus = "导入失败：cc-switch 登录态格式不符合 Codex OAuth"
-                return
-            }
-
-            let codexDir = Self.codexAuthURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: codexDir, withIntermediateDirectories: true)
-
-            if FileManager.default.fileExists(atPath: Self.codexAuthURL.path) {
-                let stamp = Self.backupTimestamp()
-                let backupURL = codexDir.appendingPathComponent("auth.json.backup-\(stamp)")
-                try? FileManager.default.copyItem(at: Self.codexAuthURL, to: backupURL)
-            }
-
-            try data.write(to: Self.codexAuthURL, options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.codexAuthURL.path)
-
-            codexAuthMode = .account
-            codexApiKey = ""
-            refreshCodexAccountStatus()
-            codexSaveStatus = "已导入 cc-switch 登录态，请保存"
-        } catch {
-            codexSaveStatus = "导入失败：\(error.localizedDescription)"
-        }
-    }
-
-    private func refreshCodexAccountStatus() {
-        guard let data = try? Data(contentsOf: Self.codexAuthURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let status = codexOAuthStatus(from: json) else {
-            codexAccountStatus = FileManager.default.fileExists(atPath: Self.ccSwitchCodexOAuthURL.path)
-                ? "未在 ~/.codex/auth.json 检测到账号登录态，但 cc-switch 有可导入的 Codex OAuth 登录态。"
-                : "未检测到账号登录态。可在终端运行 codex login。"
-            return
-        }
-        codexAccountStatus = status
-    }
-
-    private func codexOAuthStatus(from json: [String: Any]) -> String? {
-        guard let accounts = json["accounts"] as? [String: Any], !accounts.isEmpty else { return nil }
-        let defaultID = json["default_account_id"] as? String
-
-        if let defaultID,
-           let account = accounts[defaultID] as? [String: Any],
-           let refreshToken = account["refresh_token"] as? String,
-           !refreshToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if let email = account["email"] as? String, !email.isEmpty {
-                return "检测到 Codex 账号登录态：\(email)"
-            }
-            return "检测到 Codex 账号登录态。"
-        }
-
-        for value in accounts.values {
-            guard let account = value as? [String: Any],
-                  let refreshToken = account["refresh_token"] as? String,
-                  !refreshToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            if let email = account["email"] as? String, !email.isEmpty {
-                return "检测到 Codex 账号登录态：\(email)"
-            }
-            return "检测到 Codex 账号登录态。"
-        }
-
-        return nil
     }
 
     // MARK: - TOML Helpers
@@ -1287,7 +2521,7 @@ struct SettingsPageView: View {
                 continue
             }
             guard !isInsideSection else { continue }
-            guard isTomlAssignment(trimmed, key: key) else { continue }
+            guard Self.isTomlAssignment(trimmed, key: key) else { continue }
 
             let parts = trimmed.split(separator: "=", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { continue }
@@ -1337,7 +2571,7 @@ struct SettingsPageView: View {
                 continue
             }
 
-            if !isInsideSection && isTomlAssignment(trimmed, key: key) {
+            if !isInsideSection && Self.isTomlAssignment(trimmed, key: key) {
                 result.append(tomlAssignment(key: key, value: value))
                 found = true
             } else {
@@ -1356,7 +2590,7 @@ struct SettingsPageView: View {
     }
 
     private func updateTomlSectionValue(_ text: String, section: String, key: String, value: String) -> String {
-        updateTomlSectionRawValue(text, section: section, key: key, value: tomlQuoted(value))
+        updateTomlSectionRawValue(text, section: section, key: key, value: Self.tomlQuoted(value))
     }
 
     private func updateTomlSectionRawValue(_ text: String, section: String, key: String, value: String) -> String {
@@ -1385,7 +2619,7 @@ struct SettingsPageView: View {
                     result.append(line)
                     continue
                 }
-                if isTomlAssignment(trimmed, key: key) {
+                if Self.isTomlAssignment(trimmed, key: key) {
                     if !value.isEmpty {
                         result.append("\(key) = \(value)")
                     }
@@ -1420,37 +2654,15 @@ struct SettingsPageView: View {
         }
     }
 
-    private func removeTopLevelTomlValue(_ text: String, key: String) -> String {
-        let lines = text.components(separatedBy: .newlines)
-        var result: [String] = []
-        var isInsideSection = false
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("[") && !trimmed.hasPrefix("[[") {
-                isInsideSection = true
-                result.append(line)
-                continue
-            }
-
-            if !isInsideSection && isTomlAssignment(trimmed, key: key) {
-                continue
-            }
-            result.append(line)
-        }
-
-        return result.joined(separator: "\n")
-    }
-
-    private func isTomlAssignment(_ line: String, key: String) -> Bool {
+    private nonisolated static func isTomlAssignment(_ line: String, key: String) -> Bool {
         line == key || line.hasPrefix("\(key) ") || line.hasPrefix("\(key)=")
     }
 
     private func tomlAssignment(key: String, value: String) -> String {
-        "\(key) = \(tomlQuoted(value))"
+        "\(key) = \(Self.tomlQuoted(value))"
     }
 
-    private func tomlQuoted(_ value: String) -> String {
+    private nonisolated static func tomlQuoted(_ value: String) -> String {
         let escaped = value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -1458,9 +2670,29 @@ struct SettingsPageView: View {
     }
 
     private func uniqueStrings(_ values: [String]) -> [String] {
-        values.reduce(into: [String]()) { result, value in
-            if !result.contains(value) { result.append(value) }
+        var seen = Set<String>()
+        var result: [String] = []
+        result.reserveCapacity(values.count)
+        for value in values where seen.insert(value).inserted {
+            result.append(value)
         }
+        return result
+    }
+
+    private func modelMenuItems(models: [String], selectedModel: String) -> ModelMenuItems {
+        var values = models
+        let selected = selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !selected.isEmpty {
+            values.insert(selected, at: 0)
+        }
+        let uniqueModels = uniqueStrings(values)
+        guard uniqueModels.count > Self.modelMenuLimit else {
+            return ModelMenuItems(items: uniqueModels, hiddenCount: 0)
+        }
+        return ModelMenuItems(
+            items: Array(uniqueModels.prefix(Self.modelMenuLimit)),
+            hiddenCount: uniqueModels.count - Self.modelMenuLimit
+        )
     }
 
     private static func backupTimestamp() -> String {
@@ -1472,7 +2704,8 @@ struct SettingsPageView: View {
     // MARK: - Model Picker UI
 
     private func modelPicker(label: String, selection: Binding<String>, models: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let menuItems = modelMenuItems(models: models, selectedModel: selection.wrappedValue)
+        return VStack(alignment: .leading, spacing: 8) {
             fieldLabel(label)
             HStack(spacing: 10) {
                 TextField("模型 ID", text: selection)
@@ -1482,8 +2715,12 @@ struct SettingsPageView: View {
                 Menu {
                     Button("不设置") { selection.wrappedValue = "" }
                     Divider()
-                    ForEach(models, id: \.self) { model in
+                    ForEach(menuItems.items, id: \.self) { model in
                         Button(model) { selection.wrappedValue = model }
+                    }
+                    if menuItems.hiddenCount > 0 {
+                        Divider()
+                        Text("已隐藏 \(menuItems.hiddenCount) 个模型，可直接输入模型 ID")
                     }
                 } label: {
                     HStack(spacing: 6) {
@@ -1494,7 +2731,7 @@ struct SettingsPageView: View {
                     }
                     .padding(.horizontal, 12)
                     .frame(height: 40)
-                    .background(Color.white)
+                    .background(AppTheme.inputSurface)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
                 }
@@ -1507,111 +2744,210 @@ struct SettingsPageView: View {
     // MARK: - Fetch Models
 
     private func fetchClaudeModels() {
-        let baseURL = anthropicBaseURL.trimmingCharacters(in: .whitespaces)
+        fetchClaudeModels(baseURL: anthropicBaseURL, authToken: anthropicAuthToken)
+    }
+
+    private func fetchClaudeModels(for profile: ClaudeRelayProfile) {
+        fetchClaudeModels(baseURL: profile.baseURL, authToken: profile.authToken)
+    }
+
+    private func fetchClaudeModels(baseURL rawBaseURL: String, authToken rawAuthToken: String) {
+        let baseURL = rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !baseURL.isEmpty else { return }
 
         isFetchingClaudeModels = true
         claudeModelList = []
+        relaySaveStatus = "正在拉取模型…"
 
-        // 尝试 /v1/models 和 /models 两个端点
         let candidates = [
             baseURL.hasSuffix("/") ? baseURL + "v1/models" : baseURL + "/v1/models",
             baseURL.hasSuffix("/") ? baseURL + "models" : baseURL + "/models",
         ]
+        let token = rawAuthToken.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        Task {
-            for urlString in candidates {
-                guard let url = URL(string: urlString) else { continue }
-                var request = URLRequest(url: url, timeoutInterval: 15)
-                request.httpMethod = "GET"
-                let token = anthropicAuthToken.trimmingCharacters(in: .whitespaces)
-                if !token.isEmpty {
-                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                    request.setValue(token, forHTTPHeaderField: "x-api-key")
-                }
-
-                do {
-                    let (data, response) = try await URLSession.shared.data(for: request)
-                    guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else { continue }
-                    if let models = parseModelListResponse(data) {
-                        await MainActor.run {
-                            claudeModelList = models.sorted()
-                            isFetchingClaudeModels = false
-                        }
-                        return
-                    }
-                } catch {
-                    continue
-                }
-            }
-
-            await MainActor.run {
-                isFetchingClaudeModels = false
-                relaySaveStatus = "拉取模型失败"
+        claudeModelFetchTask?.cancel()
+        claudeModelFetchTask = Task {
+            let result = await fetchModelIDs(from: candidates, token: token, sendsAPIKeyHeader: true)
+            guard !Task.isCancelled else { return }
+            isFetchingClaudeModels = false
+            switch result {
+            case .success(let models):
+                claudeModelList = models.sorted()
+                relaySaveStatus = "已拉取 \(models.count) 个模型"
+            case .failure(let message):
+                relaySaveStatus = "拉取模型失败：\(message)"
             }
         }
     }
 
     private func fetchCodexModels() {
-        let baseURL = codexBaseURL.trimmingCharacters(in: .whitespaces)
+        fetchCodexModels(baseURL: codexBaseURL, apiKey: codexApiKey)
+    }
+
+    private func fetchCodexModels(for profile: CodexConfigProfile) {
+        fetchCodexModels(baseURL: profile.baseURL, apiKey: profile.apiKey)
+    }
+
+    private func fetchCodexModels(baseURL rawBaseURL: String, apiKey rawAPIKey: String) {
+        let baseURL = rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !baseURL.isEmpty else { return }
 
         isFetchingCodexModels = true
         codexModelList = []
+        codexSaveStatus = "正在拉取模型…"
 
         let candidates = [
             baseURL.hasSuffix("/") ? baseURL + "models" : baseURL + "/models",
         ]
+        let token = rawAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        Task {
-            for urlString in candidates {
-                guard let url = URL(string: urlString) else { continue }
-                var request = URLRequest(url: url, timeoutInterval: 15)
-                request.httpMethod = "GET"
-                let token = codexApiKey.trimmingCharacters(in: .whitespaces)
-                if !token.isEmpty {
-                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                }
-
-                do {
-                    let (data, response) = try await URLSession.shared.data(for: request)
-                    guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else { continue }
-                    if let models = parseModelListResponse(data) {
-                        await MainActor.run {
-                            codexModelList = models.sorted()
-                            isFetchingCodexModels = false
-                        }
-                        return
-                    }
-                } catch {
-                    continue
-                }
-            }
-
-            await MainActor.run {
-                isFetchingCodexModels = false
-                codexSaveStatus = "拉取模型失败"
+        codexModelFetchTask?.cancel()
+        codexModelFetchTask = Task {
+            let result = await fetchModelIDs(from: candidates, token: token, sendsAPIKeyHeader: false)
+            guard !Task.isCancelled else { return }
+            isFetchingCodexModels = false
+            switch result {
+            case .success(let models):
+                codexModelList = models.sorted()
+                codexSaveStatus = "已拉取 \(models.count) 个模型"
+            case .failure(let message):
+                codexSaveStatus = "拉取模型失败：\(message)"
             }
         }
     }
 
-    /// 解析 OpenAI 兼容的 /models 响应
-    private func parseModelListResponse(_ data: Data) -> [String]? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    private func fetchModelIDs(from candidates: [String], token: String, sendsAPIKeyHeader: Bool) async -> ModelFetchOutcome {
+        var failures: [String] = []
+        for urlString in candidates {
+            if Task.isCancelled { return .failure("") }
+            guard let url = validModelURL(urlString) else {
+                failures.append("URL 无效：\(urlString)")
+                continue
+            }
+            var request = URLRequest(url: url, timeoutInterval: 15)
+            request.httpMethod = "GET"
+            if !token.isEmpty {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                if sendsAPIKeyHeader {
+                    request.setValue(token, forHTTPHeaderField: "x-api-key")
+                }
+            }
 
-        // OpenAI 格式: { "data": [{ "id": "model-name", ... }] }
-        if let dataArray = json["data"] as? [[String: Any]] {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResp = response as? HTTPURLResponse else {
+                    failures.append("响应格式不支持")
+                    continue
+                }
+                guard httpResp.statusCode == 200 else {
+                    failures.append("HTTP \(httpResp.statusCode)")
+                    continue
+                }
+                guard let models = parseModelListResponse(data) else {
+                    failures.append("响应格式不支持")
+                    continue
+                }
+                return .success(models.removingDuplicateValues())
+            } catch {
+                if Task.isCancelled { return .failure("") }
+                failures.append(networkErrorDescription(error))
+            }
+        }
+        return .failure(failures.removingDuplicateValues().joined(separator: "；"))
+    }
+
+    private func validModelURL(_ urlString: String) -> URL? {
+        guard let url = URL(string: urlString),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host?.isEmpty == false else { return nil }
+        return url
+    }
+
+    private func networkErrorDescription(_ error: Error) -> String {
+        guard let urlError = error as? URLError else { return error.localizedDescription }
+        switch urlError.code {
+        case .notConnectedToInternet:
+            return "网络不可用"
+        case .timedOut:
+            return "网络超时"
+        case .cannotFindHost, .cannotConnectToHost:
+            return "无法连接服务器"
+        case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateHasUnknownRoot:
+            return "TLS 连接失败"
+        case .appTransportSecurityRequiresSecureConnection:
+            return "HTTP 请求被系统安全策略拦截，请重新构建应用后重试"
+        case .unsupportedURL, .badURL:
+            return "URL 无效"
+        default:
+            return urlError.localizedDescription
+        }
+    }
+
+    private func checkForUpdates() {
+        updateCheckStatus = "正在检查更新..."
+        updateDownloadURL = nil
+        isCheckingForUpdate = true
+        Task {
+            do {
+                let version = appVersion.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? appVersion
+                let build = buildNumber.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? buildNumber
+                let arch = macUpdateArchitecture.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? macUpdateArchitecture
+                let result: AppUpdateCheckResponse = try await AccountAPIClient().get("remote/app-updates/check?platform=macos&channel=stable&arch=\(arch)&version=\(version)&buildNumber=\(build)")
+                await MainActor.run {
+                    isCheckingForUpdate = false
+                    if result.updateAvailable {
+                        let urlString = result.downloadUrl.isEmpty ? result.appStoreUrl : result.downloadUrl
+                        updateDownloadURL = URL(string: urlString)
+                        let buildText = result.latestBuildNumber.isEmpty ? "" : "（\(result.latestBuildNumber)）"
+                        let forceText = result.forceUpdate ? "，这是强制更新" : ""
+                        updateCheckStatus = "发现新版 \(result.latestVersion)\(buildText)\(forceText)。\(result.releaseNotes)"
+                    } else {
+                        updateCheckStatus = "当前已是最新版本。"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isCheckingForUpdate = false
+                    updateCheckStatus = "检查失败：\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private var macUpdateArchitecture: String {
+        #if arch(arm64)
+        return "arm64"
+        #elseif arch(x86_64)
+        return "x86_64"
+        #else
+        return "universal"
+        #endif
+    }
+
+    private func parseModelListResponse(_ data: Data) -> [String]? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        if let object = json as? [String: Any], let dataArray = object["data"] as? [[String: Any]] {
             let ids = dataArray.compactMap { $0["id"] as? String }
             return ids.isEmpty ? nil : ids
         }
-
-        // 有些中转站直接返回数组
-        if let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+        if let arr = json as? [[String: Any]] {
             let ids = arr.compactMap { $0["id"] as? String }
             return ids.isEmpty ? nil : ids
         }
-
         return nil
+    }
+}
+
+private extension Array where Element == String {
+    func removingDuplicateValues() -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        result.reserveCapacity(count)
+        for value in self where seen.insert(value).inserted {
+            result.append(value)
+        }
+        return result
     }
 }
 
@@ -1622,9 +2958,24 @@ private extension View {
             .font(.system(size: 14, weight: .medium))
             .padding(.horizontal, 14)
             .frame(height: 40)
-            .background(Color.white)
+            .background(AppTheme.inputSurface)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+    }
+}
+
+private struct SettingsSidebarReturnButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(Color.primary)
+            .padding(.horizontal, 11)
+            .frame(height: 34)
+            .background(configuration.isPressed ? AppTheme.buttonPressedSurface : AppTheme.controlSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(AppTheme.weakHairline, lineWidth: 1))
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -1637,8 +2988,9 @@ private struct SettingsPrimaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.primary)
             .padding(.horizontal, compact ? 11 : 16)
             .frame(height: compact ? 32 : 40)
-            .background(configuration.isPressed ? Color.black.opacity(0.035) : Color.white)
+            .background(configuration.isPressed ? AppTheme.buttonPressedSurface : AppTheme.buttonSurface)
             .clipShape(RoundedRectangle(cornerRadius: compact ? 12 : 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: compact ? 12 : 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: compact ? 12 : 14, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
@@ -1654,9 +3006,39 @@ private struct SettingsSecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(Color.secondary)
             .padding(.horizontal, compact ? 10 : 14)
             .frame(height: compact ? 30 : 38)
-            .background(configuration.isPressed ? Color.black.opacity(0.03) : Color.white)
+            .background(configuration.isPressed ? AppTheme.buttonPressedSurface : AppTheme.secondaryCardSurface)
             .clipShape(RoundedRectangle(cornerRadius: compact ? 11 : 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: compact ? 11 : 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: compact ? 11 : 14, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+private struct SettingsDestructiveButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(isEnabled ? Color.white : Color.secondary)
+            .padding(.horizontal, 16)
+            .frame(height: 40)
+            .background {
+                if isEnabled {
+                    configuration.isPressed ? Color.red.opacity(0.78) : Color.red.opacity(0.92)
+                } else {
+                    AppTheme.buttonSurface
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                if !isEnabled {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(AppTheme.hairline, lineWidth: 1)
+                }
+            }
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }

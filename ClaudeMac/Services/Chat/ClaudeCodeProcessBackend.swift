@@ -6,25 +6,50 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         let terminationStatus: Int32
         let terminationReason: Process.TerminationReason
         let didReceiveVisibleOutput: Bool
+        let didReceiveSuccessfulResult: Bool
         let stderrOutput: String
+        let stdoutDiagnostics: String
+        let timedOut: Bool
 
         var shouldRetryWithoutEffort: Bool {
-            guard terminationStatus != 0, didReceiveVisibleOutput == false else { return false }
-            let lowercasedStderr = stderrOutput.lowercased()
-            return lowercasedStderr.contains("--effort")
-                || lowercasedStderr.contains("unknown option 'effort'")
-                || lowercasedStderr.contains("unknown option: effort")
-                || lowercasedStderr.contains("unexpected argument '--effort'")
+            guard !timedOut, terminationStatus != 0 else { return false }
+            let lowercasedDiagnostics = diagnosticOutput.lowercased()
+            return lowercasedDiagnostics.contains("--effort")
+                || lowercasedDiagnostics.contains("unknown option 'effort'")
+                || lowercasedDiagnostics.contains("unknown option: effort")
+                || lowercasedDiagnostics.contains("unexpected argument '--effort'")
         }
 
         var shouldRetryWithoutPartialMessages: Bool {
-            guard terminationStatus != 0, didReceiveVisibleOutput == false else { return false }
-            let lowercasedStderr = stderrOutput.lowercased()
-            return lowercasedStderr.contains("--include-partial-messages")
-                || lowercasedStderr.contains("unknown option 'include-partial-messages'")
-                || lowercasedStderr.contains("unknown option: include-partial-messages")
-                || lowercasedStderr.contains("unexpected argument '--include-partial-messages'")
+            guard !timedOut, terminationStatus != 0 else { return false }
+            let lowercasedDiagnostics = diagnosticOutput.lowercased()
+            return lowercasedDiagnostics.contains("--include-partial-messages")
+                || lowercasedDiagnostics.contains("unknown option 'include-partial-messages'")
+                || lowercasedDiagnostics.contains("unknown option: include-partial-messages")
+                || lowercasedDiagnostics.contains("unexpected argument '--include-partial-messages'")
         }
+
+        var shouldRetryWithoutBrief: Bool {
+            guard !timedOut, terminationStatus != 0 else { return false }
+            let lowercasedDiagnostics = diagnosticOutput.lowercased()
+            return lowercasedDiagnostics.contains("--brief")
+                || lowercasedDiagnostics.contains("unknown option 'brief'")
+                || lowercasedDiagnostics.contains("unknown option: brief")
+                || lowercasedDiagnostics.contains("unexpected argument '--brief'")
+        }
+
+        var diagnosticOutput: String {
+            [stderrOutput, stdoutDiagnostics]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+        }
+    }
+
+    private struct StdoutReadResult {
+        let didReceiveVisibleOutput: Bool
+        let didReceiveSuccessfulResult: Bool
+        let diagnostics: String
     }
 
     private struct ClaudeContentBlock {
@@ -35,19 +60,30 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
 
     private struct ClaudeStreamState {
         var didReceiveAssistantTextDelta = false
+        var didReceiveStreamEventAssistantTextDelta = false
+        var topLevelAssistantText = ""
+        var emittedContentItemIDs: Set<String> = []
         var activeBlocks: [Int: ClaudeContentBlock] = [:]
     }
 
+    private static let idleTimeout: TimeInterval = 5 * 60
+
     private var process: Process?
     private var inputPipe: Pipe?
+    private var didCloseInputPipe = false
+    private var activeSessionID: String?
+    private var activityWatchdog: ChatProcessActivityWatchdog?
+    private let compactStateLock = NSLock()
+    private var isWaitingForCompactResult = false
 
-    func start(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?) -> AsyncThrowingStream<ChatBackendEvent, Error> {
+    func start(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, attachments: [ChatMessageAttachment]) -> AsyncThrowingStream<ChatBackendEvent, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task.detached(priority: .userInitiated) { [weak self] in
+            let worker = Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self else { return }
 
                 var includeEffort = true
                 var includePartialMessages = true
+                var includeBrief = true
                 let finalRun: ProcessRunResult
 
                 while true {
@@ -55,12 +91,27 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                         prompt: prompt,
                         options: options,
                         session: session,
+                        attachments: attachments,
                         includeEffort: includeEffort,
                         includePartialMessages: includePartialMessages,
+                        includeBrief: includeBrief,
                         continuation: continuation
                     ) else {
                         continuation.finish()
                         return
+                    }
+
+                    if includeBrief, run.shouldRetryWithoutBrief {
+                        includeBrief = false
+                        continuation.yield(.appendMessage(
+                            kind: .system,
+                            title: "Claude Code",
+                            subtitle: "fallback",
+                            text: "当前 Claude Code 没有接受 --brief，本次已关闭内嵌用户交互工具后重试。",
+                            status: "retry",
+                            requestID: nil
+                        ))
+                        continue
                     }
 
                     if includePartialMessages, run.shouldRetryWithoutPartialMessages {
@@ -96,9 +147,9 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                 self.finish(finalRun, continuation: continuation)
                 continuation.finish()
             }
-            continuation.onTermination = { _ in
-                task.cancel()
-                self.interrupt()
+            continuation.onTermination = { [weak self] _ in
+                worker.cancel()
+                self?.interrupt()
             }
         }
     }
@@ -107,72 +158,221 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         prompt: String,
         options: ChatRunOptions,
         session: ChatSessionRecord?,
+        attachments: [ChatMessageAttachment],
         includeEffort: Bool,
         includePartialMessages: Bool,
+        includeBrief: Bool,
         continuation: AsyncThrowingStream<ChatBackendEvent, Error>.Continuation
     ) async -> ProcessRunResult? {
         let process = Process()
         let stdout = Pipe()
         let stderr = Pipe()
+        let stdin = Pipe()
         process.executableURL = URL(fileURLWithPath: options.executablePath)
-        process.arguments = arguments(prompt: prompt, options: options, session: session, includeEffort: includeEffort, includePartialMessages: includePartialMessages)
+        process.arguments = arguments(prompt: prompt, options: options, session: session, includeEffort: includeEffort, includePartialMessages: includePartialMessages, includeBrief: includeBrief)
         process.currentDirectoryURL = URL(fileURLWithPath: options.projectPath, isDirectory: true)
         process.environment = ChatCLIEnvironment.processEnvironment
         process.standardOutput = stdout
         process.standardError = stderr
+        ChatProcessLauncher.isolateProcessGroup(process)
+        if options.supportsStreamJSONInput {
+            process.standardInput = stdin
+            inputPipe = stdin
+            didCloseInputPipe = false
+            activeSessionID = session?.externalSessionID?.nonEmptyTrimmed
+        } else {
+            inputPipe = nil
+            didCloseInputPipe = false
+            activeSessionID = nil
+        }
         self.process = process
-        inputPipe = nil
 
         do {
             try process.run()
         } catch {
+            inputPipe = nil
+            activeSessionID = nil
             continuation.yield(.failed(ChatProcessError.launchFailed(error.localizedDescription).localizedDescription))
             return nil
         }
+        let watchdog = ChatProcessActivityWatchdog(
+            process: process,
+            idleTimeout: Self.idleTimeout,
+            terminateAfter: .milliseconds(800),
+            killAfter: .seconds(2)
+        )
+        activityWatchdog = watchdog
+        watchdog.markActivity()
+        watchdog.start()
+        continuation.yield(.backendActivity("process-started"))
+        if options.supportsStreamJSONInput {
+            guard self.writeStreamUserMessage(text: prompt, attachments: attachments, sessionID: activeSessionID, parentToolUseID: nil, toolUseResult: nil, projectPath: options.projectPath) else {
+                watchdog.cancel()
+                activityWatchdog = nil
+                inputPipe = nil
+                activeSessionID = nil
+                ChatProcessTerminator.stop(process, terminateAfter: .milliseconds(200), killAfter: .milliseconds(800))
+                continuation.yield(.failed("Claude Code stream-json 输入写入失败。"))
+                return nil
+            }
+            continuation.yield(.backendActivity("stdin-written"))
+        }
+        watchdog.markActivity()
 
-        let stdoutTask = Task { () -> Bool in
+        let stdoutTask = Task { () -> StdoutReadResult in
             var didReceiveVisibleOutput = false
+            var didReceiveSuccessfulResult = false
             var streamState = ClaudeStreamState()
+            var eventCoalescer = ChatBackendEventCoalescer()
+            var diagnostics: [String] = []
+            var didTruncateDiagnostics = false
+            var didYieldStdoutActivity = false
+
+            func appendDiagnostic(_ text: String?) {
+                guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
+                diagnostics.append(text)
+                if diagnostics.count > 80 {
+                    diagnostics.removeFirst(diagnostics.count - 60)
+                    didTruncateDiagnostics = true
+                }
+            }
+
+            func makeReadResult() -> StdoutReadResult {
+                let output = diagnostics.joined(separator: "\n")
+                let diagnosticOutput = didTruncateDiagnostics ? "... stdout diagnostics truncated to last 60 entries ...\n\(output)" : output
+                return StdoutReadResult(didReceiveVisibleOutput: didReceiveVisibleOutput, didReceiveSuccessfulResult: didReceiveSuccessfulResult, diagnostics: diagnosticOutput)
+            }
+
             do {
                 for try await line in JSONLStreamReader.lines(from: stdout) {
+                    watchdog.markActivity()
+                    if !didYieldStdoutActivity {
+                        didYieldStdoutActivity = true
+                        continuation.yield(.backendActivity("stdout-first-line"))
+                    }
+                    appendDiagnostic(Self.diagnosticText(fromClaudeLine: line))
                     let events = Self.events(fromClaudeLine: line, streamState: &streamState)
                     if events.contains(where: Self.isVisibleOutput) {
                         didReceiveVisibleOutput = true
                     }
-                    for event in events {
+                    if events.contains(where: Self.shouldPauseActivityWatchdog) {
+                        watchdog.pause()
+                    }
+                    for event in eventCoalescer.push(events) {
+                        if case .sessionID(let sessionID) = event {
+                            self.activeSessionID = sessionID
+                        }
                         continuation.yield(event)
                     }
+                    // claude.exe 在 --input-format stream-json 模式下是 long-lived 的:
+                    // 输出完一轮 turn (result success) 之后并不会自己退出,而是继续等
+                    // stdin 上的下一条 user message。Acode 每次 send 都是新的 Process,
+                    // 不复用同一个 claude 进程做多轮,所以 turn 结束后要主动关闭 stdin
+                    // 通知 claude EOF。自动压缩是例外: result 行会先短暂等 UI 根据
+                    // tokenUsage 调用 sendCompact(), 成功写入 /compact 时就等压缩结果后再 EOF。
+                    if Self.shouldCloseStdinAfterLine(line) {
+                        try? await Task.sleep(nanoseconds: 250_000_000)
+                        if self.consumeCompactResultWait() {
+                            watchdog.markActivity()
+                        } else {
+                            didReceiveSuccessfulResult = Self.isSuccessfulTerminalResultLine(line)
+                            for event in eventCoalescer.flush() {
+                                if case .sessionID(let sessionID) = event {
+                                    self.activeSessionID = sessionID
+                                }
+                                continuation.yield(event)
+                            }
+                            if didReceiveSuccessfulResult {
+                                continuation.yield(.finished)
+                                continuation.finish()
+                            }
+                            self.closeInputPipeIfNeeded()
+                            if didReceiveSuccessfulResult {
+                                Self.stopProcessAfterTerminalResult(process)
+                                return makeReadResult()
+                            }
+                        }
+                    }
+                }
+                for event in eventCoalescer.flush() {
+                    if case .sessionID(let sessionID) = event {
+                        self.activeSessionID = sessionID
+                    }
+                    continuation.yield(event)
                 }
             } catch {
+                for event in eventCoalescer.flush() {
+                    continuation.yield(event)
+                }
                 continuation.yield(.failed(error.localizedDescription))
             }
-            return didReceiveVisibleOutput
+            return makeReadResult()
         }
 
         let stderrTask = Task { () -> String in
             var stderrLines: [String] = []
+            var didTruncateStderr = false
+            var pendingBuffer: [String] = []
+            var lastFlushAt = Date()
+            var didYieldStderrActivity = false
+            let flushInterval: TimeInterval = 1.0
+            let flushBatchSize = 50
+
+            func flushPending() {
+                guard !pendingBuffer.isEmpty else { return }
+                let combined = pendingBuffer.joined(separator: "\n")
+                pendingBuffer.removeAll(keepingCapacity: true)
+                continuation.yield(.appendMessage(kind: .commandOutput, title: "stderr", subtitle: "Claude Code", text: combined, status: "stream", requestID: nil))
+            }
+
             do {
                 for try await line in JSONLStreamReader.lines(from: stderr) {
+                    guard !Self.shouldSuppressStderrLine(line) else { continue }
+                    watchdog.markActivity()
+                    if !didYieldStderrActivity {
+                        didYieldStderrActivity = true
+                        continuation.yield(.backendActivity("stderr-first-line"))
+                    }
                     stderrLines.append(line)
-                    continuation.yield(.appendMessage(kind: .commandOutput, title: "stderr", subtitle: "Claude Code", text: line, status: "stream", requestID: nil))
+                    if stderrLines.count > 600 {
+                        stderrLines.removeFirst(stderrLines.count - 500)
+                        didTruncateStderr = true
+                    }
+                    pendingBuffer.append(line)
+                    let now = Date()
+                    if pendingBuffer.count >= flushBatchSize || now.timeIntervalSince(lastFlushAt) >= flushInterval {
+                        flushPending()
+                        lastFlushAt = now
+                    }
                 }
+                flushPending()
             } catch {
+                flushPending()
                 continuation.yield(.failed(error.localizedDescription))
             }
-            return stderrLines.joined(separator: "\n")
+            let output = stderrLines.joined(separator: "\n")
+            return didTruncateStderr ? "... stderr truncated to last 500 lines ...\n\(output)" : output
         }
 
         process.waitUntilExit()
-        let didReceiveVisibleOutput = await stdoutTask.value
+        let timedOut = watchdog.timedOut
+        watchdog.cancel()
+        activityWatchdog = nil
+        let stdoutResult = await stdoutTask.value
         let stderrOutput = await stderrTask.value
+        closeInputPipeIfNeeded()
         inputPipe = nil
+        activeSessionID = nil
         self.process = nil
 
         return ProcessRunResult(
             terminationStatus: process.terminationStatus,
             terminationReason: process.terminationReason,
-            didReceiveVisibleOutput: didReceiveVisibleOutput,
-            stderrOutput: stderrOutput
+            didReceiveVisibleOutput: stdoutResult.didReceiveVisibleOutput,
+            didReceiveSuccessfulResult: stdoutResult.didReceiveSuccessfulResult,
+            stderrOutput: stderrOutput,
+            stdoutDiagnostics: stdoutResult.diagnostics,
+            timedOut: timedOut
         )
     }
 
@@ -180,35 +380,36 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         _ result: ProcessRunResult,
         continuation: AsyncThrowingStream<ChatBackendEvent, Error>.Continuation
     ) {
-        if result.terminationStatus == 0 {
-            if result.didReceiveVisibleOutput || !result.stderrOutput.isEmpty {
+        func messageWithDiagnostics(_ message: String) -> String {
+            let diagnostics = result.diagnosticOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+            return diagnostics.isEmpty ? message : "\(message)\n\(diagnostics)"
+        }
+
+        if result.timedOut {
+            continuation.yield(.failed(messageWithDiagnostics("Claude Code 后端超时无响应，已停止进程。请检查认证、模型或网络配置。")))
+        } else if result.didReceiveSuccessfulResult {
+            continuation.yield(.finished)
+        } else if result.terminationStatus == 0 {
+            if result.didReceiveVisibleOutput {
                 continuation.yield(.finished)
             } else {
                 continuation.yield(.failed("Claude Code 没有输出任何对话内容。请检查认证配置或模型设置。"))
             }
         } else if result.terminationReason == .uncaughtSignal {
-            continuation.yield(.failed("Claude Code 已停止。"))
+            continuation.yield(.failed(messageWithDiagnostics("Claude Code 已停止。")))
         } else {
-            let stderr = result.stderrOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-            let message = stderr.isEmpty
-                ? "Claude Code 退出码：\(result.terminationStatus)"
-                : "Claude Code 退出码：\(result.terminationStatus)\n\(stderr)"
-            continuation.yield(.failed(message))
+            continuation.yield(.failed(messageWithDiagnostics("Claude Code 退出码：\(result.terminationStatus)")))
         }
     }
 
     func interrupt() {
+        activityWatchdog?.cancel()
+        activityWatchdog = nil
         guard let process, process.isRunning else { return }
-        let pid = process.processIdentifier
-        process.interrupt()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) { [weak process] in
-            guard let process, process.isRunning else { return }
-            process.terminate()
-        }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) { [weak process] in
-            guard let process, process.isRunning else { return }
-            kill(pid, SIGKILL)
-        }
+        // 用户主动停止时也先 EOF stdin,给 claude.exe 一个干净退出的机会,
+        // 再走信号链路(SIGINT/SIGTERM/SIGKILL)兜底。
+        closeInputPipeIfNeeded()
+        ChatProcessTerminator.stop(process, terminateAfter: .milliseconds(800), killAfter: .seconds(2))
     }
 
     func respondToPermission(requestID: String, decision: ChatPermissionDecision) -> Bool {
@@ -221,28 +422,214 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             "request_id": requestID,
             "response": response
         ]
-        return ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+        let didWrite = ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+        if didWrite {
+            activityWatchdog?.resume()
+        }
+        return didWrite
     }
 
     func respondToInteractiveRequest(requestID: String, response: ChatInteractiveResponse) -> Bool {
-        var payload: [String: Any] = [
+        let answerText = response.customText?.nonEmptyTrimmed ?? response.selectedOptionIDs.joined(separator: ", ").nonEmptyTrimmed
+        guard let answerText else { return false }
+        var result: [String: Any] = [
             "selectedOptionIds": response.selectedOptionIDs,
-            "selected_option_ids": response.selectedOptionIDs
+            "selected_option_ids": response.selectedOptionIDs,
+            "answer": answerText,
+            "text": answerText,
+            "value": answerText
         ]
         if let customText = response.customText?.nonEmptyTrimmed {
-            payload["text"] = customText
-            payload["answer"] = customText
+            result["customText"] = customText
+            result["custom_text"] = customText
         }
-        let object: [String: Any] = [
-            "type": "control_response",
-            "request_id": requestID,
-            "response": payload
+        let didWrite = writeStreamUserMessage(text: answerText, attachments: [], sessionID: activeSessionID?.nonEmptyTrimmed, parentToolUseID: requestID, toolUseResult: result, projectPath: nil)
+        if didWrite {
+            activityWatchdog?.resume()
+        }
+        return didWrite
+    }
+
+    /// Audit B-P0-1: write the user message to Claude stdin with optional
+    /// attachments. When `attachments` is non-empty we follow Anthropic's
+    /// stream-json schema and switch `message.content` from a plain string
+    /// to an array of content blocks. Image attachments become base64
+    /// `image` blocks so the model can actually see them; other file types
+    /// are encoded as a `text` block describing the path so Claude can read
+    /// the file via tools. The legacy plain-string content path is kept for
+    /// backward compatibility when there are no attachments to minimise risk.
+    private func writeStreamUserMessage(
+        text: String,
+        attachments: [ChatMessageAttachment],
+        sessionID: String?,
+        parentToolUseID: String?,
+        toolUseResult: [String: Any]?,
+        projectPath: String?
+    ) -> Bool {
+        guard text.nonEmptyTrimmed != nil || !attachments.isEmpty else { return false }
+        guard !didCloseInputPipe else { return false }
+
+        let messageContent: Any
+        if attachments.isEmpty {
+            messageContent = text
+        } else {
+            var blocks: [[String: Any]] = []
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                blocks.append(["type": "text", "text": text])
+            }
+            for attachment in attachments {
+                if let block = Self.contentBlock(for: attachment, projectPath: projectPath) {
+                    blocks.append(block)
+                }
+            }
+            if blocks.isEmpty {
+                messageContent = text
+            } else {
+                messageContent = blocks
+            }
+        }
+
+        var object: [String: Any] = [
+            "type": "user",
+            "uuid": UUID().uuidString,
+            "message": [
+                "role": "user",
+                "content": messageContent
+            ],
+            "shouldQuery": true
         ]
+        if let sessionID = sessionID?.nonEmptyTrimmed {
+            object["session_id"] = sessionID
+        }
+        if let parentToolUseID = parentToolUseID?.nonEmptyTrimmed {
+            object["parent_tool_use_id"] = parentToolUseID
+        }
+        if let toolUseResult {
+            object["tool_use_result"] = toolUseResult
+        }
         return ChatPipeWriter.writeJSONObject(object, to: inputPipe)
     }
 
+    /// Build a single Anthropic content block for an attachment. Images get
+    /// base64-encoded `image` blocks (the only way Claude can "see" them via
+    /// stream-json), other files degrade to a `text` block describing the
+    /// path. We cap base64 payload at ~8 MB raw to avoid blowing past
+    /// Anthropic's per-message limits and our own stdin write timeout; over
+    /// the cap we fall back to a text reference so the model at least knows
+    /// the file exists at <path>.
+    private static func contentBlock(for attachment: ChatMessageAttachment, projectPath: String?) -> [String: Any]? {
+        let displayName = attachment.filename.isEmpty ? (attachment.path as NSString).lastPathComponent : attachment.filename
+        let resolvedPath = resolvedAttachmentPath(attachment.path, projectPath: projectPath)
+        let fileURL = URL(fileURLWithPath: resolvedPath)
+        let maxImageBytes = 8 * 1024 * 1024
+
+        if attachment.kind == .image {
+            if let data = try? Data(contentsOf: fileURL), data.count <= maxImageBytes {
+                let mediaType = mimeType(forPath: resolvedPath, defaultValue: "image/png")
+                return [
+                    "type": "image",
+                    "source": [
+                        "type": "base64",
+                        "media_type": mediaType,
+                        "data": data.base64EncodedString()
+                    ]
+                ]
+            }
+            return [
+                "type": "text",
+                "text": "[image attachment: \(displayName) at \(resolvedPath)]"
+            ]
+        }
+
+        return [
+            "type": "text",
+            "text": "[attachment: \(displayName) at \(resolvedPath)]"
+        ]
+    }
+
+    private static func resolvedAttachmentPath(_ path: String, projectPath: String?) -> String {
+        if path.hasPrefix("/") { return path }
+        guard let projectPath, !projectPath.isEmpty else { return path }
+        return (projectPath as NSString).appendingPathComponent(path)
+    }
+
+    private static func mimeType(forPath path: String, defaultValue: String) -> String {
+        let ext = (path as NSString).pathExtension.lowercased()
+        switch ext {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "bmp": return "image/bmp"
+        case "heic": return "image/heic"
+        default: return defaultValue
+        }
+    }
+
+    private static func shouldCloseStdinAfterLine(_ line: String) -> Bool {
+        let compact = line.filter { !$0.isWhitespace }
+        return isTerminalResult(compact)
+    }
+
+    private static func isSuccessfulTerminalResultLine(_ line: String) -> Bool {
+        let compact = line.filter { !$0.isWhitespace }
+        return isTerminalResult(compact) && compact.contains("\"subtype\":\"success\"")
+    }
+
+    private static func isTerminalResult(_ compactLine: String) -> Bool {
+        compactLine.contains("\"type\":\"result\"")
+            && !compactLine.contains("\"stop_reason\":\"tool_use\"")
+            && !compactLine.contains("\"terminal_reason\":\"tool_use\"")
+    }
+
+    private static func stopProcessAfterTerminalResult(_ process: Process) {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + .milliseconds(120)) { [weak process] in
+            guard let process, process.isRunning else { return }
+            ChatProcessTerminator.stop(process, terminateAfter: .milliseconds(150), killAfter: .milliseconds(700))
+        }
+    }
+
+    private static func shouldSuppressStderrLine(_ line: String) -> Bool {
+        line.lowercased().contains("failed to generate conversation summary")
+    }
+
+    private func closeInputPipeIfNeeded() {
+        guard let pipe = inputPipe, !didCloseInputPipe else { return }
+        didCloseInputPipe = true
+        // 关 fileHandleForWriting 即给 claude.exe 发 EOF;close 失败也吞掉,
+        // 重复 close 在 try? 下不会再抛出。
+        try? pipe.fileHandleForWriting.close()
+    }
+
     func sendCompact() -> Bool {
-        false
+        let didWrite = writeStreamUserMessage(
+            text: "/compact",
+            attachments: [],
+            sessionID: activeSessionID?.nonEmptyTrimmed,
+            parentToolUseID: nil,
+            toolUseResult: nil,
+            projectPath: nil
+        )
+        if didWrite {
+            markCompactResultWait()
+            activityWatchdog?.resume()
+        }
+        return didWrite
+    }
+
+    private func markCompactResultWait() {
+        compactStateLock.lock()
+        isWaitingForCompactResult = true
+        compactStateLock.unlock()
+    }
+
+    private func consumeCompactResultWait() -> Bool {
+        compactStateLock.lock()
+        defer { compactStateLock.unlock() }
+        guard isWaitingForCompactResult else { return false }
+        isWaitingForCompactResult = false
+        return true
     }
 
     private func displayCommand(executablePath: String, arguments: [String]) -> String {
@@ -253,18 +640,26 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         return ([executablePath] + displayArguments).joined(separator: " ")
     }
 
-    private func arguments(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, includeEffort: Bool, includePartialMessages: Bool) -> [String] {
+    private func arguments(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, includeEffort: Bool, includePartialMessages: Bool, includeBrief: Bool) -> [String] {
         var args: [String] = []
         if options.sessionMode == .continueLast {
             args.append("--continue")
         } else if options.sessionMode == .resume, let resumeID = options.resumeSessionID?.nonEmptyTrimmed ?? session?.externalSessionID?.nonEmptyTrimmed {
             args.append(contentsOf: ["--resume", resumeID])
-        } else if let externalSessionID = session?.externalSessionID?.nonEmptyTrimmed {
-            args.append(contentsOf: ["--resume", externalSessionID])
         }
-        args.append(contentsOf: ["-p", prompt])
+        if options.supportsStreamJSONInput {
+            args.append("-p")
+        } else {
+            args.append(contentsOf: ["-p", prompt])
+        }
         args.append(contentsOf: ["--output-format", "stream-json"])
+        if options.supportsStreamJSONInput {
+            args.append(contentsOf: ["--input-format", "stream-json", "--replay-user-messages"])
+        }
         args.append("--verbose")
+        if includeBrief {
+            args.append("--brief")
+        }
         if includePartialMessages {
             args.append("--include-partial-messages")
         }
@@ -288,6 +683,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
     private static func events(fromClaudeLine line: String, streamState: inout ClaudeStreamState) -> [ChatBackendEvent] {
         guard let data = line.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            guard !isClaudeProtocolRawLine(line) else { return [] }
             return [.appendMessage(kind: .rawOutput, title: "raw", subtitle: "Claude Code", text: line, status: "stream", requestID: nil)]
         }
 
@@ -301,9 +697,23 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         }
 
         let type = object["type"] as? String ?? object["event"] as? String ?? "raw"
+        guard type != "user" else { return events }
+        if let errorText = errorText(from: object, type: type) {
+            events.append(.appendMessage(kind: .error, title: "Claude Code", subtitle: type, text: errorText, status: "failed", requestID: stringValue(object["request_id"]) ?? stringValue(object["id"])))
+            return events
+        }
         if type == "system" {
+            if let statusText = systemStatusText(from: object) {
+                events.append(.updateStreamingStatus(statusText))
+            }
+            if let compactError = compactErrorText(from: object) {
+                events.append(.appendMessage(kind: .error, title: "Claude Code", subtitle: "compact", text: compactError, status: "failed", requestID: stringValue(object["request_id"]) ?? stringValue(object["id"])))
+            }
             if let subtype = object["subtype"] as? String, subtype == "init" {
-                events.append(.appendMessage(kind: .system, title: "Claude init", subtitle: "tools", text: initSummary(from: object), status: "done", requestID: nil))
+                let summary = initSummary(from: object)
+                if !summary.isEmpty {
+                    events.append(.appendMessage(kind: .system, title: "Mac tools", subtitle: "agent", text: summary, status: "done", requestID: nil))
+                }
             } else if let subtype = object["subtype"] as? String {
                 events.append(.appendMessage(kind: .system, title: "system", subtitle: subtype, text: compactText(from: object), status: "done", requestID: nil))
             }
@@ -316,15 +726,23 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         }
 
         if type == "assistant" {
-            if !streamState.didReceiveAssistantTextDelta {
-                events.append(contentsOf: assistantEvents(from: object))
+            let assistantEvents = assistantEvents(from: object, streamState: &streamState)
+            if assistantEvents.contains(where: isAssistantOutput) {
+                streamState.didReceiveAssistantTextDelta = true
             }
+            events.append(contentsOf: assistantEvents)
             return events
         }
 
         if type == "result" {
-            let resultText = stringValue(object["result"]) ?? stringValue(object["message"]) ?? compactText(from: object)
-            events.append(.appendMessage(kind: .result, title: "result", subtitle: object["subtype"] as? String ?? "", text: resultText, status: "done", requestID: nil))
+            let subtype = object["subtype"] as? String ?? ""
+            let resultText = stringValue(object["result"]) ?? stringValue(object["message"])
+            if !streamState.didReceiveAssistantTextDelta, let resultText, !resultText.isEmpty {
+                streamState.didReceiveAssistantTextDelta = true
+                events.append(.appendDelta(kind: .assistant, title: "assistant", subtitle: "Claude Code", text: resultText, status: "streaming", requestID: nil))
+            }
+            guard subtype != "success" else { return events }
+            events.append(.appendMessage(kind: .error, title: "result", subtitle: subtype, text: resultText ?? compactText(from: object), status: "done", requestID: nil))
             return events
         }
 
@@ -333,7 +751,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             return events
         }
 
-        if type == "control_request" || type.contains("permission") || type.contains("approval") {
+        if Self.isPermissionRequestType(type) {
             let requestID = object["request_id"] as? String ?? object["id"] as? String ?? UUID().uuidString
             events.append(.permissionRequest(id: requestID, title: type, text: compactText(from: object)))
             return events
@@ -345,14 +763,75 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             return events
         }
 
-        events.append(.appendMessage(kind: .rawOutput, title: type, subtitle: "Claude Code", text: compactText(from: object), status: "stream", requestID: nil))
         return events
     }
 
-    private static func streamEvents(from object: [String: Any], streamState: inout ClaudeStreamState) -> [ChatBackendEvent] {
-        guard let event = object["event"] as? [String: Any] else {
-            return [.appendMessage(kind: .rawOutput, title: "stream_event", subtitle: "Claude Code", text: compactText(from: object), status: "stream", requestID: nil)]
+    private static func diagnosticText(fromClaudeLine line: String) -> String? {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return isClaudeProtocolRawLine(line) ? nil : line
         }
+        let type = object["type"] as? String ?? object["event"] as? String ?? "raw"
+        if let errorText = errorText(from: object, type: type) {
+            return errorText
+        }
+        if type == "result" {
+            let subtype = object["subtype"] as? String ?? ""
+            guard subtype != "success" else { return nil }
+            return stringValue(object["result"]) ?? stringValue(object["message"]) ?? compactText(from: object)
+        }
+        if type.lowercased().contains("error") || type.lowercased().contains("fail") {
+            return compactText(from: object)
+        }
+        return nil
+    }
+
+    private static func systemStatusText(from object: [String: Any]) -> String? {
+        if let compactResult = stringValue(object["compact_result"])?.lowercased(), compactResult == "failed" {
+            return "上下文压缩失败"
+        }
+        guard let status = stringValue(object["status"])?.lowercased() else { return nil }
+        switch status {
+        case "compacting":
+            return "正在压缩上下文"
+        case "requesting":
+            return "正在请求 Claude Code"
+        case "queued":
+            return "Claude Code 请求排队中"
+        default:
+            return nil
+        }
+    }
+
+    private static func compactErrorText(from object: [String: Any]) -> String? {
+        guard let compactResult = stringValue(object["compact_result"])?.lowercased(), compactResult == "failed" else { return nil }
+        return stringValue(object["compact_error"]) ?? "Claude Code 上下文压缩失败。"
+    }
+
+    private static func errorText(from object: [String: Any], type: String) -> String? {
+        let lowercasedType = type.lowercased()
+        guard lowercasedType == "error"
+            || lowercasedType.hasSuffix("_error")
+            || lowercasedType.contains("exception")
+            || lowercasedType.contains("failed")
+        else {
+            return nil
+        }
+        if let message = stringValue(object["message"]) ?? stringValue(object["error"]) {
+            return message
+        }
+        if let error = object["error"] as? [String: Any] {
+            if let message = stringValue(error["message"]) ?? stringValue(error["error"]) {
+                let code = stringValue(error["code"]) ?? stringValue(error["type"])
+                return [code, message].compactMap { $0?.nonEmptyTrimmed }.joined(separator: ": ")
+            }
+            return compactText(from: error)
+        }
+        return compactText(from: object)
+    }
+
+    private static func streamEvents(from object: [String: Any], streamState: inout ClaudeStreamState) -> [ChatBackendEvent] {
+        guard let event = object["event"] as? [String: Any] else { return [] }
         let type = stringValue(event["type"]) ?? "stream_event"
         let blockIndex = intValue(event["index"])
         let activeBlock = blockIndex.flatMap { streamState.activeBlocks[$0] }
@@ -373,6 +852,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             }
             guard blockType != "text" && blockType != "thinking" else { return [] }
             let kind = kindForClaudeBlockType(blockType)
+            guard kind != .rawOutput else { return [] }
             return [.appendMessage(
                 kind: kind,
                 title: blockType,
@@ -389,30 +869,77 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                 let kind = kindForClaudeDelta(block: activeBlock, defaultKind: .assistant)
                 if kind == .assistant {
                     streamState.didReceiveAssistantTextDelta = true
+                    streamState.didReceiveStreamEventAssistantTextDelta = true
                 }
                 return [.appendDelta(kind: kind, title: activeBlock?.type ?? "", subtitle: activeBlock?.name ?? "Claude Code", text: text, status: "streaming", requestID: activeBlock?.id)]
             }
             if deltaType == "thinking_delta", let text = stringValue(delta["thinking"]) ?? stringValue(delta["text"]), !text.isEmpty {
                 return [.appendDelta(kind: .reasoning, title: "thinking", subtitle: "Claude Code", text: text, status: "streaming", requestID: activeBlock?.id)]
             }
-            if deltaType == "input_json_delta", let text = stringValue(delta["partial_json"]), !text.isEmpty {
-                return [.appendDelta(kind: .toolCall, title: activeBlock?.type ?? "tool_use", subtitle: activeBlock?.name ?? "", text: text, status: "streaming", requestID: activeBlock?.id)]
+            if deltaType == "input_json_delta", let activeBlock, let text = stringValue(delta["partial_json"]), !text.isEmpty {
+                return [.appendDelta(kind: .toolCall, title: activeBlock.type, subtitle: activeBlock.name ?? "", text: text, status: "streaming", requestID: activeBlock.id)]
             }
-            return [.appendMessage(kind: .rawOutput, title: deltaType.isEmpty ? "content_block_delta" : deltaType, subtitle: "Claude Code", text: compactText(from: delta), status: "stream", requestID: activeBlock?.id)]
+            return []
         }
 
         if type == "content_block_stop" {
             if let blockIndex {
                 streamState.activeBlocks.removeValue(forKey: blockIndex)
             }
-            return []
+            guard let activeBlock, activeBlock.type != "text", activeBlock.type != "thinking" else { return [] }
+            return [.finishStreamingMessage(kind: kindForClaudeBlockType(activeBlock.type), requestID: activeBlock.id, status: "done")]
         }
 
-        if type == "message_delta" || type == "message_stop" {
-            return [.appendMessage(kind: .rawOutput, title: type, subtitle: "Claude Code", text: compactText(from: event), status: type == "message_stop" ? "done" : "stream", requestID: activeBlock?.id)]
-        }
+        return []
+    }
 
-        return [.appendMessage(kind: .rawOutput, title: type, subtitle: "Claude Code", text: compactText(from: event), status: "stream", requestID: activeBlock?.id)]
+    private static func isClaudeProtocolRawLine(_ line: String) -> Bool {
+        let compact = line.trimmingCharacters(in: .whitespacesAndNewlines).filter { !$0.isWhitespace }
+        guard compact.hasPrefix("{") else { return false }
+        return [
+            "\"type\":\"stream_event\"",
+            "\"type\":\"message_start\"",
+            "\"type\":\"message_delta\"",
+            "\"type\":\"message_stop\"",
+            "\"type\":\"content_block_start\"",
+            "\"type\":\"content_block_delta\"",
+            "\"type\":\"content_block_stop\"",
+            "\"type\":\"input_json_delta\"",
+            "\"type\":\"signature_delta\"",
+            "\"type\":\"ping\""
+        ].contains { compact.contains($0) }
+    }
+
+    private static func isInternalClaudeStreamEvent(_ type: String) -> Bool {
+        switch type {
+        case "message_start", "message_delta", "message_stop", "content_block_stop", "signature_delta":
+            true
+        default:
+            false
+        }
+    }
+
+    /// Claude Code 真正可识别的权限/审批请求 type 白名单。
+    /// 旧实现用 `type.contains("permission") || type.contains("approval")` 匹配，
+    /// 任意带这两个子串的事件（例如 `permission_test_event`、`approval_completed`）
+    /// 都会被误识别成"待响应权限请求"，UI 上挂出永等不到回复的死按钮。
+    /// 这里只列出已知确实需要用户响应的 type；后续若发现 Claude 引入了新的权限类型，
+    /// 应该把具体 type 加入这个集合，而不是用模糊匹配。
+    private static let knownPermissionRequestTypes: Set<String> = [
+        "control_request"
+    ]
+
+    private static func isPermissionRequestType(_ type: String) -> Bool {
+        knownPermissionRequestTypes.contains(type)
+    }
+
+    private static func shouldPauseActivityWatchdog(_ event: ChatBackendEvent) -> Bool {
+        switch event {
+        case .permissionRequest, .interactiveRequest:
+            true
+        default:
+            false
+        }
     }
 
     private static func isVisibleOutput(_ event: ChatBackendEvent) -> Bool {
@@ -420,20 +947,50 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         case .appendDelta, .permissionRequest, .interactiveRequest, .failed:
             true
         case .appendMessage(let kind, _, _, let text, _, _):
-            kind != .system && !text.isEmpty
-        case .sessionID, .updateStreamingStatus, .finished, .tokenUsage:
+            kind != .system && kind != .rawOutput && !text.isEmpty
+        case .finishStreamingMessage, .sessionID, .updateStreamingStatus, .backendActivity, .finished, .tokenUsage:
             false
         }
     }
 
-    private static func assistantEvents(from object: [String: Any]) -> [ChatBackendEvent] {
+    private static func isAssistantOutput(_ event: ChatBackendEvent) -> Bool {
+        switch event {
+        case .appendDelta(let kind, _, _, let text, _, _), .appendMessage(let kind, _, _, let text, _, _):
+            kind == .assistant && !text.isEmpty
+        case .finishStreamingMessage, .sessionID, .updateStreamingStatus, .backendActivity, .permissionRequest, .interactiveRequest, .finished, .failed, .tokenUsage:
+            false
+        }
+    }
+
+    private static func assistantEvents(from object: [String: Any], streamState: inout ClaudeStreamState) -> [ChatBackendEvent] {
+        var events: [ChatBackendEvent] = []
+        if !streamState.didReceiveStreamEventAssistantTextDelta,
+           let text = assistantText(from: object), !text.isEmpty {
+            let delta = topLevelAssistantDelta(text, previous: streamState.topLevelAssistantText)
+            streamState.topLevelAssistantText = text
+            if !delta.isEmpty {
+                events.append(.appendDelta(kind: .assistant, title: "assistant", subtitle: "Claude Code", text: delta, status: "streaming", requestID: nil))
+            }
+        }
         if let message = object["message"] as? [String: Any], let content = message["content"] as? [[String: Any]] {
-            return content.flatMap { contentItemEvents(from: $0) }
+            for item in content {
+                let type = stringValue(item["type"]) ?? "content"
+                guard type != "text", type != "thinking" else { continue }
+                let id = stringValue(item["id"]) ?? stringValue(item["tool_use_id"]) ?? compactText(from: item)
+                guard !streamState.emittedContentItemIDs.contains(id) else { continue }
+                streamState.emittedContentItemIDs.insert(id)
+                events.append(contentsOf: contentItemEvents(from: item))
+            }
         }
-        if let text = assistantText(from: object), !text.isEmpty {
-            return [.appendDelta(kind: .assistant, title: "assistant", subtitle: "Claude Code", text: text, status: "streaming", requestID: nil)]
+        return events
+    }
+
+    private static func topLevelAssistantDelta(_ text: String, previous: String) -> String {
+        guard !previous.isEmpty else { return text }
+        if text.hasPrefix(previous) {
+            return String(text.dropFirst(previous.count))
         }
-        return []
+        return text == previous ? "" : text
     }
 
     private static func contentItemEvents(from item: [String: Any]) -> [ChatBackendEvent] {
@@ -450,11 +1007,12 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             guard let text = stringValue(item["thinking"]) ?? stringValue(item["text"]), !text.isEmpty else { return [] }
             return [.appendDelta(kind: .reasoning, title: "thinking", subtitle: "Claude Code", text: text, status: "streaming", requestID: id)]
         case "tool_result":
-            return [.appendMessage(kind: .toolResult, title: type, subtitle: stringValue(item["name"]) ?? "", text: compactText(from: item), status: "done", requestID: id)]
+            let requestID = stringValue(item["tool_use_id"]) ?? id
+            return [.appendMessage(kind: .toolResult, title: type, subtitle: stringValue(item["name"]) ?? "", text: compactText(from: item), status: "done", requestID: requestID)]
         case "tool_use":
             return [.appendMessage(kind: .toolCall, title: type, subtitle: stringValue(item["name"]) ?? "", text: compactText(from: item), status: "done", requestID: id)]
         default:
-            return [.appendMessage(kind: .rawOutput, title: type, subtitle: "Claude Code", text: compactText(from: item), status: "done", requestID: id)]
+            return []
         }
     }
 
@@ -492,7 +1050,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
     }
 
     private static func interactiveRequest(from object: [String: Any], fallbackID: String?, fallbackTitle: String) -> ChatInteractiveRequest? {
-        let input = object["input"] as? [String: Any]
+        let input = dictionaryValue(object["input"])
         let source = input ?? object
         let name = [
             stringValue(object["name"]),
@@ -503,58 +1061,113 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         .compactMap { $0 }
         .joined(separator: " ")
         .lowercased()
-        let hasChoiceShape = source["options"] != nil || source["choices"] != nil || source["questions"] != nil
-        guard hasChoiceShape || name.contains("askuserquestion") || name.contains("ask_user_question") || name.contains("question") || name.contains("choice") else {
+        let normalizedName = name
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        let isAskUserQuestion = normalizedName.contains("askuserquestion")
+        let isSendUserMessage = normalizedName.contains("sendusermessage")
+            || normalizedName.contains("requestuserinput")
+            || normalizedName.contains("requestinput")
+        let questions = (source["questions"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+        let hasChoiceShape = source["options"] != nil || source["choices"] != nil || !questions.isEmpty
+        guard hasChoiceShape
+            || isAskUserQuestion
+            || isSendUserMessage
+            || normalizedName.contains("question")
+            || normalizedName.contains("choice")
+            || normalizedName.contains("input") else {
             return nil
         }
         guard !name.contains("permission"), !name.contains("approval") else { return nil }
         let id = fallbackID ?? stringValue(source["id"]) ?? stringValue(source["request_id"]) ?? UUID().uuidString
-        let prompt = stringValue(source["prompt"])
-            ?? stringValue(source["question"])
-            ?? stringValue(source["message"])
-            ?? stringValue(source["text"])
-            ?? "请选择后继续。"
-        let options = interactiveOptions(from: source)
+        let questionSource = questions.first ?? source
+        let prompt = promptText(from: source, questions: questions)
+        let options = questions.isEmpty ? interactiveOptions(from: source) : interactiveOptions(fromQuestions: questions)
         let mode: ChatInteractiveMode
         if options.isEmpty {
             mode = .text
-        } else if boolValue(source["multiple"]) == true || boolValue(source["multiSelect"]) == true || boolValue(source["multi_select"]) == true {
+        } else if questions.count > 1 || questions.contains(where: isMultipleChoiceQuestion) || isMultipleChoiceQuestion(source) {
             mode = .multipleChoice
         } else {
             mode = .singleChoice
         }
         return ChatInteractiveRequest(
             id: id,
-            title: stringValue(source["title"]) ?? stringValue(object["name"]) ?? "需要选择",
+            title: stringValue(questionSource["header"]) ?? stringValue(source["title"]) ?? stringValue(object["name"]) ?? "需要选择",
             prompt: prompt,
             mode: mode,
             options: options,
-            allowCustomInput: boolValue(source["allowCustomInput"]) ?? boolValue(source["allow_custom_input"]) ?? false,
-            placeholder: stringValue(source["placeholder"]) ?? "输入回复",
+            allowCustomInput: boolValue(questionSource["allowCustomInput"]) ?? boolValue(source["allowCustomInput"]) ?? boolValue(source["allow_custom_input"]) ?? (isAskUserQuestion || isSendUserMessage),
+            placeholder: stringValue(questionSource["placeholder"]) ?? stringValue(source["placeholder"]) ?? "输入自定义回复",
             status: .waiting
         )
     }
 
     private static func interactiveOptions(from object: [String: Any]) -> [ChatInteractiveOption] {
-        let rawOptions = object["options"] ?? object["choices"] ?? object["questions"]
+        let rawOptions = object["options"] ?? object["choices"]
         guard let array = rawOptions as? [Any] else { return [] }
-        return array.enumerated().map { index, item in
-            if let text = stringValue(item) {
-                return ChatInteractiveOption(id: text, label: text, detail: "")
-            }
-            if let option = item as? [String: Any] {
-                let id = stringValue(option["id"]) ?? stringValue(option["value"]) ?? stringValue(option["label"]) ?? "option-\(index + 1)"
-                let label = stringValue(option["label"]) ?? stringValue(option["title"]) ?? stringValue(option["text"]) ?? id
-                let detail = stringValue(option["detail"]) ?? stringValue(option["description"]) ?? ""
-                return ChatInteractiveOption(id: id, label: label, detail: detail)
-            }
-            let label = "选项 \(index + 1)"
-            return ChatInteractiveOption(id: "option-\(index + 1)", label: label, detail: "")
+        return array.enumerated().map { option(from: $0.element, index: $0.offset, labelPrefix: nil, idPrefix: nil) }
+    }
+
+    private static func interactiveOptions(fromQuestions questions: [[String: Any]]) -> [ChatInteractiveOption] {
+        questions.enumerated().flatMap { questionIndex, question in
+            let labelPrefix = questions.count > 1 ? (stringValue(question["header"]) ?? "问题 \(questionIndex + 1)") : nil
+            let idPrefix = questions.count > 1 ? "q\(questionIndex + 1)" : nil
+            let rawOptions = question["options"] ?? question["choices"]
+            guard let options = rawOptions as? [Any] else { return [ChatInteractiveOption]() }
+            return options.enumerated().map { option(from: $0.element, index: $0.offset, labelPrefix: labelPrefix, idPrefix: idPrefix) }
         }
     }
 
+    private static func option(from item: Any, index: Int, labelPrefix: String?, idPrefix: String?) -> ChatInteractiveOption {
+        if let text = stringValue(item) {
+            return ChatInteractiveOption(id: prefixedID(text, prefix: idPrefix), label: prefixed(text, prefix: labelPrefix), detail: "")
+        }
+        if let option = item as? [String: Any] {
+            let rawID = stringValue(option["id"]) ?? stringValue(option["value"]) ?? stringValue(option["label"]) ?? "option-\(index + 1)"
+            let label = stringValue(option["label"]) ?? stringValue(option["title"]) ?? stringValue(option["text"]) ?? rawID
+            let detail = stringValue(option["detail"]) ?? stringValue(option["description"]) ?? ""
+            return ChatInteractiveOption(id: prefixedID(rawID, prefix: idPrefix), label: prefixed(label, prefix: labelPrefix), detail: detail)
+        }
+        let label = "选项 \(index + 1)"
+        return ChatInteractiveOption(id: prefixedID("option-\(index + 1)", prefix: idPrefix), label: prefixed(label, prefix: labelPrefix), detail: "")
+    }
+
+    private static func prefixed(_ value: String, prefix: String?) -> String {
+        guard let prefix, !prefix.isEmpty else { return value }
+        return "\(prefix)：\(value)"
+    }
+
+    private static func prefixedID(_ value: String, prefix: String?) -> String {
+        guard let prefix, !prefix.isEmpty else { return value }
+        return "\(prefix):\(value)"
+    }
+
+    private static func promptText(from source: [String: Any], questions: [[String: Any]]) -> String {
+        if !questions.isEmpty {
+            return questions.enumerated().map { index, question in
+                stringValue(question["question"])
+                    ?? stringValue(question["prompt"])
+                    ?? stringValue(question["message"])
+                    ?? stringValue(question["text"])
+                    ?? "问题 \(index + 1)"
+            }.joined(separator: "\n\n")
+        }
+        return stringValue(source["prompt"])
+            ?? stringValue(source["question"])
+            ?? stringValue(source["message"])
+            ?? stringValue(source["text"])
+            ?? "请选择后继续。"
+    }
+
+    private static func isMultipleChoiceQuestion(_ question: [String: Any]) -> Bool {
+        boolValue(question["multiple"]) == true || boolValue(question["multiSelect"]) == true || boolValue(question["multi_select"]) == true
+    }
+
     private static func compactText(from object: [String: Any]) -> String {
-        if let text = stringValue(object["text"]) ?? stringValue(object["content"]) ?? stringValue(object["message"]) {
+        if let text = stringValue(object["text"]) ?? stringValue(object["content"]) ?? stringValue(object["message"]),
+           object.keys.allSatisfy({ ["text", "content", "message"].contains($0) }) {
             return text
         }
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
@@ -562,64 +1175,77 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         return value
     }
 
+    #if DEBUG
+    static func debugShouldCloseStdinAfterLine(_ line: String) -> Bool {
+        shouldCloseStdinAfterLine(line)
+    }
+
+    static func debugInteractiveRequest(from object: [String: Any]) -> ChatInteractiveRequest? {
+        interactiveRequest(
+            from: object,
+            fallbackID: stringValue(object["id"]) ?? stringValue(object["request_id"]),
+            fallbackTitle: stringValue(object["name"]) ?? stringValue(object["type"]) ?? "debug"
+        )
+    }
+
+    static func debugEvents(fromClaudeLine line: String) -> [ChatBackendEvent] {
+        var state = ClaudeStreamState()
+        return events(fromClaudeLine: line, streamState: &state)
+    }
+    #endif
+
     private static func initSummary(from object: [String: Any]) -> String {
-        var lines: [String] = []
-        if let model = stringValue(object["model"]) {
-            lines.append("model: \(model)")
+        guard let servers = object["mcp_servers"] as? [[String: Any]] else { return "" }
+        let connectedServers = servers.compactMap { server -> String? in
+            guard (stringValue(server["status"]) ?? "").lowercased() == "connected" else { return nil }
+            return stringValue(server["name"])
         }
-        if let permissionMode = stringValue(object["permissionMode"]) {
-            lines.append("permission: \(permissionMode)")
-        }
-        if let tools = object["tools"] as? [Any] {
-            lines.append("tools: \(tools.count)")
-            let names = tools.compactMap { stringValue($0) }.prefix(12)
-            if !names.isEmpty { lines.append("tool names: \(names.joined(separator: ", "))") }
-        }
-        if let servers = object["mcp_servers"] as? [[String: Any]] {
-            lines.append("mcp servers: \(servers.count)")
-            let serverLines = servers.prefix(12).map { server in
-                let name = stringValue(server["name"]) ?? "unknown"
-                let status = stringValue(server["status"]) ?? "unknown"
-                return "- \(name): \(status)"
-            }
-            lines.append(contentsOf: serverLines)
-        }
-        if let commands = object["slash_commands"] as? [Any] {
-            lines.append("slash commands: \(commands.count)")
-        }
-        return lines.isEmpty ? compactText(from: object) : lines.joined(separator: "\n")
+        guard !connectedServers.isEmpty else { return "" }
+        return (["Mac tools: \(connectedServers.count) connected"] + connectedServers.map { "- \($0)" }).joined(separator: "\n")
     }
 
     private static func extractTokenUsage(from object: [String: Any]) -> ChatBackendEvent? {
         // Try top-level "usage" field
-        if let usage = object["usage"] as? [String: Any] {
-            let inputTokens = usage["input_tokens"] as? Int ?? 0
-            let outputTokens = usage["output_tokens"] as? Int ?? 0
-            let cacheRead = usage["cache_read_input_tokens"] as? Int ?? usage["cache_creation_input_tokens"] as? Int ?? 0
-            let used = inputTokens + outputTokens + cacheRead
-            let total = usage["context_window"] as? Int ?? usage["max_tokens"] as? Int ?? 0
-            if used > 0 || total > 0 {
-                return .tokenUsage(used: used, total: total)
-            }
+        if let usage = object["usage"] as? [String: Any], let event = usageEvent(from: usage) {
+            return event
         }
         // Try nested "message.usage"
-        if let message = object["message"] as? [String: Any], let usage = message["usage"] as? [String: Any] {
-            let inputTokens = usage["input_tokens"] as? Int ?? 0
-            let outputTokens = usage["output_tokens"] as? Int ?? 0
-            let cacheRead = usage["cache_read_input_tokens"] as? Int ?? usage["cache_creation_input_tokens"] as? Int ?? 0
-            let used = inputTokens + outputTokens + cacheRead
-            let total = usage["context_window"] as? Int ?? usage["max_tokens"] as? Int ?? 0
-            if used > 0 || total > 0 {
-                return .tokenUsage(used: used, total: total)
-            }
+        if let message = object["message"] as? [String: Any],
+           let usage = message["usage"] as? [String: Any],
+           let event = usageEvent(from: usage) {
+            return event
         }
         return nil
+    }
+
+    private static func usageEvent(from usage: [String: Any]) -> ChatBackendEvent? {
+        // Anthropic usage 字段语义：input/cache_creation/cache_read 三者互不相交，
+        // 真实占用上下文窗口的 prompt token = input + cache_creation + cache_read。
+        // 旧实现用 ?? 链只取其一，会在 cache 命中且同时扩展 cache 时漏算。
+        let inputTokens = usage["input_tokens"] as? Int ?? 0
+        let outputTokens = usage["output_tokens"] as? Int ?? 0
+        let cacheRead = usage["cache_read_input_tokens"] as? Int ?? 0
+        let cacheCreation = usage["cache_creation_input_tokens"] as? Int ?? 0
+        let used = inputTokens + outputTokens + cacheRead + cacheCreation
+        // total 只信任 context_window；max_tokens 是单次回复的输出上限（4K/8K），
+        // 用它当 fallback 会让 UI 误以为整个 200K context 已经撑满。
+        let total = usage["context_window"] as? Int ?? 0
+        guard used > 0 || total > 0 else { return nil }
+        return .tokenUsage(used: used, total: total, output: outputTokens > 0 ? outputTokens : nil)
     }
 
     private static func stringValue(_ value: Any?) -> String? {
         if let string = value as? String { return string }
         if let number = value as? NSNumber { return number.stringValue }
         return nil
+    }
+
+    private static func dictionaryValue(_ value: Any?) -> [String: Any]? {
+        if let dictionary = value as? [String: Any] { return dictionary }
+        guard let string = value as? String,
+              let data = string.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return object
     }
 
     private static func boolValue(_ value: Any?) -> Bool? {

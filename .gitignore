@@ -5,3 +5,8 @@ build/
 *.xcuserstate
 *.xcuserdata/
 xcuserdata/
+local.properties
+.gradle/
+.build/
+.kotlin/
+AcodeIOS/build-archive/

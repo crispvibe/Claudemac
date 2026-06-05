@@ -10,6 +10,8 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
 	<key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
 	<array>
 		<string>/.claude/</string>
@@ -30,6 +32,8 @@
 		<string>/usr/local/</string>
 	</array>
 	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
 	<true/>
 </dict>
 </plist>

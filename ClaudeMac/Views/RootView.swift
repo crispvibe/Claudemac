@@ -3,43 +3,40 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
-    @AppStorage("root.chatPanelWidth") private var storedChatPanelWidth = 420.0
+    @EnvironmentObject private var accountAuth: AccountAuthViewModel
+    @State private var chatPanelWidth: CGFloat = 420
     @State private var dragStartChatPanelWidth: CGFloat?
     @State private var isHoveringResizeHandle = false
     @State private var workbenchContentWidth: CGFloat = 0
+    @State private var showingAuthDialog = false
+
+    /// Bridge between SwiftUI `@AppStorage`-style read/write and `appState.settings`.
+    /// We can't use a property wrapper here because `appState` is injected via the
+    /// environment, so we hand-roll a getter/setter that both reads + persists.
+    private var storedChatPanelWidth: Double {
+        get { appState.settings.chatPanelWidth }
+        nonmutating set {
+            guard appState.settings.chatPanelWidth != newValue else { return }
+            appState.updateChatPanelWidth(newValue)
+        }
+    }
 
     private let minChatPanelWidth: CGFloat = 260
     private let minEditorWidth: CGFloat = 320
     private let resizeHandleWidth: CGFloat = 12
 
     var body: some View {
-        HStack(spacing: 6) {
-            ProjectSidebarView()
-                .frame(width: 228)
-
-            if appState.showSettings {
-                SettingsPageView()
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(AppTheme.hairline, lineWidth: 1)
-                    )
-                    .shadow(color: Color.black.opacity(0.055), radius: 16, y: 8)
-            } else {
-                workbenchCard
-            }
-        }
+        rootContent
         .padding(.horizontal, 8)
         .padding(.top, 8)
         .padding(.bottom, 8)
         .frame(minWidth: 1320, minHeight: 760)
-        .background {
-            ZStack {
-                VisualEffectView(material: .underWindowBackground, blendingMode: .behindWindow)
-                    .opacity(0.95)
-                AppTheme.windowTint
+        .background(rootWindowBackground)
+        .overlay {
+            if shouldShowAuthDialog {
+                AuthDialogOverlay(isPresented: $showingAuthDialog, allowsDismiss: accountAuth.gateState == .authenticated)
+                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
             }
-            .ignoresSafeArea()
         }
         .alert("提示", isPresented: Binding(
             get: { appState.errorMessage != nil },
@@ -49,11 +46,63 @@ struct RootView: View {
         } message: {
             Text(appState.errorMessage ?? "")
         }
+        .alert(item: Binding(
+            get: { appState.permissionPrompt },
+            set: { appState.permissionPrompt = $0 }
+        )) { prompt in
+            Alert(
+                title: Text(prompt.title),
+                message: Text(prompt.message),
+                primaryButton: .default(Text(prompt.primaryButtonTitle)) {
+                    appState.handlePermissionPromptAction(prompt.action)
+                },
+                secondaryButton: .cancel(Text(prompt.secondaryButtonTitle)) {
+                    if let secondaryAction = prompt.secondaryAction {
+                        appState.handlePermissionPromptAction(secondaryAction)
+                    } else {
+                        appState.permissionPrompt = nil
+                    }
+                }
+            )
+        }
+    }
+
+    private var rootContent: AnyView {
+        if appState.showSettings {
+            AnyView(SettingsPageView())
+        } else {
+            AnyView(workbenchLayout)
+        }
+    }
+
+    private var shouldShowAuthDialog: Bool {
+        showingAuthDialog || accountAuth.gateState == .unauthenticated
+    }
+
+    private var rootWindowBackground: some View {
+        ZStack {
+            VisualEffectView(material: .underWindowBackground, blendingMode: .behindWindow)
+            AppTheme.windowTint
+        }
+        .ignoresSafeArea()
+    }
+
+    private var workbenchLayout: some View {
+        HStack(spacing: 6) {
+            ProjectSidebarView()
+                .frame(width: 228)
+
+            workbenchCard
+        }
     }
 
     private var workbenchCard: some View {
         VStack(spacing: 0) {
-            EditorTabBarView()
+            EditorTabBarView {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    showingAuthDialog = true
+                }
+            }
 
             GeometryReader { proxy in
                 HStack(spacing: 0) {
@@ -63,16 +112,30 @@ struct RootView: View {
                     resizeHandle
 
                     ChatPanelView()
-                        .frame(width: clampedChatPanelWidth(CGFloat(storedChatPanelWidth), availableWidth: proxy.size.width))
+                        .frame(width: clampedChatPanelWidth(chatPanelWidth, availableWidth: proxy.size.width))
+                        .transaction { transaction in
+                            transaction.disablesAnimations = true
+                            transaction.animation = nil
+                        }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transaction { transaction in
+                    transaction.disablesAnimations = true
+                    transaction.animation = nil
+                }
                 .onAppear {
                     workbenchContentWidth = proxy.size.width
-                    storedChatPanelWidth = Double(clampedChatPanelWidth(CGFloat(storedChatPanelWidth), availableWidth: proxy.size.width))
+                    let clampedWidth = clampedChatPanelWidth(CGFloat(storedChatPanelWidth), availableWidth: proxy.size.width)
+                    setChatPanelWidth(clampedWidth)
+                    storedChatPanelWidth = Double(clampedWidth)
                 }
                 .onChange(of: proxy.size.width) { _, width in
                     workbenchContentWidth = width
-                    storedChatPanelWidth = Double(clampedChatPanelWidth(CGFloat(storedChatPanelWidth), availableWidth: width))
+                    let clampedWidth = clampedChatPanelWidth(chatPanelWidth, availableWidth: width)
+                    setChatPanelWidth(clampedWidth)
+                    if dragStartChatPanelWidth == nil {
+                        storedChatPanelWidth = Double(clampedWidth)
+                    }
                 }
             }
         }
@@ -82,7 +145,7 @@ struct RootView: View {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(AppTheme.hairline, lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.055), radius: 16, y: 8)
+        .shadow(color: AppTheme.softShadow, radius: 16, y: 8)
     }
 
     private var resizeHandle: some View {
@@ -90,39 +153,31 @@ struct RootView: View {
             Rectangle()
                 .fill(Color.clear)
             Capsule()
-                .fill(Color.black.opacity(isHoveringResizeHandle || dragStartChatPanelWidth != nil ? 0.18 : 0.07))
+                .fill(isHoveringResizeHandle || dragStartChatPanelWidth != nil ? AppTheme.resizeHandleActive : AppTheme.resizeHandle)
                 .frame(width: 3, height: 46)
         }
         .frame(width: resizeHandleWidth)
         .frame(maxHeight: .infinity)
         .contentShape(Rectangle())
-        .onHover { hovering in
-            isHoveringResizeHandle = hovering
-            if hovering {
-                NSCursor.resizeLeftRight.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
-        .onDisappear {
-            if isHoveringResizeHandle {
-                NSCursor.pop()
-                isHoveringResizeHandle = false
-            }
-        }
-        .gesture(
-            DragGesture(minimumDistance: 1)
-                .onChanged { value in
-                    if dragStartChatPanelWidth == nil {
-                        dragStartChatPanelWidth = CGFloat(storedChatPanelWidth)
-                    }
-                    let startWidth = dragStartChatPanelWidth ?? CGFloat(storedChatPanelWidth)
-                    storedChatPanelWidth = Double(clampedChatPanelWidth(startWidth - value.translation.width, availableWidth: workbenchContentWidth))
-                }
-                .onEnded { _ in
+        .overlay {
+            ResizeHandleInputView(
+                onHover: { isHoveringResizeHandle = $0 },
+                onDragBegan: {
+                    dragStartChatPanelWidth = chatPanelWidth
+                },
+                onDragChanged: { translationX in
+                    let startWidth = dragStartChatPanelWidth ?? chatPanelWidth
+                    setChatPanelWidth(clampedChatPanelWidth(startWidth - translationX, availableWidth: workbenchContentWidth))
+                },
+                onDragEnded: { translationX in
+                    let startWidth = dragStartChatPanelWidth ?? chatPanelWidth
+                    let finalWidth = clampedChatPanelWidth(startWidth - translationX, availableWidth: workbenchContentWidth)
+                    setChatPanelWidth(finalWidth)
                     dragStartChatPanelWidth = nil
+                    storedChatPanelWidth = Double(finalWidth)
                 }
-        )
+            )
+        }
         .help("拖动调整编辑器和对话卡片宽度")
     }
 
@@ -132,4 +187,67 @@ struct RootView: View {
             : max(width, minChatPanelWidth)
         return min(max(width, minChatPanelWidth), availableMax)
     }
+
+    private func setChatPanelWidth(_ width: CGFloat) {
+        guard abs(chatPanelWidth - width) >= 0.5 else { return }
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            chatPanelWidth = width
+        }
+    }
 }
+
+private struct AuthDialogOverlay: View {
+    @EnvironmentObject private var accountAuth: AccountAuthViewModel
+    @Binding var isPresented: Bool
+    let allowsDismiss: Bool
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.10)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if allowsDismiss { dismiss() }
+                }
+
+            dialogCard
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var dialogCard: some View {
+        if accountAuth.gateState == .authenticated {
+            AccountRemoteControlPanel()
+                .frame(width: 860)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                AccountAuthRootView()
+            }
+            .padding(22)
+            .frame(width: 400)
+            .background {
+                ZStack {
+                    VisualEffectView(material: .popover, blendingMode: .withinWindow)
+                        .opacity(0.96)
+                    AppTheme.cardSurface.opacity(0.92)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(AppTheme.hairline, lineWidth: 1)
+            }
+            .shadow(color: Color.black.opacity(0.16), radius: 30, y: 18)
+        }
+    }
+
+    private func dismiss() {
+        withAnimation(.easeOut(duration: 0.16)) {
+            isPresented = false
+        }
+    }
+}
+

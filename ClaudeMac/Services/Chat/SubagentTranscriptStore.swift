@@ -168,12 +168,14 @@ enum SubagentTranscriptStore {
             )]
         }
         guard let blocks = content as? [Any] else {
+            let text = transcriptText(from: content) ?? compactText(from: content)
+            guard !text.isEmpty else { return [] }
             return [SubagentTranscriptMessage(
                 id: "\(lineIndex):0",
                 kind: .raw,
                 title: fallbackTitle,
                 subtitle: role,
-                text: compactText(from: content),
+                text: text,
                 status: "done",
                 timestamp: timestamp
             )]
@@ -199,20 +201,20 @@ enum SubagentTranscriptStore {
             return SubagentTranscriptMessage(id: id, kind: .toolCall, title: name, subtitle: readableString(block["id"]) ?? "", text: compactText(from: block["input"]), status: "done", timestamp: timestamp)
         case "tool_result":
             let isError = (block["is_error"] as? Bool) == true
-            let text = readableString(block["content"]) ?? compactText(from: block["content"])
+            let text = (transcriptText(from: block["content"]) ?? compactText(from: block["content"])).nonEmptyTrimmed ?? "empty result"
             return SubagentTranscriptMessage(id: id, kind: .toolResult, title: "tool_result", subtitle: readableString(block["tool_use_id"]) ?? "", text: text, status: isError ? "failed" : "done", timestamp: timestamp)
         default:
-            if role == "user", let text = readableString(block["content"]) ?? readableString(block["text"]), !text.isEmpty {
+            if role == "user", let text = transcriptText(from: block["content"]) ?? transcriptText(from: block["text"]), !text.isEmpty {
                 return SubagentTranscriptMessage(id: id, kind: .user, title: "user", subtitle: type, text: text, status: "done", timestamp: timestamp)
             }
-            let text = compactText(from: block)
+            let text = transcriptText(from: block) ?? compactText(from: block)
             guard !text.isEmpty else { return nil }
             return SubagentTranscriptMessage(id: id, kind: .raw, title: type, subtitle: role, text: text, status: "done", timestamp: timestamp)
         }
     }
 
     private static func rawMessage(_ object: [String: Any], lineIndex: Int, timestamp: Date?, title: String) -> [SubagentTranscriptMessage] {
-        let text = compactText(from: object)
+        let text = transcriptText(from: object) ?? compactText(from: object)
         guard !text.isEmpty else { return [] }
         return [SubagentTranscriptMessage(id: "\(lineIndex):0", kind: .raw, title: title, subtitle: "", text: text, status: "done", timestamp: timestamp)]
     }
@@ -228,13 +230,41 @@ enum SubagentTranscriptStore {
     }
 
     private static func readableString(_ value: Any?) -> String? {
-        if let value = value as? String { return value }
-        if let value = value as? CustomStringConvertible { return value.description }
-        return nil
+        switch value {
+        case let value as String:
+            return value
+        case let value as NSNumber:
+            return value.stringValue
+        default:
+            return nil
+        }
+    }
+
+    private static func transcriptText(from value: Any?) -> String? {
+        switch value {
+        case let text as String:
+            return text.nonEmptyTrimmed
+        case let blocks as [Any]:
+            let text = blocks.compactMap { transcriptText(from: $0) }.joined(separator: "\n\n")
+            return text.nonEmptyTrimmed
+        case let object as [String: Any]:
+            let type = readableString(object["type"])
+            if type == "thinking", readableString(object["thinking"])?.nonEmptyTrimmed == nil, readableString(object["text"])?.nonEmptyTrimmed == nil {
+                return nil
+            }
+            for key in ["text", "thinking", "content", "result", "summary", "answer", "output"] {
+                if let text = transcriptText(from: object[key])?.nonEmptyTrimmed {
+                    return text
+                }
+            }
+            return nil
+        default:
+            return nil
+        }
     }
 
     private static func compactText(from value: Any?) -> String {
-        guard let value else { return "" }
+        guard let value = sanitizedJSONValue(value) else { return "" }
         if let text = readableString(value) { return text }
         guard JSONSerialization.isValidJSONObject(value),
               let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
@@ -242,8 +272,31 @@ enum SubagentTranscriptStore {
         return text
     }
 
+    private static func sanitizedJSONValue(_ value: Any?) -> Any? {
+        switch value {
+        case let object as [String: Any]:
+            let filtered = object.compactMapValues { value -> Any? in
+                sanitizedJSONValue(value)
+            }.filter { key, _ in
+                !["signature", "usage", "cache_creation", "server_tool_use"].contains(key)
+            }
+            return filtered.isEmpty ? nil : filtered
+        case let array as [Any]:
+            let filtered = array.compactMap { sanitizedJSONValue($0) }
+            return filtered.isEmpty ? nil : filtered
+        case let text as String:
+            return text.nonEmptyTrimmed
+        case let value?:
+            return value
+        case nil:
+            return nil
+        }
+    }
+
+    private static let iso8601Formatter = ISO8601DateFormatter()
+
     private static func date(from value: Any?) -> Date? {
         guard let text = value as? String else { return nil }
-        return ISO8601DateFormatter().date(from: text)
+        return iso8601Formatter.date(from: text)
     }
 }

@@ -20,6 +20,30 @@ open ~/Library/Developer/Xcode/DerivedData
 open ClaudeMac.xcodeproj
 ```
 
+## 打包到桌面
+
+本地测试包固定使用本机 Developer ID 证书签名：
+
+- 签名身份：`Developer ID Application: Zhang XueFeng (XY6Z92AMPS)`
+- Team ID：`XY6Z92AMPS`
+- 当前阶段：Developer ID 签名、公证、stapler 和 Gatekeeper 校验流程已接入脚本；正式发布用 `NOTARIZE=1` 打包。
+
+以后重新打包并替换桌面端，统一运行：
+
+```bash
+scripts/package-macos-app.sh
+```
+
+产物会替换到 `~/Desktop/Acode.app`，并默认生成 `build/releases/acode-macos.dmg`。脚本会执行 Universal Release build（`arm64 x86_64`）、strip 发布包符号、校验 `lipo` 架构、校验 `codesign` 签名链和 Team ID，并拒绝带 `get-task-allow` 的调试 entitlement。
+
+正式公证包使用：
+
+```bash
+NOTARIZE=1 scripts/package-macos-app.sh
+```
+
+更详细的发布约定见：[`docs/macos-packaging.md`](docs/macos-packaging.md)。
+
 ## 已实现功能
 
 ### 工作台
@@ -58,17 +82,17 @@ open ClaudeMac.xcodeproj
 - Claude Code 通过 `claude -p <prompt> --output-format stream-json --verbose` 真实启动，流式接收 assistant delta。
 - Codex 通过 `codex app-server --listen stdio://` 对接（JSON-RPC），已接入 initialize / thread / turn / approval / event adapter。Codex 完整模型 turn 仍需 App 内手工确认。
 - 模型选择：Claude 支持 Opus 4.7 / Sonnet 4.6 / Haiku 4.5；Codex 支持 GPT-5.x 系列。
-- 权限模式选择：询问（default）、自动编辑（acceptEdits）、完全访问（bypassPermissions）。
-- 权限请求 UI：拒绝 / 允许 / 本会话允许。Codex 三态完整；Claude 当前只传 `allowed: bool`，session scope 待补。
+- 权限与思考强度选择：默认自动编辑（Claude `acceptEdits` / Codex `on-failure`），完全访问会二次确认后使用 Claude `bypassPermissions` / Codex `danger-full-access`；思考强度按当前 CLI 显示合法选项。
+- 权限请求 UI：拒绝 / 允许 / 本会话允许。Codex 三态完整；Claude ask 当前禁用，等待真实 stdin/control 回写协议验证。
 - 消息流支持 user / assistant / reasoning / tool / command / permission / diff / error 等主线行样式，system/result/raw 默认不进入主 transcript。
 - 新建会话 / 继续上次（`--continue`）/ 恢复历史（`--resume <id>`）。
 - 会话本地持久化（`chat-sessions.json` + `chat-messages/<uuid>.jsonl` + `chat-drafts.json`），包含队列和运行态快照。
 
 ### 历史会话
 
-- 实验性只读扫描 `~/.claude/projects` 和 `~/.codex/sessions` 下的 JSONL 历史。
-- 本地会话和外部 CLI 历史合并到左侧项目下方，按 updatedAt 排序，并按当前 CLI 分流显示。
-- 支持删除本地会话和外部历史条目，删除时同步清理相关索引和 transcript。
+- 历史侧栏只显示和管理 Acode 本地 `ChatSessionStore` 会话。
+- 会话按当前 CLI 分流显示，使用本地 `chat-sessions.json` 索引和 `chat-messages/<uuid>.jsonl` transcript。
+- 支持删除本地会话，删除时同步清理相关索引和 transcript。
 
 ### 外部终端 fallback
 
@@ -78,12 +102,18 @@ open ClaudeMac.xcodeproj
 
 ### 设置
 
-- macOS Settings 窗口：默认 CLI、默认终端、历史扫描开关、忽略目录列表。
+- macOS Settings 窗口：默认 CLI、默认终端、忽略目录列表、追加规则、Claude/Codex 配置、全局规则、更新与关于。
+
+### 远程账号 / 信令
+
+- Go 后端提供 `GET /remote/signaling/ws?token=<accessToken>`，客户端升级 WebSocket 后首帧发送 `hello { deviceId }`。
+- 信令通道负责设备在线状态、连接审批通知和未来 WebRTC `offer` / `answer` / `ice_candidate` 的透明 relay；聊天正文仍不经过 Go 后端，18765 局域网服务不对公网暴露。
+- 当前单实例 MVP 使用进程内 `sync.Map[deviceId]*Conn` 保存在线连接；多实例部署需要引入 Redis pub/sub 或等价的跨实例信令 fan-out。
 
 ### 其他
 
 - App 图标已设计（10 个尺寸齐全）。
-- GUI App PATH 修复：自动注入 Homebrew / npm-global / cargo / bun 等路径，解决 sandbox 下找不到 CLI 的问题。
+- GUI App PATH 修复：自动注入 Homebrew / npm-global / cargo / bun 等路径，解决图形 App 启动环境下找不到 CLI 的问题；当前本地分发未正式启用 App Sandbox。
 
 ## 未实现 / 待完善
 
@@ -128,7 +158,6 @@ ClaudeMac/
     CommandBuilder.swift      # shell quoting
     TerminalLauncher.swift    # AppleScript 启动终端
     LaunchHistoryStore.swift  # 启动记录持久化
-    ClaudeHistoryScanner.swift  # 外部 CLI 历史扫描
     Chat/
       ChatProcessBackend.swift      # 协议 + 环境 + PATH 修复 + 进程运行器
       ChatCLICapabilityProbe.swift  # CLI 能力探测
@@ -153,7 +182,7 @@ ClaudeMac/
 
 ### GUI App PATH 修复
 
-macOS sandbox App 启动时 `$PATH` 极简，找不到 Homebrew 安装的 CLI。`ChatCLIEnvironment` 通过 `getpwuid` 获取真实 HOME，把 `~/.local/bin`、`~/.bun/bin`、`~/.cargo/bin`、`/opt/homebrew/bin`、`/usr/local/bin` 等路径注入子进程环境。Capability probe 还兜底 `zsh -lc 'command -v'`。
+macOS sandbox App 启动时 `$PATH` 极简，找不到 Homebrew 安装的 CLI。`ChatCLIEnvironment` 通过 `getpwuid` 获取真实 HOME，把 `~/.local/bin`、`~/.bun/bin`、`~/.cargo/bin`、`/opt/homebrew/bin`、`/usr/local/bin` 等路径注入子进程环境。Capability probe 会试运行候选 CLI 的 `--version`，跳过不可执行或架构不兼容的残留路径，再兜底 `zsh -lc 'command -v -a'`。
 
 ### 文件树
 
@@ -212,18 +241,11 @@ cd '/Users/oreo/Desktop/公司/摄影 go-server/server' && claude --continue
 ~/Library/Application Support/Acode/projects.json
 ~/Library/Application Support/Acode/settings.json
 ~/Library/Application Support/Acode/launch-history.json
+~/Library/Application Support/Acode/file-tree-state.json
+~/Library/Application Support/Acode/config-profiles.json
 ~/Library/Application Support/Acode/chat-sessions.json
 ~/Library/Application Support/Acode/chat-messages/<session-id>.jsonl
 ~/Library/Application Support/Acode/chat-drafts.json
 ```
 
-外部 CLI 历史只读扫描：
-
-```text
-~/.claude/projects/**/*.jsonl
-~/.claude/history.jsonl
-~/.codex/sessions/**/*.jsonl
-~/.codex/archived_sessions/**/*.jsonl
-~/.codex/history.jsonl
-~/.codex/session_index.jsonl
-```
+旧版 `~/Library/Application Support/ClaudeMac` 数据会迁移到 `~/Library/Application Support/Acode`。Acode 不再扫描外部 Claude/Codex 历史文件，历史侧栏以本地会话存储为准。

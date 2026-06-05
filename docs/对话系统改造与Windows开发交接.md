@@ -55,11 +55,11 @@
 | 队列与恢复 | `QueuedChatRequest` 保存 prompt、project、CLI、model、权限和 resume 上下文；active run 重启后标 failed，不自动重放 | FIFO 语义、崩溃后不重复执行危险 active run、队列持久化 |
 | Transcript | 主线只展示 user/assistant/reasoning/tool/permission/interactive/error；raw/system/result 隐藏 | 虚拟化列表、折叠工具行、Markdown/code/table 轻量渲染、底部跟随判定 |
 | Composer | 自动高度 42–160；IME marked text 时不回写、不发送；建议命令支持整块删除 | Windows IME composition/Enter 必测；草稿保存要 debounce |
-| 历史侧栏 | 当前 CLI 过滤历史：Claude 只显示 Claude，Codex 只显示 Codex；subagents 不进入普通历史 | 历史扫描按 CLI 分流；删除同步清 index/transcript；过期异步刷新不得覆盖新状态 |
+| 历史侧栏 | 当前只显示 Acode 本地会话，并按 CLI 过滤：Claude 只显示 Claude，Codex 只显示 Codex；不再扫描外部 Claude/Codex 历史 | 本地 session store 按 CLI 分流；删除同步清 index/transcript；过期异步刷新不得覆盖新状态 |
 | Backend | Claude 是 stream-json JSONL；Codex 是 app-server stdio JSON-RPC | Process/pipe/JSONL/JSON-RPC 分层；stdout/stderr 并发读；stdin JSONL 可写 |
 | Agent process | Agent tool 行提供 process 入口，详情 sheet 读取 `subagents/agent-*.jsonl` 和 meta | 复刻 process 入口、2.5s 刷新、pause/resume、subagent block 映射 |
 | 性能 | delta 150ms flush、scroll 0.25s 节流、parse/cache、侧栏轻量化、关键状态才落盘 | 流式批量刷新、Markdown/文件引用/工具摘要缓存、持久化节流、侧栏虚拟化 |
-| 视觉 | 20/18/14/13/12 圆角层级、白色半透明面、弱描边、紧凑列表密度 | 抽设计 token；用 WinUI/Mica/Acrylic 等效替换 AppKit 毛玻璃 |
+| 视觉 | 20/18/14/13/12 圆角层级、白色半透明面、弱描边、紧凑列表密度；工具详情走 Acode 风格可视化卡片，thinking 行不做边框卡片 | 抽设计 token；用 WinUI/Mica/Acrylic 等效替换 AppKit 毛玻璃 |
 | 文档缺口 | 旧文档未覆盖最新多 runtime、Agent process、CLI 过滤历史和性能约束 | 本文以本节和后续章节作为 Windows 复刻最新基线 |
 
 关键证据：
@@ -68,10 +68,25 @@
 - per-session state：`ClaudeMac/ViewModels/ChatPanelState.swift:4`
 - 本地 JSON/JSONL store：`ClaudeMac/Services/Chat/ChatSessionStore.swift:4`
 - transcript 入口：`ClaudeMac/Views/ClaudeSessionPanelView.swift:174`
-- CLI 历史扫描：`ClaudeMac/Services/ClaudeHistoryScanner.swift:23`
+- 本地历史加载：`ClaudeMac/ViewModels/AppState.swift`
 - 当前 CLI 过滤：`ClaudeMac/Views/ProjectSidebarView.swift:119`
+- 外部历史扫描源文件 `ClaudeMac/Services/ClaudeHistoryScanner.swift` 已删除
 - Agent process sheet：`ClaudeMac/Views/ClaudeSessionPanelView.swift:2444`
 - 子代理 transcript：`ClaudeMac/Services/Chat/SubagentTranscriptStore.swift:76`
+
+### 2.2 2026-05-10 最新实现基线
+
+本轮后 macOS 端的最新基线如下，Windows 端复刻时以这些行为为准：
+
+1. 历史来源：侧栏只展示 Acode 自建 `ChatSessionStore` 会话，并按当前 CLI 分流；外部 Claude/Codex 历史扫描不再属于主路径。
+2. 工具展示：Read/Edit/Write、Grep/Glob、Bash/终端、Todo、Agent、diff 和泛工具都进入结构化可视化卡片；主 UI 默认不展示 raw JSON envelope。
+3. 终端输出：命令卡片展开后显示 `$ command`，并分区展示 stdout、stderr 和 output。
+4. 文件跳转：工具卡片或文件引用可打开当前项目内文件，并支持 line/column 跳转。
+5. 队列：运行中发送进入队列；队列消息可删除、点击/拖入输入框编辑，也可拖拽调整顺序。
+6. Composer：输入框下方显示 CLI、权限、模型和思考强度选择器；当前默认权限为自动编辑，切换完全访问会二次确认。
+7. Thinking：显示英文 `thinking`，运行中展开，完成后可收缩；当前不使用边框或卡片背景。
+8. 布局：编辑器/聊天横向拖拽时用内存宽度即时刷新，拖拽结束后再持久化，避免卡顿。
+9. 打包：已验证 Release build 和 App-only `.app` 复制到桌面；DMG 不再是当前交付目标。
 
 ## 3. 领域模型设计
 
@@ -486,7 +501,7 @@ Windows 复刻建议：
 - 文件工具必须显示工具名 + 文件名；文件名以 chip 展示，点击后在编辑器打开目标文件。
 - `Read/Edit/Write` 等文件操作可从 JSON/text/diff 中提取 path/file/filePath/file_path，无法提取时降级为普通工具行。
 - `Bash`、`command`、`commandOutput` 等终端类工具折叠态必须显示执行命令摘要，长命令单行截断并保留完整 tooltip。
-- 展开后用带边框的详情卡片显示参数、输出或 diff；终端类工具使用 `$ command` + stdout/stderr/output 的终端式卡片。
+- 展开后用 Acode 风格的浅色可视化详情卡片显示参数、输出或 diff，避免裸露整块 JSON/code；终端类工具使用 `$ command` + stdout/stderr/output 的终端式卡片。
 - 详情卡片保留复制入口，复制终端详情时应包含命令和输出；长命令、长 JSON、diff 支持横向滚动。
 - 工具详情展示层过滤 `id/type/index/session/timestamp/message_start/message_stop/done` 等内部噪音，只保留 command/path/input/output/result/error/message/text/diff 等可理解字段，不能丢失错误原因。
 - 最新运行中的工具行只用静态字体/颜色强调，不做闪烁或 repeat 动画。
@@ -515,6 +530,7 @@ thinking 行设计：
 - thinking 时自动展开。
 - thinking 完成或后续工具/回复出现后自动收缩。
 - 标题和正文使用接近普通回复的字号，不做过小二级日志样式。
+- 不加边框、卡片背景或强容器感，避免把 thinking 看成工具结果。
 
 证据：`ClaudeMac/Views/ClaudeSessionPanelView.swift:391`
 
@@ -539,7 +555,7 @@ Agent 工具调用不是普通工具日志：主 transcript 中仍按轻量 Tool
 Windows 复刻建议：
 
 1. 不要把 Agent 过程做成彩色大卡片；主线只保留轻量折叠行和 `process` 入口。
-2. 子代理详情读取应与普通历史扫描分离；普通历史必须继续排除 `subagents`。
+2. 子代理详情读取应与普通历史读取分离；普通历史必须继续排除 `subagents`。
 3. 读取过程要支持 pause/resume，避免大 JSONL 高频轮询拖慢主页面。
 4. 截断策略要保留：主线展示摘要，详情区限制长文本，复制仍尽量保留完整可诊断内容。
 
@@ -599,6 +615,7 @@ Windows 复刻建议：
 - 超过 3 条时固定 3 行高度，内部可滚动。
 - 每行显示序号、首行摘要、编辑按钮、删除按钮。
 - 删除直接移除队列项；编辑会把队列文本回填到输入框并从队列中移除。
+- 队列消息也支持拖入输入框编辑，拖拽排序可直接调整未开始请求的执行顺序。
 
 证据：`ClaudeMac/Views/ClaudeSessionPanelView.swift:598`
 
@@ -622,12 +639,12 @@ Windows 复刻建议：
 | PermissionCard | `.permissionRequest` | waiting | deny/allow/session allow | Card + buttons |
 | InteractiveCard | `.interactiveRequest` | waiting | 单选/多选/文本提交 | Card + inputs |
 | LoadingRow | awaiting first output | spinner + “正在生成” | 无 | Progress indicator |
-| QueueBar | queuedRequests | 实际行数，最多 3 行 | 编辑、删除单条 | Scrollable compact list |
+| QueueBar | queuedRequests | 实际行数，最多 3 行 | 编辑、删除、拖入输入框、拖拽排序 | Scrollable compact list + reorder/drop-to-edit |
 | WorkbenchSplit | editor/chat layout | chat 宽度可拖拽，按可用空间 clamp | 左拖扩大对话，右拖扩大编辑器 | 持久化 split width，不要固定 420/840 卡片宽度 |
 | ActionButton | status + draft | macOS 当前非运行时发送/入队，运行时停止 | send / interrupt | Windows 建议拆分为 SendButton + StopButton |
 | StopButton | status.isRunning | Windows 目标控件 | interrupt | 独立于 send，避免运行态按钮语义跳变 |
 | Composer | draft text | 占位文案“输入你的需求” | IME 候选确认、Shift+Enter 换行 | marked text 时隐藏 placeholder，避免叠字 |
-| PickerOverlay | activePicker | 根级浮层，不参与 composer 布局 | 点击 CLI/权限/模型按钮打开，点击空白关闭 | 用 Window/Popup/Adorner/Portal 顶层承载，不能挤占输入框或 transcript 空间 |
+| PickerOverlay | activePicker | 根级浮层，不参与 composer 布局 | 点击 CLI/权限/模型按钮打开，点击空白关闭；模型与图标保持紧凑间距 | 用 Window/Popup/Adorner/Portal 顶层承载，不能挤占输入框或 transcript 空间 |
 | SendButton | draft nonempty | Windows 目标控件 | send / enqueue | 不承担 stop 语义 |
 | AgentProcessSheet | Agent tool row | process 入口，默认自动刷新 | pause/resume/refresh/close | 读取 subagents JSONL，展示子代理真实过程 |
 
@@ -723,33 +740,27 @@ Windows 复刻建议：
 - 会话运行态字段：`ClaudeMac/Models/ChatModels.swift:347`
 - active run 中断恢复：`ClaudeMac/Models/ChatModels.swift:443`
 
-### 13.2 外部 Claude/Codex 历史
+### 13.2 历史列表当前边界
 
-外部历史只作为“可继续的历史入口”，不直接完整还原外部 transcript。选中外部历史后会创建本地 Acode session，并记录 `externalSessionID`；发送时通过 Claude resume/continue 或 Codex thread resume 尝试继续。
-
-当前侧栏历史必须同时满足三层过滤：
+当前侧栏历史只显示 Acode 本地 session store，不再扫描或管理外部 Claude/Codex 历史。历史列表仍需满足两层过滤：
 
 1. 按项目路径/storageKey 分组。
-2. 按当前 `selectedCLI` 过滤：Claude 模式只显示 Claude 历史，Codex 模式只显示 Codex 历史。
-3. 过滤掉已被本地 session `externalSessionID` 关联的外部记录，避免同一会话显示两份。
+2. 按当前 `selectedCLI` 过滤：Claude 模式只显示 Claude 会话，Codex 模式只显示 Codex 会话。
 
-普通历史扫描不得混入子代理；Claude project JSONL 扫描和 transcript 删除枚举都跳过 `subagents`。删除历史时不只删 transcript，还要同步清理 Claude `history.jsonl` 或 Codex `history.jsonl/session_index.jsonl`，并容忍文件已不存在的情况。
+子代理过程不是普通历史来源；Agent process 详情仍从 `subagents/agent-*.jsonl` 和 meta 读取，但这条链路与历史侧栏分离。
 
 证据：
 
-- CLI history id 带 CLI 前缀：`ClaudeMac/Models/AppModels.swift:124`
-- 侧栏当前 CLI 过滤：`ClaudeMac/Views/ProjectSidebarView.swift:119`
-- 外部扫描入口：`ClaudeMac/Services/ClaudeHistoryScanner.swift:23`
-- subagents 排除：`ClaudeMac/Services/ClaudeHistoryScanner.swift:40`
-- local/external 去重：`ClaudeMac/ViewModels/AppState.swift:610`
-- 刷新 generation 防旧结果覆盖：`ClaudeMac/ViewModels/AppState.swift:668`
-- 删除索引清理：`ClaudeMac/ViewModels/AppState.swift:537`
+- 本地 session store：`ClaudeMac/Services/Chat/ChatSessionStore.swift`
+- 侧栏当前 CLI 过滤：`ClaudeMac/Views/ProjectSidebarView.swift`
+- 本地历史加载：`ClaudeMac/ViewModels/AppState.swift`
+- 外部扫描源文件 `ClaudeMac/Services/ClaudeHistoryScanner.swift` 已删除
 
 Windows 复刻建议：
 
 1. 本地历史建议使用 `%APPDATA%\\Acode\\chat-sessions.json`、`%APPDATA%\\Acode\\chat-messages\\<uuid>.jsonl`、`%APPDATA%\\Acode\\chat-drafts.json`。
 2. 需要定义旧目录迁移策略，至少覆盖未来 Windows 早期版本可能使用的临时目录。
-3. 外部历史扫描不要假设 macOS 路径，应分别验证 `%USERPROFILE%\\.claude`、`%USERPROFILE%\\.codex`、Codex sessions/archived_sessions/session_index.jsonl 的真实 Windows 位置。
+3. 第一版不要把外部 `.claude` / `.codex` 历史混入侧栏；如后续要做外部恢复，应作为独立入口重新设计和验证。
 4. `storageKey` 和路径归一化要重写，覆盖盘符、UNC、大小写、junction/symlink；禁止沿用 POSIX “把 `/` 转成 `-`”的规则。
 5. 删除要处理 CRLF、文件占用、长路径和大小写路径；失败时要给可理解错误，并避免 stale index 让已删历史重新出现。
 6. 普通历史与 Agent subagents 必须是两条读取链路，不能为了展示 Agent process 把 subagents 混进历史列表。
@@ -902,7 +913,7 @@ Windows 缺口：
 | assistant 代码块 | 独立代码卡片、等宽字体、横向滚动、单块 copy 只复制代码 |
 | assistant 表格 | 表格卡片可横向滚动，不被压成乱文本 |
 | 未闭合代码 fence | 流式过程中按代码块展示，不崩溃、不吞后续文本 |
-| thinking | 标题 thinking 常显，运行时展开，结束后收缩 |
+| thinking | 标题 thinking 常显，运行时展开，结束后收缩；无边框/卡片背景 |
 | 多个工具 | 每个工具按顺序下推，不合并成大组 |
 | 工具运行中 | 最新工具行只有静态字体/颜色强调，不闪烁 |
 | 展开工具 | 只展开当前行详情卡片，不污染主线 |
@@ -915,7 +926,7 @@ Windows 缺口：
 | permission | 卡片显示 deny/allow/session allow |
 | interactive | 单选、多选、文本输入可提交 |
 | 运行中继续发送 | 进入队列，不 interrupt 当前 run；队列紧贴输入框且无预留空白 |
-| 队列编辑/删除 | 删除直接移除队列项；编辑回填输入框并移除队列项 |
+| 队列编辑/删除/拖拽 | 删除直接移除队列项；点击或拖入输入框会回填并移除队列项；拖拽排序改变未开始请求顺序 |
 | IME 回车 | 有 marked text 时 placeholder 隐藏且 Enter 只确认候选，不发送；普通 Enter 发送，Shift+Enter 换行 |
 | 普通消息发送 | 打开编辑器文件时不自动追加 Current file/Cursor，只有显式附加路径才进入 prompt |
 | stop | 只停止当前 run，不自动启动队列下一条 |
@@ -929,18 +940,21 @@ Windows 缺口：
 
 1. Debug build 通过。
 2. Release build 通过。
-3. DMG create/verify 通过。
-4. 工具行旧中文前缀与图标属性已从当前 UI 路径移除。
-5. `thinking` 文案替代中文思考文案。
-6. 队列出队逻辑改为 backend stream end 后触发。
-7. stop/failed 不自动出队。
-8. 最新工具行运行态已改为静态字体/颜色强调，无闪烁动画。
-9. 多会话 runtime 已拆到 `ChatRuntimeStore`，切换会话不应中断旧 run。
-10. 队列、runStatus、activeRunRequest 已进入本地 session index，重启后 active run 只标中断不重放。
-11. 输入框已支持自动高度和中文 IME marked text 保护。
-12. 子代理 Agent process 已有读取和详情 UI 链路。
-13. 历史侧栏已按当前 CLI 过滤，Claude/Codex 不再混显；subagents 继续排除在普通历史外。
-14. 对话性能已做流式 flush、滚动节流、parse/cache 和侧栏轻量化收敛。
+3. App-only `.app` 已复制到桌面并通过 codesign 校验；当前不再生成 DMG。
+4. 工具行旧中文前缀与状态标签已从当前 UI 路径移除。
+5. 工具详情已改为 Acode 风格可视化卡片，覆盖文件、搜索、终端、Todo、Agent、diff 和泛工具。
+6. `thinking` 文案替代中文思考文案，且 thinking 行无边框/卡片背景。
+7. 队列出队逻辑改为 backend stream end 后触发。
+8. stop/failed 不自动出队。
+9. 最新工具行运行态已改为静态字体/颜色强调，无闪烁动画。
+10. 多会话 runtime 已拆到 `ChatRuntimeStore`，切换会话不应中断旧 run。
+11. 队列、runStatus、activeRunRequest 已进入本地 session index，重启后 active run 只标中断不重放。
+12. 队列消息支持拖入输入框编辑和拖拽排序。
+13. 输入框已支持自动高度和中文 IME marked text 保护。
+14. 输入框下方 CLI / 权限 / 模型选择器可见，当前默认权限为自动编辑。
+15. 子代理 Agent process 已有读取和详情 UI 链路。
+16. 历史侧栏只显示 Acode 本地会话，并按当前 CLI 过滤；不再扫描外部 Claude/Codex 历史。
+17. 对话性能已做流式 flush、滚动节流、parse/cache 和侧栏轻量化收敛。
 
 ## 17. 未验证项与风险
 

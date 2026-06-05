@@ -1,0 +1,975 @@
+import {
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Cpu,
+  FileText,
+  Folder,
+  Info,
+  Monitor,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Settings,
+  ShieldCheck,
+  Terminal,
+  Trash2
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import type {
+  AppSettings,
+  CLIKind,
+  CLIProfile,
+  CLIProfileUpdateInput,
+  CLIWireApi,
+  GlobalRuleTarget,
+  PermissionMode,
+  ReasoningEffort,
+  SecretField,
+  WindowsShell,
+  WindowsTerminal
+} from "@shared/settings";
+import type { RemoteLegalDocument, RemoteLegalDocumentType } from "@shared/account";
+import { AccountRemoteControlPanel, LegalDocumentModal } from "../accountRemote";
+import { AppLogo } from "../AppLogo";
+import { useAccountRemoteStore } from "../../stores/accountStore";
+import { selectProfiles, useSettingsStore } from "../../stores/settingsStore";
+
+type SettingsTabID =
+  | "general"
+  | "accountSecurity"
+  | "claude"
+  | "codex"
+  | "remoteChat"
+  | "appendRules"
+  | "globalRules"
+  | "about";
+
+interface SettingsPageProps {
+  onBack?: () => void;
+  onOpenAccountDialog?: () => void;
+}
+
+const tabs = [
+  { id: "general", title: "通用", icon: Settings },
+  { id: "accountSecurity", title: "账号与安全", icon: ShieldCheck },
+  { id: "claude", title: "Claude Code", icon: Terminal },
+  { id: "codex", title: "Codex", icon: Cpu },
+  { id: "remoteChat", title: "设备连接", icon: Monitor },
+  { id: "appendRules", title: "追加规则", icon: FileText },
+  { id: "globalRules", title: "全局规则", icon: Copy },
+  { id: "about", title: "关于与版本", icon: Info }
+] satisfies Array<{ id: SettingsTabID; title: string; icon: typeof Settings }>;
+
+const permissionModeOptions: Array<{ value: PermissionMode; label: string }> = [
+  { value: "default", label: "默认" },
+  { value: "plan", label: "计划" },
+  { value: "acceptEdits", label: "接受编辑" },
+  { value: "bypassPermissions", label: "绕过权限" }
+];
+
+const reasoningEffortOptions: Array<{ value: ReasoningEffort; label: string }> = [
+  { value: "minimal", label: "Minimal" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" }
+];
+
+const terminalOptions: Array<{ value: WindowsTerminal; label: string }> = [
+  { value: "windowsTerminal", label: "Windows Terminal" },
+  { value: "powershell", label: "PowerShell" },
+  { value: "cmd", label: "Command Prompt" },
+  { value: "gitBash", label: "Git Bash" }
+];
+
+const legalDocumentLinks = [
+  { type: "user_agreement", label: "用户协议" },
+  { type: "privacy_policy", label: "隐私政策" }
+] as const satisfies Array<{ type: RemoteLegalDocumentType; label: string }>;
+
+const shellOptions: Array<{ value: WindowsShell; label: string }> = [
+  { value: "powershell", label: "PowerShell" },
+  { value: "cmd", label: "Command Prompt" },
+  { value: "gitBash", label: "Git Bash" }
+];
+
+const wireApiOptions: Array<{ value: CLIWireApi; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "responses", label: "Responses" },
+  { value: "chatCompletions", label: "Chat Completions" }
+];
+
+export function SettingsPage({ onBack, onOpenAccountDialog }: SettingsPageProps = {}) {
+  const [selectedTab, setSelectedTab] = useState<SettingsTabID>("general");
+  const settings = useSettingsStore((state) => state.settings);
+  const loading = useSettingsStore((state) => state.loading);
+  const saving = useSettingsStore((state) => state.saving);
+  const error = useSettingsStore((state) => state.error);
+  const load = useSettingsStore((state) => state.load);
+  const reset = useSettingsStore((state) => state.reset);
+
+  useEffect(() => {
+    if (!settings && !loading) {
+      void load();
+    }
+  }, [load, loading, settings]);
+
+  const selectedItem = tabs.find((item) => item.id === selectedTab) ?? tabs[0];
+
+  return (
+    <section className="settings-shell">
+      <aside className="settings-sidebar glass-panel">
+        <h2>设置</h2>
+        <div className="settings-nav">
+          {tabs.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                className={`settings-nav-row ${item.id === selectedTab ? "selected" : ""}`}
+                key={item.id}
+                type="button"
+                onClick={() => setSelectedTab(item.id)}
+              >
+                <span className="settings-nav-icon">
+                  <Icon size={16} />
+                </span>
+                <span>{item.title}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="settings-sidebar-footer">
+          {onBack ? (
+            <button className="back-button settings-back-button" type="button" onClick={onBack}>
+              <ChevronLeft size={15} />
+              <span>返回工作台</span>
+            </button>
+          ) : null}
+          <button className="back-button" type="button" onClick={() => void reset()}>
+            <RotateCcw size={15} />
+            <span>恢复默认</span>
+          </button>
+        </div>
+      </aside>
+
+      <section className="settings-content">
+        <h1>{selectedItem.title}</h1>
+        {error ? <div className="settings-card">{error}</div> : null}
+        {saving ? <p className="hint">保存中...</p> : null}
+        {!settings ? <SettingsLoading loading={loading} /> : (
+          <SettingsTabContent selectedTab={selectedTab} settings={settings} onOpenAccountDialog={onOpenAccountDialog} />
+        )}
+      </section>
+    </section>
+  );
+}
+
+function SettingsLoading({ loading }: { loading: boolean }) {
+  const load = useSettingsStore((state) => state.load);
+
+  return (
+    <div className="settings-card">
+      <p>{loading ? "正在载入设置..." : "设置桥接尚未接入。"}</p>
+      <button className="settings-primary-button" type="button" onClick={() => void load()}>
+        <RefreshCw size={14} /> 重新载入
+      </button>
+    </div>
+  );
+}
+
+function SettingsTabContent({
+  onOpenAccountDialog,
+  selectedTab,
+  settings
+}: {
+  onOpenAccountDialog?: () => void;
+  selectedTab: SettingsTabID;
+  settings: AppSettings;
+}) {
+  switch (selectedTab) {
+    case "accountSecurity":
+      return <AccountSecuritySettings onOpenAccountDialog={onOpenAccountDialog} />;
+    case "claude":
+      return <ProfileSettings kind="claude" settings={settings} />;
+    case "codex":
+      return <ProfileSettings kind="codex" settings={settings} />;
+    case "remoteChat":
+      return <RemoteChatSettings onOpenAccountDialog={onOpenAccountDialog} />;
+    case "appendRules":
+      return <AppendRulesSettings settings={settings} />;
+    case "globalRules":
+      return <GlobalRulesSettings settings={settings} />;
+    case "about":
+      return <AboutSettings />;
+    case "general":
+    default:
+      return <GeneralSettings settings={settings} />;
+  }
+}
+
+function GeneralSettings({ settings }: { settings: AppSettings }) {
+  const savePatch = useSettingsStore((state) => state.savePatch);
+  const [ignoredFolders, setIgnoredFolders] = useState(settings.ignoredFolders.join("\n"));
+
+  useEffect(() => {
+    setIgnoredFolders(settings.ignoredFolders.join("\n"));
+  }, [settings.ignoredFolders]);
+
+  return (
+    <div className="settings-stack">
+      <div className="settings-card">
+        <div className="settings-grid">
+          <SettingsSelect
+            label="默认 CLI"
+            value={settings.defaultCLI}
+            options={[
+              { value: "claude", label: "Claude Code" },
+              { value: "codex", label: "Codex" }
+            ]}
+            onChange={(value) => void savePatch({ defaultCLI: value as CLIKind })}
+          />
+          <SettingsSelect
+            label="默认终端"
+            value={settings.terminal}
+            options={terminalOptions}
+            onChange={(value) => void savePatch({ terminal: value as WindowsTerminal })}
+          />
+          <SettingsSelect
+            label="Shell"
+            value={settings.shell}
+            options={shellOptions}
+            onChange={(value) => void savePatch({ shell: value as WindowsShell })}
+          />
+          <SettingsSelect
+            label="权限模式"
+            value={settings.permissionMode}
+            options={permissionModeOptions}
+            onChange={(value) => void savePatch({ permissionMode: value as PermissionMode })}
+          />
+          <SettingsSelect
+            label="推理强度"
+            value={settings.reasoningEffort}
+            options={reasoningEffortOptions}
+            onChange={(value) => void savePatch({ reasoningEffort: value as ReasoningEffort })}
+          />
+          <label>
+            <span className="settings-label">默认模型</span>
+            <input
+              className="settings-input"
+              defaultValue={settings.model}
+              placeholder="例如 gpt-5.4 / claude-opus"
+              onBlur={(event) => void savePatch({ model: event.currentTarget.value.trim() })}
+            />
+          </label>
+        </div>
+
+        <label className="settings-label" htmlFor="settings-ignored-folders">忽略目录</label>
+        <textarea
+          id="settings-ignored-folders"
+          className="settings-textarea"
+          value={ignoredFolders}
+          onBlur={() => void savePatch({
+            ignoredFolders: ignoredFolders.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+          })}
+          onChange={(event) => setIgnoredFolders(event.currentTarget.value)}
+        />
+        <p className="hint">每行一个目录名。</p>
+
+        <AuthorizedFolders settings={settings} />
+      </div>
+    </div>
+  );
+}
+
+function AuthorizedFolders({ settings }: { settings: AppSettings }) {
+  const saving = useSettingsStore((state) => state.saving);
+  const addAuthorizedFolder = useSettingsStore((state) => state.addAuthorizedFolder);
+  const removeAuthorizedFolder = useSettingsStore((state) => state.removeAuthorizedFolder);
+
+  return (
+    <>
+      <div className="authorized-header">
+        <div>
+          <h3>授权文件夹</h3>
+          <p>添加后可通过编辑器打开和保存该目录下的文件；路径选择和校验由主进程完成。</p>
+        </div>
+        <button type="button" disabled={saving} onClick={() => void addAuthorizedFolder()}>添加文件夹</button>
+      </div>
+      {settings.authorizedFolders.length === 0 ? (
+        <p>尚未添加授权文件夹。</p>
+      ) : settings.authorizedFolders.map((folder) => (
+        <div className="authorized-row" key={folder.id}>
+          <Folder size={17} />
+          <div>
+            <b>{folder.name}</b>
+            <span>{folder.path}</span>
+          </div>
+          <button type="button" disabled={saving} onClick={() => void removeAuthorizedFolder(folder.id)}>移除</button>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function AccountSecuritySettings({ onOpenAccountDialog }: { onOpenAccountDialog?: () => void }) {
+  const account = useAccountRemoteStore((state) => state.account);
+  const hydrateRemoteState = useAccountRemoteStore((state) => state.hydrateRemoteState);
+  const setConnectionStatus = useAccountRemoteStore((state) => state.setConnectionStatus);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [deleteConfirmAccount, setDeleteConfirmAccount] = useState("");
+  const [deleteConfirmDestroy, setDeleteConfirmDestroy] = useState("");
+  const [deleteConfirmWaiveRights, setDeleteConfirmWaiveRights] = useState("");
+  const [deleteReason, setDeleteReason] = useState("");
+  const [accountAction, setAccountAction] = useState<string | null>(null);
+  const [accountMessage, setAccountMessage] = useState<{ kind: "info" | "success" | "error"; text: string } | null>(null);
+  const hasAccount = account.status === "authenticated" || account.status === "expired";
+  const accountTitle = account.displayAccount ?? "未登录";
+  const statusText = hasAccount ? `账号状态：${account.userStatus ?? account.status}` : "登录后可以管理密码、退出登录和注销账号。";
+  const canChangePassword = account.status === "authenticated"
+    && currentPassword.length > 0
+    && newPassword.length > 0
+    && newPassword === confirmPassword
+    && !accountAction;
+  const canDeleteAccount = account.status === "authenticated"
+    && deleteConfirmAccount.trim() === "我确认注销账号"
+    && deleteConfirmDestroy.trim() === "确认销毁"
+    && deleteConfirmWaiveRights.trim() === "确认放弃电脑端服务权益"
+    && !accountAction;
+
+  function requireBridge() {
+    const bridge = window.acode?.accountRemote;
+    if (!bridge) {
+      throw new Error("Account API is not available.");
+    }
+    return bridge;
+  }
+
+  async function runAccountAction(label: string, action: () => Promise<unknown>, successMessage: string) {
+    setAccountAction(label);
+    setAccountMessage(null);
+    try {
+      const result = await action();
+      if (result && typeof result === "object" && "account" in result && "signaling" in result) {
+        hydrateRemoteState(result as Parameters<typeof hydrateRemoteState>[0]);
+      }
+      setAccountMessage({ kind: "success", text: successMessage });
+      return true;
+    } catch (error) {
+      const text = error instanceof Error ? error.message : `${label}失败`;
+      setConnectionStatus("error", text);
+      setAccountMessage({ kind: "error", text });
+      return false;
+    } finally {
+      setAccountAction(null);
+    }
+  }
+
+  async function changePassword() {
+    const ok = await runAccountAction(
+      "修改密码",
+      () => requireBridge().changePassword(currentPassword, newPassword),
+      "密码已修改，请重新登录。"
+    );
+    if (ok) {
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    }
+  }
+
+  async function deleteAccount() {
+    const ok = await runAccountAction(
+      "注销账号",
+      () => requireBridge().deleteAccount(
+        deleteConfirmAccount,
+        deleteConfirmDestroy,
+        deleteConfirmWaiveRights,
+        deleteReason
+      ),
+      "账号已注销。"
+    );
+    if (ok) {
+      setDeleteConfirmAccount("");
+      setDeleteConfirmDestroy("");
+      setDeleteConfirmWaiveRights("");
+      setDeleteReason("");
+    }
+  }
+
+  return (
+    <div className="settings-stack">
+      <div className="settings-card">
+        <div className="account-summary-row">
+          <ShieldCheck size={34} />
+          <div>
+            <b>{accountTitle}</b>
+            <span>{statusText}</span>
+          </div>
+          <button type="button" onClick={onOpenAccountDialog}>{account.status === "authenticated" ? "管理账号" : "登录"}</button>
+          <button
+            type="button"
+            disabled={account.status !== "authenticated" || Boolean(accountAction)}
+            onClick={() => void runAccountAction("退出登录", () => requireBridge().logout(), "已退出登录。")}
+          >
+            退出登录
+          </button>
+        </div>
+        {accountMessage ? <p className={`account-message ${accountMessage.kind}`}>{accountMessage.text}</p> : null}
+        {accountAction ? <p className="settings-hint">正在执行：{accountAction}</p> : null}
+        <div className="settings-grid">
+          <SettingsPanel title="修改密码" subtitle="修改成功后会清除本机登录状态，需要重新登录。">
+            <input className="settings-input" placeholder="当前密码" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.currentTarget.value)} />
+            <input className="settings-input" placeholder="新密码" type="password" value={newPassword} onChange={(event) => setNewPassword(event.currentTarget.value)} />
+            <input className="settings-input" placeholder="确认新密码" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.currentTarget.value)} />
+            {newPassword && confirmPassword && newPassword !== confirmPassword ? <p className="account-message error">两次密码不一致。</p> : null}
+            <button className="settings-primary-button" type="button" disabled={!canChangePassword} onClick={() => void changePassword()}>确认修改</button>
+          </SettingsPanel>
+          <SettingsPanel title="注销账号" subtitle="注销会删除远程账号主数据，操作不可恢复。">
+            <input className="settings-input" placeholder="输入：我确认注销账号" value={deleteConfirmAccount} onChange={(event) => setDeleteConfirmAccount(event.currentTarget.value)} />
+            <input className="settings-input" placeholder="输入：确认销毁" value={deleteConfirmDestroy} onChange={(event) => setDeleteConfirmDestroy(event.currentTarget.value)} />
+            <input className="settings-input" placeholder="输入：确认放弃电脑端服务权益" value={deleteConfirmWaiveRights} onChange={(event) => setDeleteConfirmWaiveRights(event.currentTarget.value)} />
+            <input className="settings-input" placeholder="注销原因（选填）" value={deleteReason} onChange={(event) => setDeleteReason(event.currentTarget.value)} />
+            <button className="settings-danger-button" type="button" disabled={!canDeleteAccount} onClick={() => void deleteAccount()}>确认注销账号</button>
+          </SettingsPanel>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfileSettings({ kind, settings }: { kind: CLIKind; settings: AppSettings }) {
+  const profiles = useMemo(() => selectProfiles(settings, kind), [kind, settings]);
+  const createProfile = useSettingsStore((state) => state.createProfile);
+  const probeCLI = useSettingsStore((state) => state.probeCLI);
+  const lastProbe = useSettingsStore((state) => state.lastProbe);
+  const [newName, setNewName] = useState(kind === "claude" ? "Claude 中转站" : "Codex 配置");
+  const isClaude = kind === "claude";
+
+  return (
+    <div className="settings-stack">
+      <div className="settings-card">
+        <div className="settings-card-intro">
+          <h3>{isClaude ? "Claude Code 中转站列表" : "Codex 中转站列表"}</h3>
+          <p>
+            {isClaude
+              ? "列表管理 API 地址、模型、命令路径和 Auth Token 引用；明文只会提交给 main 进程保存。"
+              : "列表管理 base_url、模型、命令路径和 API Key 引用；wire_api/app-server 网络监听暂未接入，不会伪造生效状态。"}
+          </p>
+        </div>
+        <div className="settings-actions">
+          <input className="settings-input" value={newName} onChange={(event) => setNewName(event.currentTarget.value)} />
+          <button
+            className="settings-primary-button"
+            type="button"
+            onClick={() => void createProfile({ kind, name: newName.trim() || `${kind} profile` })}
+          >
+            新建
+          </button>
+          <button type="button" onClick={() => void probeCLI(kind)}>
+            <RefreshCw size={14} /> 探测 CLI
+          </button>
+        </div>
+      </div>
+
+      {profiles.length === 0 ? (
+        <div className="settings-card">
+          <p>{isClaude ? "还没有 Claude Code 配置。" : "还没有 Codex 配置。"}</p>
+        </div>
+      ) : profiles.map((profile) => (
+        <ProfileEditor key={profile.id} profile={profile} />
+      ))}
+
+      {lastProbe?.kind === kind ? (
+        <div className="settings-card">
+          <div className="settings-row"><span>命令</span><code>{lastProbe.command}</code></div>
+          <div className="settings-row"><span>路径</span><code>{lastProbe.resolvedPath ?? "未找到"}</code></div>
+          <div className="settings-row"><span>版本</span><code>{firstLine(lastProbe.version) ?? "无"}</code></div>
+          {kind === "codex" ? (
+            <div className="settings-row">
+              <span>app-server</span>
+              <b>{lastProbe.capabilities.appServer ? "支持" : "未发现"}</b>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProfileEditor({ profile }: { profile: CLIProfile }) {
+  const updateProfile = useSettingsStore((state) => state.updateProfile);
+  const deleteProfile = useSettingsStore((state) => state.deleteProfile);
+  const setDefaultProfile = useSettingsStore((state) => state.setDefaultProfile);
+  const [name, setName] = useState(profile.name);
+  const [executablePath, setExecutablePath] = useState(profile.executablePath ?? "");
+  const [baseUrl, setBaseUrl] = useState(profile.baseUrl ?? "");
+  const [model, setModel] = useState(profile.model ?? "");
+  const [workingDirectory, setWorkingDirectory] = useState(profile.workingDirectory ?? "");
+  const [configPath, setConfigPath] = useState(profile.kind === "claude" ? profile.configPath ?? "" : "");
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>(profile.permissionMode ?? "default");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(profile.reasoningEffort ?? "medium");
+  const [wireApi, setWireApi] = useState<CLIWireApi>(profile.kind === "codex" ? profile.wireApi : "auto");
+  const [appServerEnabled, setAppServerEnabled] = useState(profile.kind === "codex" ? profile.appServer.enabled : false);
+  const [appServerHost, setAppServerHost] = useState(profile.kind === "codex" ? profile.appServer.host : "127.0.0.1");
+  const [appServerPort, setAppServerPort] = useState(profile.kind === "codex" ? profile.appServer.port?.toString() ?? "" : "");
+
+  useEffect(() => {
+    setName(profile.name);
+    setExecutablePath(profile.executablePath ?? "");
+    setBaseUrl(profile.baseUrl ?? "");
+    setModel(profile.model ?? "");
+    setWorkingDirectory(profile.workingDirectory ?? "");
+    setConfigPath(profile.kind === "claude" ? profile.configPath ?? "" : "");
+    setPermissionMode(profile.permissionMode ?? "default");
+    setReasoningEffort(profile.reasoningEffort ?? "medium");
+    setWireApi(profile.kind === "codex" ? profile.wireApi : "auto");
+    setAppServerEnabled(profile.kind === "codex" ? profile.appServer.enabled : false);
+    setAppServerHost(profile.kind === "codex" ? profile.appServer.host : "127.0.0.1");
+    setAppServerPort(profile.kind === "codex" ? profile.appServer.port?.toString() ?? "" : "");
+  }, [profile]);
+
+  function saveProfile() {
+    const update: CLIProfileUpdateInput = {
+      name: name.trim() || profile.name,
+      executablePath: emptyToUndefined(executablePath),
+      baseUrl: emptyToUndefined(baseUrl),
+      model: emptyToUndefined(model),
+      permissionMode,
+      reasoningEffort,
+      workingDirectory: emptyToUndefined(workingDirectory)
+    };
+
+    if (profile.kind === "claude") {
+      update.configPath = emptyToUndefined(configPath);
+    }
+
+    void updateProfile(profile.id, update);
+  }
+
+  return (
+    <div className={`settings-card ${profile.isDefault ? "selected" : ""}`}>
+      <div className="settings-card-intro">
+        <h3>{profile.kind === "claude" ? "Claude Code Profile" : "Codex Profile"}</h3>
+        <p>{profile.isDefault ? "当前默认配置" : "保存后可设为当前配置。"}</p>
+      </div>
+      <div className="settings-grid">
+        <TextInput label="名称" value={name} onChange={setName} />
+        <TextInput label="命令路径" value={executablePath} placeholder="留空使用 PATH" onChange={setExecutablePath} />
+        <TextInput label="API 地址" value={baseUrl} placeholder="https://..." onChange={setBaseUrl} />
+        <TextInput label="模型" value={model} placeholder="模型 ID" onChange={setModel} />
+        <SettingsSelect label="权限模式" value={permissionMode} options={permissionModeOptions} onChange={setPermissionMode} />
+        <SettingsSelect label="推理强度" value={reasoningEffort} options={reasoningEffortOptions} onChange={setReasoningEffort} />
+        <TextInput label="工作目录" value={workingDirectory} placeholder="可选" onChange={setWorkingDirectory} />
+        {profile.kind === "claude" ? (
+          <TextInput label="配置路径" value={configPath} placeholder="可选" onChange={setConfigPath} />
+        ) : (
+          <SettingsSelect label="wire_api（暂未接入）" value={wireApi} options={wireApiOptions} onChange={setWireApi} disabled />
+        )}
+      </div>
+
+      {profile.kind === "codex" ? (
+        <div className="settings-panel">
+          <div className="toggle-header">
+            <div>
+              <h3>Codex app-server</h3>
+              <p>Windows 当前固定通过 stdio 启动 Codex app-server；Host/Port 监听模式暂未接入。</p>
+            </div>
+            <label className="switch">
+              <input checked={appServerEnabled} disabled type="checkbox" onChange={(event) => setAppServerEnabled(event.currentTarget.checked)} />
+              <span />
+            </label>
+          </div>
+          <div className="settings-grid">
+            <TextInput label="Host（暂未接入）" value={appServerHost} onChange={setAppServerHost} disabled />
+            <TextInput label="Port（暂未接入）" value={appServerPort} placeholder="可选" onChange={setAppServerPort} disabled />
+          </div>
+        </div>
+      ) : null}
+
+      <div className="settings-grid">
+        {profile.kind === "claude" ? (
+          <SecretEditor profile={profile} field="authToken" label="ANTHROPIC_AUTH_TOKEN" />
+        ) : (
+          <SecretEditor profile={profile} field="apiKey" label="OPENAI_API_KEY" />
+        )}
+        <SettingsPanel title="当前状态" subtitle="只显示配置摘要和 secret 引用，不显示密钥明文。">
+          <div className="settings-row"><span>启用</span><b>{profile.enabled ? "是" : "否"}</b></div>
+          <div className="settings-row"><span>Secret</span><b>{secretSummary(profile)}</b></div>
+        </SettingsPanel>
+      </div>
+
+      <div className="settings-actions">
+        <button type="button" onClick={() => void deleteProfile(profile.id)}>
+          <Trash2 size={14} /> 删除
+        </button>
+        <span />
+        <button type="button" onClick={() => void setDefaultProfile(profile.id)} disabled={profile.isDefault}>
+          {profile.isDefault ? "当前" : "设为当前"}
+        </button>
+        <button className="settings-primary-button" type="button" onClick={saveProfile}>
+          <Save size={14} /> 保存
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SecretEditor({ field, label, profile }: { field: SecretField; label: string; profile: CLIProfile }) {
+  const setProfileSecret = useSettingsStore((state) => state.setProfileSecret);
+  const clearProfileSecret = useSettingsStore((state) => state.clearProfileSecret);
+  const [secretValue, setSecretValue] = useState("");
+  const ref = profile.secretRefs[field];
+
+  function saveSecret() {
+    const value = secretValue.trim();
+    if (!value) {
+      return;
+    }
+    void setProfileSecret(profile.id, field, value).then(() => setSecretValue(""));
+  }
+
+  return (
+    <SettingsPanel title={label} subtitle={ref ? `已保存引用：${ref.label}` : "未保存密钥。明文只提交到 main 进程。"}>
+      <input
+        className="settings-input"
+        type="password"
+        value={secretValue}
+        placeholder={ref ? "输入新值以替换" : "输入后保存到 safeStorage"}
+        onChange={(event) => setSecretValue(event.currentTarget.value)}
+      />
+      <div className="settings-actions">
+        <button type="button" disabled={!ref} onClick={() => void clearProfileSecret(profile.id, field)}>清除</button>
+        <button className="settings-primary-button" type="button" disabled={!secretValue.trim()} onClick={saveSecret}>保存密钥</button>
+      </div>
+    </SettingsPanel>
+  );
+}
+
+function RemoteChatSettings({ onOpenAccountDialog }: { onOpenAccountDialog?: () => void }) {
+  const account = useAccountRemoteStore((state) => state.account);
+  const device = useAccountRemoteStore((state) => state.device);
+  const devices = useAccountRemoteStore((state) => state.devices);
+  const connectionStatus = useAccountRemoteStore((state) => state.connectionStatus);
+  const onlineDevices = devices.filter((item) => item.online);
+  const isConnected = connectionStatus === "connected";
+
+  return (
+    <div className="settings-stack">
+      <div className="settings-card">
+        <div className="device-overview">
+          <div>
+            <h3>手机、Windows、项目会话</h3>
+            <p>这里展示账号远程状态、本机设备身份和已知设备；状态来自 main 进程账号、设备和信令服务。</p>
+          </div>
+          <span className={`status-badge ${isConnected ? "active" : ""}`}>{connectionStatusLabel(connectionStatus)}</span>
+        </div>
+        <div className="device-flow">
+          <DeviceNode title="移动端" subtitle={onlineDevices.length > 0 ? `${onlineDevices.length} 个在线` : "无在线设备"} active={onlineDevices.length > 0} />
+          <span className="device-rail" />
+          <DeviceNode title={device?.deviceName ?? "本机设备"} subtitle={device?.deviceID ? `设备 #${device.deviceID}` : "未注册"} active={Boolean(device)} />
+          <span className="device-rail" />
+          <DeviceNode title="项目会话" subtitle={isConnected ? "信令已连接" : "等待连接"} active={isConnected} />
+        </div>
+        <div className="settings-actions device-settings-actions">
+          <button className="settings-primary-button" type="button" onClick={onOpenAccountDialog}>
+            {account.status === "authenticated" ? "打开账号设备弹窗" : "登录并注册设备"}
+          </button>
+        </div>
+        <AccountRemoteControlPanel />
+      </div>
+    </div>
+  );
+}
+
+function DeviceNode({ active, subtitle, title }: { active?: boolean; subtitle: string; title: string }) {
+  return (
+    <div className={`device-node ${active ? "active" : ""}`}>
+      <span>{active ? "在线" : "空闲"}</span>
+      <b>{title}</b>
+      <small>{subtitle}</small>
+    </div>
+  );
+}
+
+function AppendRulesSettings({ settings }: { settings: AppSettings }) {
+  const savePatch = useSettingsStore((state) => state.savePatch);
+  const [appendRule, setAppendRule] = useState(settings.appendRule.content);
+
+  useEffect(() => {
+    setAppendRule(settings.appendRule.content);
+  }, [settings.appendRule.content]);
+
+  return (
+    <div className="settings-stack">
+      <div className="settings-card">
+        <div className="toggle-header">
+          <div>
+            <h3>发送时追加到实际 prompt</h3>
+            <p>聊天气泡仍显示原始输入，追加内容会随请求一起发送给当前 CLI。</p>
+          </div>
+          <label className="switch">
+            <input
+              checked={settings.appendRule.enabled}
+              type="checkbox"
+              onChange={(event) => void savePatch({ appendRule: { ...settings.appendRule, enabled: event.currentTarget.checked } })}
+            />
+            <span />
+          </label>
+        </div>
+        <textarea className="settings-textarea compact" value={appendRule} onChange={(event) => setAppendRule(event.currentTarget.value)} />
+        <div className="settings-actions">
+          <button type="button" onClick={() => setAppendRule("")}>清空</button>
+          <button className="settings-primary-button" type="button" onClick={() => void savePatch({ appendRule: { ...settings.appendRule, content: appendRule } })}>
+            <Save size={14} /> 保存
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GlobalRulesSettings({ settings }: { settings: AppSettings }) {
+  const savePatch = useSettingsStore((state) => state.savePatch);
+  const [target, setTarget] = useState<GlobalRuleTarget>("claude");
+  const currentRule = settings.globalRules[target];
+  const [ruleText, setRuleText] = useState(currentRule.content);
+
+  useEffect(() => {
+    setRuleText(currentRule.content);
+  }, [currentRule.content, target]);
+
+  return (
+    <div className="settings-stack">
+      <div className="settings-card">
+        <div className="segmented" role="tablist" aria-label="规则目标">
+          {(["claude", "codex"] as const).map((item) => (
+            <button className={target === item ? "active" : ""} key={item} type="button" onClick={() => setTarget(item)}>
+              {item === "claude" ? "Claude Code" : "Codex"}
+            </button>
+          ))}
+        </div>
+        <div className="rule-path">
+          <span>文件路径</span>
+          <code>{currentRule.path || (target === "claude" ? "~/.claude/CLAUDE.md" : "~/.codex/AGENTS.md")}</code>
+        </div>
+        <textarea className="settings-textarea compact" value={ruleText} onChange={(event) => setRuleText(event.currentTarget.value)} />
+        <div className="settings-actions">
+          <button type="button" onClick={() => setRuleText(currentRule.content)}>重新读取</button>
+          <button
+            className="settings-primary-button"
+            type="button"
+            onClick={() => void savePatch({
+              globalRules: {
+                ...settings.globalRules,
+                [target]: {
+                  ...currentRule,
+                  content: ruleText
+                }
+              }
+            })}
+          >
+            <Save size={14} /> 保存
+          </button>
+        </div>
+        <p className="hint">保存到主设置服务；同步到 CLI 实际规则文件需要主线补文件写入服务。</p>
+      </div>
+    </div>
+  );
+}
+
+function AboutSettings() {
+  const appInfo = useSettingsStore((state) => state.appInfo);
+  const loadAppInfo = useSettingsStore((state) => state.loadAppInfo);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState("尚未检查");
+  const [updateUrl, setUpdateUrl] = useState("");
+  const [legalDocuments, setLegalDocuments] = useState<Partial<Record<RemoteLegalDocumentType, RemoteLegalDocument>>>({});
+  const [selectedLegalDocument, setSelectedLegalDocument] = useState<RemoteLegalDocument | null>(null);
+  const [legalMessage, setLegalMessage] = useState("协议未加载");
+  const [loadingLegalType, setLoadingLegalType] = useState<RemoteLegalDocumentType | null>(null);
+
+  useEffect(() => {
+    if (!appInfo) {
+      void loadAppInfo();
+    }
+  }, [appInfo, loadAppInfo]);
+
+  const checkForUpdate = async () => {
+    setCheckingUpdate(true);
+    setUpdateUrl("");
+    setUpdateMessage("正在检查更新...");
+    try {
+      const data = await window.acode?.checkAppUpdate(appInfo?.version ?? "0.0.0");
+      if (!data) throw new Error("更新服务不可用");
+      if (data.updateAvailable) {
+        const build = data.latestBuildNumber ? ` (${data.latestBuildNumber})` : "";
+        const force = data.forceUpdate ? "，这是强制更新" : "";
+        setUpdateMessage(`发现新版 ${data.latestVersion}${build}${force}`);
+        setUpdateUrl(data.downloadUrl || data.appStoreUrl);
+      } else {
+        setUpdateMessage("当前已是最新版本");
+      }
+    } catch (error) {
+      setUpdateMessage(error instanceof Error ? error.message : "检查失败");
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const openLegalDocument = async (type: RemoteLegalDocumentType) => {
+    const cached = legalDocuments[type];
+    if (cached) {
+      setSelectedLegalDocument(cached);
+      return;
+    }
+
+    const bridge = window.acode?.accountRemote;
+    if (!bridge) {
+      setLegalMessage("协议服务不可用");
+      return;
+    }
+
+    setLoadingLegalType(type);
+    setLegalMessage("正在加载协议...");
+    try {
+      const document = await bridge.legalDocument(type);
+      setLegalDocuments((current) => ({ ...current, [document.type]: document }));
+      setSelectedLegalDocument(document);
+      setLegalMessage("协议已加载");
+    } catch (error) {
+      setLegalMessage(error instanceof Error ? error.message : "协议暂时无法加载");
+    } finally {
+      setLoadingLegalType(null);
+    }
+  };
+
+  return (
+    <div className="settings-stack">
+      <div className="settings-card">
+        <div className="about-hero">
+          <div className="about-logo"><AppLogo /></div>
+          <div>
+            <h3>Acode</h3>
+            <p>一个轻量级的 Claude Code / Codex 桌面客户端</p>
+          </div>
+        </div>
+      </div>
+      <div className="settings-card">
+        <div className="settings-row"><span>当前版本</span><b>{appInfo?.version ?? "读取中"}</b></div>
+        <div className="settings-row"><span>平台</span><b>{appInfo ? `${appInfo.platform} / ${appInfo.arch}` : "读取中"}</b></div>
+        <div className="settings-row"><span>更新状态</span><span>{updateMessage}</span></div>
+        <button className="settings-primary-button" type="button" disabled={checkingUpdate || !appInfo} onClick={() => void checkForUpdate()}>
+          <RefreshCw size={14} /> {checkingUpdate ? "检查中..." : "检查更新"}
+        </button>
+        {updateUrl ? (
+          <button className="settings-primary-button" type="button" onClick={() => window.open(updateUrl, "_blank", "noopener,noreferrer")}>
+            <ChevronRight size={14} /> 打开下载链接
+          </button>
+        ) : null}
+      </div>
+      <div className="settings-card">
+        <div className="settings-row"><span>协议状态</span><span>{legalMessage}</span></div>
+        {legalDocumentLinks.map((item) => (
+          <button className="legal-row" key={item.type} type="button" onClick={() => void openLegalDocument(item.type)} disabled={Boolean(loadingLegalType)}>
+            <FileText size={16} />
+            <span>{loadingLegalType === item.type ? "加载中..." : item.label}</span>
+            <ChevronRight size={14} />
+          </button>
+        ))}
+      </div>
+      {selectedLegalDocument ? <LegalDocumentModal document={selectedLegalDocument} onClose={() => setSelectedLegalDocument(null)} /> : null}
+    </div>
+  );
+}
+
+function SettingsPanel({ children, subtitle, title }: { children: React.ReactNode; subtitle: string; title: string }) {
+  return (
+    <div className="settings-panel">
+      <h3>{title}</h3>
+      <p>{subtitle}</p>
+      {children}
+    </div>
+  );
+}
+
+function TextInput({
+  disabled,
+  label,
+  onChange,
+  placeholder,
+  value
+}: {
+  disabled?: boolean;
+  label: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  value: string;
+}) {
+  return (
+    <label>
+      <span className="settings-label">{label}</span>
+      <input className="settings-input" disabled={disabled} value={value} placeholder={placeholder} onChange={(event) => onChange(event.currentTarget.value)} />
+    </label>
+  );
+}
+
+function SettingsSelect<T extends string>({
+  disabled,
+  label,
+  onChange,
+  options,
+  value
+}: {
+  disabled?: boolean;
+  label: string;
+  onChange: (value: T) => void;
+  options: Array<{ value: T; label: string }>;
+  value: T;
+}) {
+  return (
+    <label>
+      <span className="settings-label">{label}</span>
+      <select className="settings-input" disabled={disabled} value={value} onChange={(event) => onChange(event.currentTarget.value as T)}>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function secretSummary(profile: CLIProfile): string {
+  const labels = [
+    profile.secretRefs.apiKey ? "apiKey" : null,
+    profile.secretRefs.authToken ? "authToken" : null
+  ].filter(Boolean);
+  return labels.length > 0 ? labels.join(" / ") : "未配置";
+}
+
+function connectionStatusLabel(status: string): string {
+  switch (status) {
+    case "connected":
+      return "已连接";
+    case "connecting":
+      return "连接中";
+    case "reconnecting":
+      return "重连中";
+    case "error":
+      return "连接异常";
+    case "closed":
+      return "已关闭";
+    default:
+      return "空闲";
+  }
+}
+
+function emptyToUndefined(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function firstLine(value: string | null): string | null {
+  return value?.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? null;
+}

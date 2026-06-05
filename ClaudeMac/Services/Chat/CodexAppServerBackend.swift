@@ -2,6 +2,8 @@ import Darwin
 import Foundation
 
 final class CodexAppServerBackend: ChatProcessBackend {
+    private static let idleTimeout: TimeInterval = 5 * 60
+
     private enum PendingRequest {
         case initialize
         case openThread
@@ -26,20 +28,31 @@ final class CodexAppServerBackend: ChatProcessBackend {
     private var pendingRequests: [Int: PendingRequest] = [:]
     private var pendingApprovals: [String: ApprovalRequest] = [:]
     private var pendingInteractiveRequests: [String: InteractiveRequest] = [:]
-    private var fallbackEventCounter = 0
     private var activeThreadID: String?
     private var activeTurnID: String?
     private var didFinishTurn = false
+    /// 终态 latch：一旦发出过 .failed 或 .finished，就阻止后续重复发出。
+    /// 否则 Codex 在 error notification 之后又发出 turn/completed，会让 ChatPanelState
+    /// 把已经标 .failed 的状态翻转回 .completed 并自动启动队列（旧 F14 bug）。
+    private var didEmitTerminalEvent = false
+    private var activityWatchdog: ChatProcessActivityWatchdog?
 
-    func start(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?) -> AsyncThrowingStream<ChatBackendEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task.detached(priority: .userInitiated) { [weak self] in
+    func start(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, attachments: [ChatMessageAttachment]) -> AsyncThrowingStream<ChatBackendEvent, Error> {
+        // TODO(B-P0-1 Codex): Codex `turn/start` JSON-RPC currently only
+        // accepts a plain `input` array of `{type:text}` blocks. The Codex
+        // app-server protocol has no documented image/file attachment block
+        // shape today, so we deliberately drop `attachments` here and only
+        // surface them in the UI bubble. If Codex adds an attachment block
+        // schema, hydrate it inside `requestTurnStart` below.
+        _ = attachments
+        return AsyncThrowingStream { continuation in
+            let worker = Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self else { return }
                 self.didFinishTurn = false
+                self.didEmitTerminalEvent = false
                 self.pendingRequests = [:]
                 self.pendingApprovals = [:]
                 self.pendingInteractiveRequests = [:]
-                self.fallbackEventCounter = 0
                 self.activeThreadID = nil
                 self.activeTurnID = nil
 
@@ -55,11 +68,22 @@ final class CodexAppServerBackend: ChatProcessBackend {
                 process.standardOutput = stdout
                 process.standardError = stderr
                 process.standardInput = stdin
+                ChatProcessLauncher.isolateProcessGroup(process)
                 self.process = process
                 self.inputPipe = stdin
+                let watchdog = ChatProcessActivityWatchdog(
+                    process: process,
+                    idleTimeout: Self.idleTimeout,
+                    terminateAfter: .seconds(1),
+                    killAfter: .milliseconds(2200)
+                )
 
                 do {
                     try process.run()
+                    self.activityWatchdog = watchdog
+                    watchdog.markActivity()
+                    watchdog.start()
+                    continuation.yield(.backendActivity("process-started"))
                     self.bootstrapCodex()
                 } catch {
                     continuation.yield(.failed(ChatProcessError.launchFailed(error.localizedDescription).localizedDescription))
@@ -69,8 +93,15 @@ final class CodexAppServerBackend: ChatProcessBackend {
 
                 let stdoutTask = Task { () -> Bool in
                     var didReceiveVisibleOutput = false
+                    var eventCoalescer = ChatBackendEventCoalescer()
+                    var didYieldStdoutActivity = false
                     do {
                         for try await line in JSONLStreamReader.lines(from: stdout) {
+                            watchdog.markActivity()
+                            if !didYieldStdoutActivity {
+                                didYieldStdoutActivity = true
+                                continuation.yield(.backendActivity("stdout-first-line"))
+                            }
                             let events = self.events(
                                 fromCodexLine: line,
                                 prompt: prompt,
@@ -80,31 +111,64 @@ final class CodexAppServerBackend: ChatProcessBackend {
                             if events.contains(where: Self.isVisibleOutput) {
                                 didReceiveVisibleOutput = true
                             }
-                            for event in events {
+                            if events.contains(where: Self.shouldPauseActivityWatchdog) {
+                                watchdog.pause()
+                            }
+                            for event in eventCoalescer.push(events) {
                                 continuation.yield(event)
                             }
                         }
+                        for event in eventCoalescer.flush() {
+                            continuation.yield(event)
+                        }
                     } catch {
-                        continuation.yield(.failed(error.localizedDescription))
+                        for event in eventCoalescer.flush() {
+                            continuation.yield(event)
+                        }
+                        // 与 turn/completed / error notification 走同一个终态 latch，
+                        // 避免 stdout reader 报错与上游事件重复发出 .failed。
+                        if !self.didEmitTerminalEvent {
+                            self.didEmitTerminalEvent = true
+                            continuation.yield(.failed(error.localizedDescription))
+                        }
                     }
                     return didReceiveVisibleOutput
                 }
 
                 let stderrTask = Task { () -> String in
                     var stderrLines: [String] = []
+                    var didTruncateStderr = false
+                    var didYieldStderrActivity = false
                     do {
                         for try await line in JSONLStreamReader.lines(from: stderr) {
+                            watchdog.markActivity()
+                            if !didYieldStderrActivity {
+                                didYieldStderrActivity = true
+                                continuation.yield(.backendActivity("stderr-first-line"))
+                            }
                             stderrLines.append(line)
+                            if stderrLines.count > 600 {
+                                stderrLines.removeFirst(stderrLines.count - 500)
+                                didTruncateStderr = true
+                            }
                             guard let event = Self.stderrEvent(from: line) else { continue }
                             continuation.yield(event)
                         }
                     } catch {
-                        continuation.yield(.failed(error.localizedDescription))
+                        // 同 stdoutTask：stderr reader 报错也走 latch，跟上游保持一致。
+                        if !self.didEmitTerminalEvent {
+                            self.didEmitTerminalEvent = true
+                            continuation.yield(.failed(error.localizedDescription))
+                        }
                     }
-                    return stderrLines.joined(separator: "\n")
+                    let output = stderrLines.joined(separator: "\n")
+                    return didTruncateStderr ? "... stderr truncated to last 500 lines ...\n\(output)" : output
                 }
 
                 process.waitUntilExit()
+                let timedOut = watchdog.timedOut
+                watchdog.cancel()
+                self.activityWatchdog = nil
                 let didReceiveVisibleOutput = await stdoutTask.value
                 let stderrOutput = await stderrTask.value
                 let didEmitStderrOutput = !stderrOutput.isEmpty
@@ -112,12 +176,18 @@ final class CodexAppServerBackend: ChatProcessBackend {
                 self.inputPipe = nil
                 self.process = nil
 
-                if !self.didFinishTurn {
-                    if process.terminationStatus == 0 {
+                // 兜底：进程退出但流里没发出过终态事件时，根据退出状态推一个。
+                // 用 didEmitTerminalEvent 二次保险——如果上游已经发过 .failed/.finished
+                // （例如 events(fromError) 那条路径），这里就不能再覆盖一次。
+                if !self.didFinishTurn && !self.didEmitTerminalEvent {
+                    self.didEmitTerminalEvent = true
+                    if timedOut {
+                        continuation.yield(.failed("Codex app-server 超时无响应，已停止进程。请检查认证、模型或网络配置。"))
+                    } else if process.terminationStatus == 0 {
                         if didReceiveVisibleOutput || didEmitStderrOutput {
                             continuation.yield(.finished)
                         } else {
-                            continuation.yield(.failed("Codex app-server 没有输出任何对话内容。请检查 ~/.codex 权限、账号登录状态（codex login）或模型设置。"))
+                            continuation.yield(.failed("Codex app-server 没有输出任何对话内容。请检查 ~/.codex 权限、中转站 API Key 或模型设置。"))
                         }
                     } else if process.terminationReason == .uncaughtSignal {
                         continuation.yield(.failed("Codex 已停止。"))
@@ -131,16 +201,17 @@ final class CodexAppServerBackend: ChatProcessBackend {
                 }
                 continuation.finish()
             }
-            continuation.onTermination = { _ in
-                task.cancel()
-                self.interrupt()
+            continuation.onTermination = { [weak self] _ in
+                worker.cancel()
+                self?.interrupt()
             }
         }
     }
 
     func interrupt() {
+        activityWatchdog?.cancel()
+        activityWatchdog = nil
         guard let process, process.isRunning else { return }
-        let pid = process.processIdentifier
         if let threadID = activeThreadID, let turnID = activeTurnID {
             let id = sendRequest(method: "turn/interrupt", params: [
                 "threadId": threadID,
@@ -148,18 +219,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
             ])
             pendingRequests[id] = .interrupt
         }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { [weak process] in
-            guard let process, process.isRunning else { return }
-            process.interrupt()
-        }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [weak process] in
-            guard let process, process.isRunning else { return }
-            process.terminate()
-        }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2.2) { [weak process] in
-            guard let process, process.isRunning else { return }
-            kill(pid, SIGKILL)
-        }
+        ChatProcessTerminator.stop(process, terminateAfter: .seconds(1), killAfter: .milliseconds(2200))
     }
 
     func respondToPermission(requestID: String, decision: ChatPermissionDecision) -> Bool {
@@ -182,7 +242,11 @@ final class CodexAppServerBackend: ChatProcessBackend {
             result = ["decision": codexApprovalDecision(from: decision)]
         }
 
-        return sendResponse(id: approval.id, result: result)
+        let didWrite = sendResponse(id: approval.id, result: result)
+        if didWrite {
+            activityWatchdog?.resume()
+        }
+        return didWrite
     }
 
     func respondToInteractiveRequest(requestID: String, response: ChatInteractiveResponse) -> Bool {
@@ -197,12 +261,24 @@ final class CodexAppServerBackend: ChatProcessBackend {
             result["value"] = customText
         }
         result["method"] = request.method
-        return sendResponse(id: request.id, result: result)
+        let didWrite = sendResponse(id: request.id, result: result)
+        if didWrite {
+            activityWatchdog?.resume()
+        }
+        return didWrite
     }
 
     func sendCompact() -> Bool {
         _ = sendRequest(method: "compact", params: [:])
         return inputPipe != nil
+    }
+
+    /// Audit B-P1-3: error-path teardown must escalate signals to child
+    /// processes the same way `interrupt()` does, otherwise crashes leave
+    /// orphan `codex app-server` children.
+    private func terminateProcessIfNeeded() {
+        guard let process, process.isRunning else { return }
+        ChatProcessTerminator.stop(process, terminateAfter: .milliseconds(800), killAfter: .seconds(2))
     }
 
     private func codexApprovalDecision(from decision: ChatPermissionDecision) -> String {
@@ -238,7 +314,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
         ]
 
         let method: String
-        if let resumeID, options.sessionMode == .resume || session?.externalSessionID?.nonEmptyTrimmed != nil {
+        if options.sessionMode == .resume, let resumeID {
             method = "thread/resume"
             params["threadId"] = resumeID
         } else {
@@ -273,7 +349,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
     ) -> [ChatBackendEvent] {
         guard let data = line.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return [.appendMessage(kind: .rawOutput, title: "raw", subtitle: "Codex", text: line, status: "stream", requestID: nil)]
+            return []
         }
 
         if let error = object["error"] as? [String: Any] {
@@ -285,7 +361,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
         }
 
         guard let method = object["method"] as? String else {
-            return [.appendMessage(kind: .rawOutput, title: "response", subtitle: "Codex", text: Self.compactText(from: object), status: "stream", requestID: nil)]
+            return []
         }
 
         if let id = object["id"] {
@@ -310,8 +386,11 @@ final class CodexAppServerBackend: ChatProcessBackend {
             ]
         }
         didFinishTurn = true
-        process?.terminate()
-        return [.failed(message)]
+        // Audit B-P1-3: route teardown through the SIGINT->SIGTERM->SIGKILL
+        // ladder so any forked children of `codex app-server` are escalated
+        // and don't become orphans on the error path.
+        terminateProcessIfNeeded()
+        return emitTerminalIfNeeded(.failed(message))
     }
 
     private func events(
@@ -330,8 +409,8 @@ final class CodexAppServerBackend: ChatProcessBackend {
             guard let result = object["result"] as? [String: Any],
                   let threadID = Self.threadID(from: result) else {
                 didFinishTurn = true
-                process?.terminate()
-                return [.failed("Codex thread/start 未返回 thread id。")]
+                terminateProcessIfNeeded()
+                return emitTerminalIfNeeded(.failed("Codex thread/start 未返回 thread id。"))
             }
             activeThreadID = threadID
             requestTurnStart(threadID: threadID, prompt: prompt, options: options)
@@ -347,8 +426,17 @@ final class CodexAppServerBackend: ChatProcessBackend {
             return [.updateStreamingStatus("turn started")]
         case .interrupt:
             didFinishTurn = true
-            return [.finished]
+            return emitTerminalIfNeeded(.finished)
         }
+    }
+
+    /// 把终态事件（.failed / .finished）通过 latch 发出，已经发过的就丢弃。
+    /// Codex 在 error notification 之后还可能再发出 turn/completed，没有 latch 的话
+    /// ChatPanelState 会先 .failed 再 .finished，导致 反复覆盖状态。
+    private func emitTerminalIfNeeded(_ event: ChatBackendEvent) -> [ChatBackendEvent] {
+        guard !didEmitTerminalEvent else { return [] }
+        didEmitTerminalEvent = true
+        return [event]
     }
 
     private func events(fromServerRequest object: [String: Any], id: Any, method: String) -> [ChatBackendEvent] {
@@ -389,10 +477,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
         }
         do {
             let fileURL = try Self.projectFileURL(rawPath: rawPath, projectPath: projectPath)
-            let data = try Data(contentsOf: fileURL)
-            guard let text = String(data: data, encoding: .utf8) else {
-                throw ChatProcessError.unsupported("Codex readFile 仅支持 UTF-8 文本文件：\(fileURL.path)")
-            }
+            let text = try Self.readProjectTextFile(fileURL)
             let didWrite = sendResponse(id: id, result: [
                 "content": text,
                 "text": text,
@@ -436,32 +521,77 @@ final class CodexAppServerBackend: ChatProcessBackend {
         case "item/agentMessage/delta":
             return [.appendDelta(kind: .assistant, title: "assistant", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: Self.itemID(from: params))]
         case "item/reasoning/textDelta", "item/reasoning/summaryTextDelta":
-            return [.appendDelta(kind: .reasoning, title: "reasoning", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: Self.itemID(from: params))]
+            let text = Self.deltaText(from: params)
+            guard !text.isEmpty else { return [] }
+            return [.appendDelta(kind: .reasoning, title: "reasoning", subtitle: "Codex", text: text, status: "streaming", requestID: outputRequestID(method: method, params: params))]
         case "item/plan/delta":
-            return [.appendMessage(kind: .reasoning, title: "plan", subtitle: "Codex", text: Self.compactText(from: params), status: "stream", requestID: Self.itemID(from: params))]
+            let text = Self.deltaText(from: params)
+            guard !text.isEmpty else { return [] }
+            return [.appendDelta(kind: .toolCall, title: "plan", subtitle: "Codex", text: text, status: "streaming", requestID: outputRequestID(method: method, params: params))]
         case "command/exec/outputDelta", "item/commandExecution/outputDelta":
-            return [.appendDelta(kind: .commandOutput, title: "command output", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: outputRequestID(method: method, params: params))]
-        case "item/fileChange/outputDelta", "turn/diff/updated":
-            return [.appendDelta(kind: .diff, title: "diff", subtitle: "Codex", text: Self.deltaText(from: params), status: "streaming", requestID: outputRequestID(method: method, params: params))]
-        case "item/started":
-            return [.appendMessage(kind: Self.kindForCodexItem(params, completed: false), title: Self.itemTitle(from: params, fallback: "item started"), subtitle: "Codex", text: Self.compactText(from: params), status: "streaming", requestID: Self.itemID(from: params))]
-        case "item/completed":
-            return [.appendMessage(kind: Self.kindForCodexItem(params, completed: true), title: Self.itemTitle(from: params, fallback: "item completed"), subtitle: "Codex", text: Self.compactText(from: params), status: "done", requestID: Self.itemID(from: params))]
+            let text = Self.deltaText(from: params)
+            guard !text.isEmpty else { return [] }
+            return [.appendDelta(kind: .commandOutput, title: Self.itemTitle(from: params, fallback: "command output"), subtitle: "Codex", text: text, status: "streaming", requestID: outputRequestID(method: method, params: params))]
+        case "item/fileChange/outputDelta":
+            let text = Self.deltaText(from: params)
+            guard !text.isEmpty else { return [] }
+            return [.appendDelta(kind: .diff, title: Self.itemTitle(from: params, fallback: "file change"), subtitle: "Codex", text: text, status: "streaming", requestID: outputRequestID(method: method, params: params))]
+        case "turn/diff/updated":
+            guard let text = Self.diffText(from: params)?.nonEmptyTrimmed else { return [] }
+            return [.appendDelta(kind: .diff, title: "diff", subtitle: "Codex", text: text, status: "streaming", requestID: outputRequestID(method: method, params: params))]
+        case "item/started", "item/completed":
+            let itemType = Self.itemType(from: params).lowercased()
+            if Self.shouldSuppressCodexItemType(itemType) {
+                return []
+            }
+            let completed = method == "item/completed"
+            let kind = Self.kindForCodexItem(params, completed: completed)
+            if kind == .diff {
+                guard completed, let diffText = Self.diffText(from: params)?.nonEmptyTrimmed else { return [] }
+                return [.appendMessage(
+                    kind: .diff,
+                    title: Self.itemTitle(from: params, fallback: "file change"),
+                    subtitle: "Codex",
+                    text: diffText,
+                    status: "done",
+                    requestID: Self.itemID(from: params)
+                )]
+            }
+            return [.appendMessage(
+                kind: kind,
+                title: Self.itemTitle(from: params, fallback: completed ? "item completed" : "item started"),
+                subtitle: "Codex",
+                text: Self.compactText(from: params),
+                status: completed ? "done" : "streaming",
+                requestID: Self.itemID(from: params)
+            )]
+        case "thread/tokenUsage/updated":
+            let usage = params["usage"] as? [String: Any]
+            let used = Self.intValue(params["used"]) ?? Self.intValue(usage?["used"]) ?? 0
+            let total = Self.intValue(params["total"]) ?? Self.intValue(usage?["total"]) ?? 0
+            let output = Self.intValue(params["output"]) ?? Self.intValue(usage?["output"])
+            return [.tokenUsage(used: used, total: total, output: output)]
+        case "mcpServer/startupStatus/updated",
+             "thread/status/changed",
+             "remoteControl/status/changed",
+             "account/rateLimits/updated",
+             "session/configured",
+             "session/connected":
+            return []
         case "turn/completed":
             didFinishTurn = true
-            process?.terminate()
+            terminateProcessIfNeeded()
             if let turn = params["turn"] as? [String: Any],
                let error = turn["error"], !(error is NSNull) {
-                return [.failed(Self.codexErrorText(from: error))]
+                return emitTerminalIfNeeded(.failed(Self.codexErrorText(from: error)))
             }
-            return [.finished]
+            return emitTerminalIfNeeded(.finished)
         case "error":
             return events(fromError: params, envelope: object)
         default:
-            break
+            return []
         }
-
-        return [.appendMessage(kind: .rawOutput, title: method, subtitle: "Codex", text: Self.compactText(from: object), status: "stream", requestID: nil)]
+        return []
     }
 
     @discardableResult
@@ -498,7 +628,20 @@ final class CodexAppServerBackend: ChatProcessBackend {
 
     @discardableResult
     private func writeJSONObject(_ object: [String: Any]) -> Bool {
-        ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+        let didWrite = ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+        if didWrite {
+            activityWatchdog?.markActivity()
+        }
+        return didWrite
+    }
+
+    private static func shouldPauseActivityWatchdog(_ event: ChatBackendEvent) -> Bool {
+        switch event {
+        case .permissionRequest, .interactiveRequest:
+            true
+        default:
+            false
+        }
     }
 
     private static func isApprovalRequest(_ method: String) -> Bool {
@@ -531,9 +674,8 @@ final class CodexAppServerBackend: ChatProcessBackend {
         if let value = Self.outputID(from: params) {
             return value
         }
-        fallbackEventCounter += 1
-        let turnPrefix = activeTurnID ?? "turn"
-        return "\(turnPrefix)-\(method)-\(fallbackEventCounter)"
+        let turnPrefix = activeTurnID ?? activeThreadID ?? "turn"
+        return "\(turnPrefix)-\(method)"
     }
 
     private static func outputID(from object: [String: Any]) -> String? {
@@ -602,16 +744,20 @@ final class CodexAppServerBackend: ChatProcessBackend {
         return nil
     }
 
+    private static let maxReadableFileBytes = 5 * 1024 * 1024
+
     private static func projectFileURL(rawPath: String, projectPath: String) throws -> URL {
-        let projectURL = URL(fileURLWithPath: projectPath, isDirectory: true).standardizedFileURL
-        let fileURL: URL
+        let projectURL = URL(fileURLWithPath: projectPath, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let requestedURL: URL
         if rawPath.hasPrefix("/") {
-            fileURL = URL(fileURLWithPath: rawPath).standardizedFileURL
+            requestedURL = URL(fileURLWithPath: rawPath).standardizedFileURL
         } else {
-            fileURL = projectURL.appendingPathComponent(rawPath).standardizedFileURL
+            requestedURL = projectURL.appendingPathComponent(rawPath).standardizedFileURL
         }
-        let projectPrefix = projectURL.path.hasSuffix("/") ? projectURL.path : projectURL.path + "/"
-        guard fileURL.path == projectURL.path || fileURL.path.hasPrefix(projectPrefix) else {
+        let fileURL = requestedURL.resolvingSymlinksInPath()
+        guard Self.isInsideProject(fileURL, projectURL: projectURL) else {
             throw ChatProcessError.unsupported("Codex readFile 越过项目目录：\(fileURL.path)")
         }
         var isDirectory: ObjCBool = false
@@ -619,6 +765,28 @@ final class CodexAppServerBackend: ChatProcessBackend {
             throw ChatProcessError.unsupported("Codex readFile 找不到文本文件：\(fileURL.path)")
         }
         return fileURL
+    }
+
+    private static func readProjectTextFile(_ fileURL: URL) throws -> String {
+        let values = try fileURL.resourceValues(forKeys: [.fileSizeKey])
+        if (values.fileSize ?? 0) > maxReadableFileBytes {
+            throw ChatProcessError.unsupported("Codex readFile 文件过大，暂不支持读取超过 5 MB 的文件：\(fileURL.path)")
+        }
+        let data = try Data(contentsOf: fileURL)
+        if data.count > maxReadableFileBytes {
+            throw ChatProcessError.unsupported("Codex readFile 文件过大，暂不支持读取超过 5 MB 的文件：\(fileURL.path)")
+        }
+        if data.prefix(4096).contains(0) {
+            throw ChatProcessError.unsupported("Codex readFile 检测到二进制文件，已拒绝读取：\(fileURL.path)")
+        }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw ChatProcessError.unsupported("Codex readFile 仅支持 UTF-8 文本文件：\(fileURL.path)")
+        }
+        return text
+    }
+
+    private static func isInsideProject(_ fileURL: URL, projectURL: URL) -> Bool {
+        fileURL.path == projectURL.path || fileURL.path.hasPrefix(projectURL.path.hasSuffix("/") ? projectURL.path : projectURL.path + "/")
     }
 
     private static func title(forApprovalMethod method: String) -> String {
@@ -650,9 +818,9 @@ final class CodexAppServerBackend: ChatProcessBackend {
             else {
                 return nil
             }
-            return .appendMessage(kind: .commandOutput, title: "stderr", subtitle: "Codex", text: message, status: "stream", requestID: nil)
+            return .appendMessage(kind: .error, title: "Codex error", subtitle: "Codex", text: message, status: "failed", requestID: nil)
         }
-        return .appendMessage(kind: .commandOutput, title: "stderr", subtitle: "Codex", text: text, status: "stream", requestID: nil)
+        return nil
     }
 
     private static func isVisibleOutput(_ event: ChatBackendEvent) -> Bool {
@@ -661,7 +829,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
             true
         case .appendMessage(let kind, _, _, let text, _, _):
             kind != .system && !text.isEmpty
-        case .sessionID, .updateStreamingStatus, .finished, .tokenUsage:
+        case .finishStreamingMessage, .sessionID, .updateStreamingStatus, .backendActivity, .finished, .tokenUsage:
             false
         }
     }
@@ -738,6 +906,28 @@ final class CodexAppServerBackend: ChatProcessBackend {
         return fallback
     }
 
+    private static func itemType(from object: [String: Any]) -> String {
+        if let value = stringValue(object["type"]) ?? stringValue(object["itemType"]) ?? stringValue(object["item_type"]) {
+            return value
+        }
+        if let item = object["item"] as? [String: Any] {
+            return stringValue(item["type"]) ?? stringValue(item["itemType"]) ?? stringValue(item["item_type"]) ?? ""
+        }
+        return ""
+    }
+
+    private static func shouldSuppressCodexItemType(_ itemType: String) -> Bool {
+        let normalized = itemType
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        return normalized.contains("usermessage")
+            || normalized == "userinput"
+            || normalized == "stderr"
+            || normalized.contains("reasoning")
+            || normalized.contains("plan")
+    }
+
     private static func kindForCodexItem(_ object: [String: Any], completed: Bool) -> ChatMessageKind {
         let haystack = [
             stringValue(object["type"]),
@@ -747,6 +937,10 @@ final class CodexAppServerBackend: ChatProcessBackend {
         ]
         .compactMap { $0?.lowercased() }
         .joined(separator: " ")
+        let normalizedHaystack = haystack.replacingOccurrences(of: "_", with: "")
+        if normalizedHaystack.contains("agentmessage") || normalizedHaystack.contains("assistantmessage") {
+            return .assistant
+        }
         if haystack.contains("diff") || haystack.contains("patch") || haystack.contains("filechange") || haystack.contains("file_change") {
             return .diff
         }
@@ -763,8 +957,40 @@ final class CodexAppServerBackend: ChatProcessBackend {
             ?? compactText(from: object)
     }
 
+    private static func diffText(from object: [String: Any]) -> String? {
+        if let value = stringValue(object["diff"]) ?? stringValue(object["patch"]) {
+            return decodedDiffText(from: value) ?? value
+        }
+        if let item = object["item"] as? [String: Any] {
+            return diffText(from: item)
+        }
+        if let value = stringValue(object["delta"])
+            ?? stringValue(object["text"])
+            ?? stringValue(object["content"]) {
+            return decodedDiffText(from: value) ?? value
+        }
+        return nil
+    }
+
+    private static func decodedDiffText(from value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}"), let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let diff = stringValue(object["diff"]) ?? stringValue(object["patch"]) {
+            return diff
+        }
+        if let item = object["item"] as? [String: Any] {
+            return diffText(from: item)
+        }
+        return nil
+    }
+
     private static func compactText(from object: [String: Any]) -> String {
         if let text = stringValue(object["text"]) ?? stringValue(object["message"]) ?? stringValue(object["delta"]) {
+            return text
+        }
+        if let item = object["item"] as? [String: Any],
+           let text = stringValue(item["text"]) ?? stringValue(item["message"]) ?? stringValue(item["delta"]) ?? stringValue(item["content"]) {
             return text
         }
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
@@ -807,14 +1033,13 @@ final class CodexAppServerBackend: ChatProcessBackend {
             || lowercased.contains("access token could not be refreshed")
             || lowercased.contains("please sign in again") {
             return """
-            Codex 账号登录态已失效。
+            Codex 中转站认证失败。
 
-            Codex 无法刷新 OAuth access token，通常是你在别处退出登录、切换账号，或 ~/.codex/auth.json 里的登录态已经过期。
+            Codex 无法通过当前 ~/.codex/auth.json 里的 OPENAI_API_KEY 访问配置的模型服务。
 
             处理方式：
-            1. 在终端运行 codex login 重新登录。
-            2. 如果你使用 cc-switch 管理账号，到设置页重新“从 cc-switch 导入登录态”。
-            3. 回到这里新开一个 Codex 会话再试。
+            1. 到设置页检查 Codex 的 base_url、OPENAI_API_KEY、model 和 wire_api。
+            2. 保存配置后新开一个 Codex 会话再试。
             """
         }
 
@@ -824,7 +1049,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
             return """
             Codex 网络连接失败。
 
-            这通常是代理没有生效、代理不可达，或当前账号服务地址无法解析。请确认设置页的 HTTP_PROXY / HTTPS_PROXY 已保存，并新开 Codex 会话重试。
+            这通常是代理没有生效、代理不可达，或当前中转站地址无法解析。请确认设置页的 HTTP_PROXY / HTTPS_PROXY 和 Codex base_url 已保存，并新开 Codex 会话重试。
             """
         }
 
@@ -847,6 +1072,15 @@ final class CodexAppServerBackend: ChatProcessBackend {
     private static func stringValue(_ value: Any?) -> String? {
         if let string = value as? String { return string }
         if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String {
+            return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
         return nil
     }
 }

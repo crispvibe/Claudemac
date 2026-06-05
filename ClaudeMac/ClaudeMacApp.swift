@@ -4,11 +4,17 @@ import SwiftUI
 
 @main
 struct ClaudeMacApp: App {
+    @NSApplicationDelegateAdaptor(RemoteChatAppDelegate.self) private var remoteChatAppDelegate
     @StateObject private var appState = AppState()
     @StateObject private var modelService = ChatModelService()
     @StateObject private var chatRuntimeStore = ChatRuntimeStore()
+    @StateObject private var deviceProvisioning: DeviceProvisioningViewModel
+    @StateObject private var accountAuth: AccountAuthViewModel
 
     init() {
+        let deviceProvisioning = DeviceProvisioningViewModel()
+        _deviceProvisioning = StateObject(wrappedValue: deviceProvisioning)
+        _accountAuth = StateObject(wrappedValue: AccountAuthViewModel(deviceProvisioning: deviceProvisioning))
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
         _ = signal(SIGPIPE, SIG_IGN)
     }
@@ -19,16 +25,26 @@ struct ClaudeMacApp: App {
                 .environmentObject(appState)
                 .environmentObject(modelService)
                 .environmentObject(chatRuntimeStore)
+                .environmentObject(deviceProvisioning)
+                .environmentObject(accountAuth)
                 .background(WindowConfigurator())
-                .onAppear { triggerModelFetch() }
+                .onAppear {
+                    RemoteVNCWiring.install(runtimeStore: chatRuntimeStore, appState: appState, modelService: modelService)
+                    triggerModelFetch()
+                    appState.showFolderPermissionOnboardingIfNeeded()
+                    Task { await accountAuth.bootstrap() }
+                }
                 .onChange(of: appState.settings.apiBaseURL) { _, _ in triggerModelFetch() }
                 .onChange(of: appState.settings.apiKey) { _, _ in triggerModelFetch() }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                    chatRuntimeStore.prepareForApplicationTermination()
+                }
         }
         .defaultSize(width: 1380, height: 820)
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("关于 Acode") {
+                Button("关于 AnnaCode") {
                     NSApp.orderFrontStandardAboutPanel(nil)
                 }
             }
@@ -54,6 +70,8 @@ struct ClaudeMacApp: App {
                 .environmentObject(appState)
                 .environmentObject(modelService)
                 .environmentObject(chatRuntimeStore)
+                .environmentObject(deviceProvisioning)
+                .environmentObject(accountAuth)
         }
     }
 
@@ -84,7 +102,7 @@ private struct WindowConfigurator: NSViewRepresentable {
         window.title = ""
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.backgroundColor = .clear
         window.isOpaque = false
         window.styleMask.insert(.fullSizeContentView)
@@ -110,7 +128,7 @@ private struct WindowConfigurator: NSViewRepresentable {
     }
 
     private func localizedMenuTitle(_ title: String) -> String {
-        let appName = "Acode"
+        let appName = "AnnaCode"
         let replacements = [
             "File": "文件",
             "Edit": "编辑",

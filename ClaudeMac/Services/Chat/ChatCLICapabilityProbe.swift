@@ -1,6 +1,6 @@
 import Foundation
 
-struct ChatCLICapability: Codable, Equatable {
+struct ChatCLICapability: Codable, Equatable, Sendable {
     let cli: CLIType
     let executablePath: String?
     let version: String?
@@ -15,12 +15,59 @@ struct ChatCLICapability: Codable, Equatable {
     var isAvailable: Bool { executablePath != nil && errorMessage == nil }
 }
 
-enum ChatCLICapabilityProbe {
-    static func probeAll() async -> [CLIType: ChatCLICapability] {
-        var result: [CLIType: ChatCLICapability] = [:]
-        result[.claude] = await probe(.claude)
-        result[.codex] = await probe(.codex)
+private actor ChatCLICapabilityCache {
+    static let shared = ChatCLICapabilityCache()
+
+    private var cachedSignature: String?
+    private var cachedCapabilities: [CLIType: ChatCLICapability]?
+    private var inFlightID: UUID?
+    private var inFlightSignature: String?
+    private var inFlight: Task<[CLIType: ChatCLICapability], Never>?
+
+    func capabilities(
+        force: Bool,
+        signature: String,
+        loader: @escaping @Sendable () async -> [CLIType: ChatCLICapability]
+    ) async -> [CLIType: ChatCLICapability] {
+        if !force, cachedSignature == signature, let cachedCapabilities {
+            return cachedCapabilities
+        }
+        if !force, inFlightSignature == signature, let inFlight {
+            return await inFlight.value
+        }
+
+        let taskID = UUID()
+        let task = Task { await loader() }
+        inFlightID = taskID
+        inFlightSignature = signature
+        inFlight = task
+        let result = await task.value
+        if inFlightID == taskID {
+            cachedSignature = signature
+            cachedCapabilities = result
+            inFlightID = nil
+            inFlightSignature = nil
+            inFlight = nil
+        }
         return result
+    }
+}
+
+enum ChatCLICapabilityProbe {
+    static func probeAll(force: Bool = false) async -> [CLIType: ChatCLICapability] {
+        let signature = cacheSignature()
+        return await ChatCLICapabilityCache.shared.capabilities(force: force, signature: signature) {
+            await performProbeAll()
+        }
+    }
+
+    private static func performProbeAll() async -> [CLIType: ChatCLICapability] {
+        async let claude = probe(.claude)
+        async let codex = probe(.codex)
+        return await [
+            .claude: claude,
+            .codex: codex
+        ]
     }
 
     static func probe(_ cli: CLIType) async -> ChatCLICapability {
@@ -85,23 +132,66 @@ enum ChatCLICapabilityProbe {
         }
     }
 
+    private static func cacheSignature() -> String {
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let executables = CLIType.visibleCases
+            .map { executableSignature(named: $0.executable) }
+            .joined(separator: "|")
+        return [ChatCLIEnvironment.defaultPath, path, executables].joined(separator: "\n")
+    }
+
+    private static func executableSignature(named name: String) -> String {
+        let fileManager = FileManager.default
+        return ChatCLIEnvironment.executableCandidatePaths(named: name)
+            .map { candidate in
+                let resolved = URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
+                guard fileManager.fileExists(atPath: resolved) else { return "\(candidate)=missing" }
+                let attributes = try? fileManager.attributesOfItem(atPath: resolved)
+                let modifiedAt = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+                let size = attributes?[.size] ?? 0
+                return "\(candidate)=\(resolved):\(modifiedAt):\(size)"
+            }
+            .joined(separator: ";")
+    }
+
     private static func locateExecutable(named name: String) async -> String? {
         for candidate in ChatCLIEnvironment.executableCandidatePaths(named: name) where FileManager.default.fileExists(atPath: candidate) {
-            return canonicalExecutablePath(candidate)
+            if let path = await usableExecutablePath(candidate) {
+                return path
+            }
         }
 
         let shellOutput = await ChatProcessRunner.run(
             "/bin/zsh",
-            arguments: ["-lc", "PATH=\(ChatCLIEnvironment.defaultPath):$PATH; command -v \(name)"],
+            arguments: ["-lc", "PATH=\(ChatCLIEnvironment.defaultPath):$PATH; command -v -a \(name)"],
             timeout: 4
         )
-        if shellOutput.status == 0, let path = shellOutput.stdout.nonEmptyTrimmed {
-            return path.components(separatedBy: .newlines).first?.nonEmptyTrimmed.map(canonicalExecutablePath)
+        if shellOutput.status == 0, let output = shellOutput.stdout.nonEmptyTrimmed {
+            for rawPath in output.components(separatedBy: .newlines) {
+                if let path = rawPath.nonEmptyTrimmed,
+                   let usablePath = await usableExecutablePath(path) {
+                    return usablePath
+                }
+            }
         }
 
-        let output = await ChatProcessRunner.run("/usr/bin/env", arguments: ["which", name], timeout: 4)
+        let output = await ChatProcessRunner.run("/usr/bin/env", arguments: ["which", "-a", name], timeout: 4)
         guard output.status == 0, let path = output.stdout.nonEmptyTrimmed else { return nil }
-        return path.components(separatedBy: .newlines).first?.nonEmptyTrimmed.map(canonicalExecutablePath)
+        for rawPath in path.components(separatedBy: .newlines) {
+            if let path = rawPath.nonEmptyTrimmed,
+               let usablePath = await usableExecutablePath(path) {
+                return usablePath
+            }
+        }
+        return nil
+    }
+
+    private static func usableExecutablePath(_ path: String) async -> String? {
+        let resolved = canonicalExecutablePath(path)
+        guard FileManager.default.isExecutableFile(atPath: resolved) else { return nil }
+
+        let output = await ChatProcessRunner.run(resolved, arguments: ["--version"], timeout: 4)
+        return output.status == 0 ? resolved : nil
     }
 
     private static func canonicalExecutablePath(_ path: String) -> String {

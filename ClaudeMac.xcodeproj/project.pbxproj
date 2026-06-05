@@ -17,6 +17,8 @@
 		B00000000000000000000008 /* EditorAreaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000008 /* EditorAreaView.swift */; };
 		B00000000000000000000009 /* ClaudeSessionPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000009 /* ClaudeSessionPanelView.swift */; };
 		B00000000000000000000010 /* GlassPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000010 /* GlassPanel.swift */; };
+		B00000000000000000000046 /* ClaudeSessionPanelSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000046 /* ClaudeSessionPanelSupport.swift */; };
+		B00000000000000000000047 /* ClaudeSessionPanelComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000047 /* ClaudeSessionPanelComposer.swift */; };
 		B00000000000000000000011 /* VisualEffectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000011 /* VisualEffectView.swift */; };
 		B00000000000000000000012 /* TextEditorRepresentable.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000012 /* TextEditorRepresentable.swift */; };
 		B00000000000000000000013 /* LineNumberRulerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000013 /* LineNumberRulerView.swift */; };
@@ -25,7 +27,6 @@
 		B00000000000000000000016 /* CommandBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000016 /* CommandBuilder.swift */; };
 		B00000000000000000000017 /* TerminalLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000017 /* TerminalLauncher.swift */; };
 		B00000000000000000000018 /* LaunchHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000018 /* LaunchHistoryStore.swift */; };
-		B00000000000000000000019 /* ClaudeHistoryScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000019 /* ClaudeHistoryScanner.swift */; };
 		B00000000000000000000020 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000020 /* Assets.xcassets */; };
 		B00000000000000000000021 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000024 /* SettingsView.swift */; };
 		B00000000000000000000022 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000025 /* ChatModels.swift */; };
@@ -40,7 +41,42 @@
 		B00000000000000000000031 /* ChatModelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000034 /* ChatModelService.swift */; };
 		B00000000000000000000032 /* ChatRuntimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000035 /* ChatRuntimeStore.swift */; };
 		B00000000000000000000033 /* SubagentTranscriptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000036 /* SubagentTranscriptStore.swift */; };
-/* End PBXBuildFile section */
+		B00000000000000000000034 /* RemoteChatDTOs.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000037 /* RemoteChatDTOs.swift */; };
+		B00000000000000000000035 /* RemoteChatHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000038 /* RemoteChatHTTP.swift */; };
+		B00000000000000000000036 /* RemoteChatRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000039 /* RemoteChatRouter.swift */; };
+		B00000000000000000000037 /* RemoteChatServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000040 /* RemoteChatServer.swift */; };
+		B00000000000000000000038 /* RemoteChatServerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000041 /* RemoteChatServerController.swift */; };
+		B00000000000000000000039 /* RemoteChatWebSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000042 /* RemoteChatWebSocket.swift */; };
+		B00000000000000000000040 /* RemoteChatBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000043 /* RemoteChatBridge.swift */; };
+		B00000000000000000000042 /* RemoteSessionMirrorBus.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000045 /* RemoteSessionMirrorBus.swift */; };
+		B00000000000000000000048 /* PanelStateBroadcaster.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000048 /* PanelStateBroadcaster.swift */; };
+		B00000000000000000000049 /* RemoteChatCommandRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000049 /* RemoteChatCommandRouter.swift */; };
+		B0000000000000000000004A /* PanelStateBroadcasterAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004A /* PanelStateBroadcasterAdapter.swift */; };
+		CHC000000000000000000001 /* ChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = CHC000000000000000000003 /* ChatCore */; };
+		CHU000000000000000000001 /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = CHU000000000000000000003 /* ChatUI */; };
+		B0000000000000000000004B /* RemoteWebRTCBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004B /* RemoteWebRTCBridge.swift */; };
+		B0000000000000000000004C /* RemoteTunnelClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000004C /* RemoteTunnelClient.swift */; };
+		CWEBRTC000000000000001 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = CWEBRTC000000000000003 /* WebRTC */; };
+
+			A10000000000000000000001 /* AccountAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* AccountAPIClient.swift */; };
+			A10000000000000000000002 /* AccountAuthClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* AccountAuthClient.swift */; };
+			A10000000000000000000003 /* AccountTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* AccountTokenStore.swift */; };
+			A10000000000000000000004 /* DeviceIdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* DeviceIdentityStore.swift */; };
+			A10000000000000000000022 /* RemoteCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000022 /* RemoteCredentialStore.swift */; };
+			A10000000000000000000005 /* DeviceRegistrationClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* DeviceRegistrationClient.swift */; };
+				A10000000000000000000010 /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* SignalingClient.swift */; };
+			A10000000000000000000006 /* RemoteAccountModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* RemoteAccountModels.swift */; };
+			A10000000000000000000007 /* AccountRemoteSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* AccountRemoteSupport.swift */; };
+			A10000000000000000000008 /* AccountAuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* AccountAuthViewModel.swift */; };
+			A10000000000000000000009 /* DeviceProvisioningViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* DeviceProvisioningViewModel.swift */; };
+			A1000000000000000000000A /* AccountAuthRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* AccountAuthRootView.swift */; };
+			A1000000000000000000000B /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* LoginView.swift */; };
+			A1000000000000000000000C /* RegisterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* RegisterView.swift */; };
+			A1000000000000000000000D /* ForgotPasswordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* ForgotPasswordView.swift */; };
+			A1000000000000000000000E /* AccountStatusCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* AccountStatusCard.swift */; };
+			A1000000000000000000000F /* AccountFormControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* AccountFormControls.swift */; };
+			A10000000000000000000020 /* AccountTokenStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000020 /* AccountTokenStoreTests.swift */; };
+	/* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		F00000000000000000000001 /* ClaudeMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeMacApp.swift; sourceTree = "<group>"; };
@@ -53,6 +89,8 @@
 		F00000000000000000000008 /* EditorAreaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAreaView.swift; sourceTree = "<group>"; };
 		F00000000000000000000009 /* ClaudeSessionPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSessionPanelView.swift; sourceTree = "<group>"; };
 		F00000000000000000000010 /* GlassPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassPanel.swift; sourceTree = "<group>"; };
+		F00000000000000000000046 /* ClaudeSessionPanelSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSessionPanelSupport.swift; sourceTree = "<group>"; };
+		F00000000000000000000047 /* ClaudeSessionPanelComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSessionPanelComposer.swift; sourceTree = "<group>"; };
 		F00000000000000000000011 /* VisualEffectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualEffectView.swift; sourceTree = "<group>"; };
 		F00000000000000000000012 /* TextEditorRepresentable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextEditorRepresentable.swift; sourceTree = "<group>"; };
 		F00000000000000000000013 /* LineNumberRulerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LineNumberRulerView.swift; sourceTree = "<group>"; };
@@ -61,11 +99,10 @@
 		F00000000000000000000016 /* CommandBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandBuilder.swift; sourceTree = "<group>"; };
 		F00000000000000000000017 /* TerminalLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalLauncher.swift; sourceTree = "<group>"; };
 		F00000000000000000000018 /* LaunchHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchHistoryStore.swift; sourceTree = "<group>"; };
-		F00000000000000000000019 /* ClaudeHistoryScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeHistoryScanner.swift; sourceTree = "<group>"; };
 		F00000000000000000000020 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F00000000000000000000021 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000022 /* ClaudeMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMac.entitlements; sourceTree = "<group>"; };
-		F00000000000000000000023 /* Acode.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Acode.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000023 /* AnnaCode.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AnnaCode.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000024 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F00000000000000000000025 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
 		F00000000000000000000026 /* ChatPanelState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPanelState.swift; sourceTree = "<group>"; };
@@ -79,17 +116,72 @@
 		F00000000000000000000034 /* ChatModelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModelService.swift; sourceTree = "<group>"; };
 		F00000000000000000000035 /* ChatRuntimeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatRuntimeStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000036 /* SubagentTranscriptStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubagentTranscriptStore.swift; sourceTree = "<group>"; };
-/* End PBXFileReference section */
+		F00000000000000000000037 /* RemoteChatDTOs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteChatDTOs.swift; sourceTree = "<group>"; };
+		F00000000000000000000038 /* RemoteChatHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteChatHTTP.swift; sourceTree = "<group>"; };
+		F00000000000000000000039 /* RemoteChatRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteChatRouter.swift; sourceTree = "<group>"; };
+		F00000000000000000000040 /* RemoteChatServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteChatServer.swift; sourceTree = "<group>"; };
+		F00000000000000000000041 /* RemoteChatServerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteChatServerController.swift; sourceTree = "<group>"; };
+		F00000000000000000000042 /* RemoteChatWebSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteChatWebSocket.swift; sourceTree = "<group>"; };
+		F00000000000000000000043 /* RemoteChatBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteChatBridge.swift; sourceTree = "<group>"; };
+		F00000000000000000000045 /* RemoteSessionMirrorBus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSessionMirrorBus.swift; sourceTree = "<group>"; };
+		F00000000000000000000048 /* PanelStateBroadcaster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelStateBroadcaster.swift; sourceTree = "<group>"; };
+		F00000000000000000000049 /* RemoteChatCommandRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteChatCommandRouter.swift; sourceTree = "<group>"; };
+		F0000000000000000000004A /* PanelStateBroadcasterAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelStateBroadcasterAdapter.swift; sourceTree = "<group>"; };
+		F0000000000000000000004B /* RemoteWebRTCBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteWebRTCBridge.swift; sourceTree = "<group>"; };
+		F0000000000000000000004C /* RemoteTunnelClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteTunnelClient.swift; sourceTree = "<group>"; };
 
-/* Begin PBXFrameworksBuildPhase section */
+			A20000000000000000000001 /* AccountAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountAPIClient.swift; sourceTree = "<group>"; };
+			A20000000000000000000002 /* AccountAuthClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountAuthClient.swift; sourceTree = "<group>"; };
+			A20000000000000000000003 /* AccountTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountTokenStore.swift; sourceTree = "<group>"; };
+			A20000000000000000000004 /* DeviceIdentityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentityStore.swift; sourceTree = "<group>"; };
+			A20000000000000000000022 /* RemoteCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCredentialStore.swift; sourceTree = "<group>"; };
+			A20000000000000000000005 /* DeviceRegistrationClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRegistrationClient.swift; sourceTree = "<group>"; };
+				A20000000000000000000010 /* SignalingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalingClient.swift; sourceTree = "<group>"; };
+			A20000000000000000000006 /* RemoteAccountModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteAccountModels.swift; sourceTree = "<group>"; };
+			A20000000000000000000007 /* AccountRemoteSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountRemoteSupport.swift; sourceTree = "<group>"; };
+			A20000000000000000000008 /* AccountAuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountAuthViewModel.swift; sourceTree = "<group>"; };
+			A20000000000000000000009 /* DeviceProvisioningViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceProvisioningViewModel.swift; sourceTree = "<group>"; };
+			A2000000000000000000000A /* AccountAuthRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountAuthRootView.swift; sourceTree = "<group>"; };
+			A2000000000000000000000B /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+			A2000000000000000000000C /* RegisterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegisterView.swift; sourceTree = "<group>"; };
+			A2000000000000000000000D /* ForgotPasswordView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgotPasswordView.swift; sourceTree = "<group>"; };
+			A2000000000000000000000E /* AccountStatusCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStatusCard.swift; sourceTree = "<group>"; };
+			A2000000000000000000000F /* AccountFormControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountFormControls.swift; sourceTree = "<group>"; };
+			A20000000000000000000020 /* AccountTokenStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountTokenStoreTests.swift; sourceTree = "<group>"; };
+			A20000000000000000000021 /* ClaudeMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ClaudeMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+	/* End PBXFileReference section */
+
+
+/* Begin PBXContainerItemProxy section */
+			A30000000000000000000001 /* PBXContainerItemProxy */ = {
+				isa = PBXContainerItemProxy;
+				containerPortal = P00000000000000000000001 /* Project object */;
+				proxyType = 1;
+				remoteGlobalIDString = P00000000000000000000002;
+				remoteInfo = ClaudeMac;
+			};
+/* End PBXContainerItemProxy section */
+
+	/* Begin PBXFrameworksBuildPhase section */
 		P00000000000000000000004 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CHC000000000000000000001 /* ChatCore in Frameworks */,
+				CHU000000000000000000001 /* ChatUI in Frameworks */,
+				CWEBRTC000000000000001 /* WebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-/* End PBXFrameworksBuildPhase section */
+
+			A40000000000000000000001 /* Frameworks */ = {
+				isa = PBXFrameworksBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+			};
+	/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		G00000000000000000000001 = {
@@ -97,6 +189,7 @@
 			children = (
 				G00000000000000000000002 /* ClaudeMac */,
 				G00000000000000000000008 /* Products */,
+				A60000000000000000000003 /* ClaudeMacTests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -130,6 +223,8 @@
 			children = (
 				F00000000000000000000003 /* AppState.swift */,
 				F00000000000000000000026 /* ChatPanelState.swift */,
+				A20000000000000000000008 /* AccountAuthViewModel.swift */,
+				A20000000000000000000009 /* DeviceProvisioningViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -143,9 +238,12 @@
 				F00000000000000000000007 /* EditorTabBarView.swift */,
 				F00000000000000000000008 /* EditorAreaView.swift */,
 				F00000000000000000000009 /* ClaudeSessionPanelView.swift */,
+				F00000000000000000000046 /* ClaudeSessionPanelSupport.swift */,
+				F00000000000000000000047 /* ClaudeSessionPanelComposer.swift */,
 				F00000000000000000000010 /* GlassPanel.swift */,
 				F00000000000000000000024 /* SettingsView.swift */,
 				F00000000000000000000033 /* SettingsPageView.swift */,
+					A60000000000000000000002 /* Account */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -168,8 +266,9 @@
 				F00000000000000000000016 /* CommandBuilder.swift */,
 				F00000000000000000000017 /* TerminalLauncher.swift */,
 				F00000000000000000000018 /* LaunchHistoryStore.swift */,
-				F00000000000000000000019 /* ClaudeHistoryScanner.swift */,
 				G00000000000000000000009 /* Chat */,
+				A60000000000000000000001 /* AccountRemote */,
+					G00000000000000000000010 /* RemoteChat */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -177,7 +276,8 @@
 		G00000000000000000000008 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				F00000000000000000000023 /* Acode.app */,
+				F00000000000000000000023 /* AnnaCode.app */,
+					A20000000000000000000021 /* ClaudeMacTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -198,7 +298,65 @@
 			path = Chat;
 			sourceTree = "<group>";
 		};
-/* End PBXGroup section */
+		G00000000000000000000010 /* RemoteChat */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000037 /* RemoteChatDTOs.swift */,
+				F00000000000000000000038 /* RemoteChatHTTP.swift */,
+				F00000000000000000000039 /* RemoteChatRouter.swift */,
+				F00000000000000000000040 /* RemoteChatServer.swift */,
+				F00000000000000000000041 /* RemoteChatServerController.swift */,
+				F00000000000000000000042 /* RemoteChatWebSocket.swift */,
+				F00000000000000000000043 /* RemoteChatBridge.swift */,
+				F00000000000000000000045 /* RemoteSessionMirrorBus.swift */,
+				F00000000000000000000048 /* PanelStateBroadcaster.swift */,
+				F00000000000000000000049 /* RemoteChatCommandRouter.swift */,
+				F0000000000000000000004A /* PanelStateBroadcasterAdapter.swift */,
+				F0000000000000000000004B /* RemoteWebRTCBridge.swift */,
+				F0000000000000000000004C /* RemoteTunnelClient.swift */,
+			);
+			path = RemoteChat;
+			sourceTree = "<group>";
+		};
+
+			A60000000000000000000001 /* AccountRemote */ = {
+				isa = PBXGroup;
+				children = (
+					A20000000000000000000001 /* AccountAPIClient.swift */,
+					A20000000000000000000002 /* AccountAuthClient.swift */,
+					A20000000000000000000003 /* AccountTokenStore.swift */,
+					A20000000000000000000004 /* DeviceIdentityStore.swift */,
+					A20000000000000000000022 /* RemoteCredentialStore.swift */,
+					A20000000000000000000005 /* DeviceRegistrationClient.swift */,
+					A20000000000000000000006 /* RemoteAccountModels.swift */,
+					A20000000000000000000007 /* AccountRemoteSupport.swift */,
+					A20000000000000000000010 /* SignalingClient.swift */,
+				);
+				path = AccountRemote;
+				sourceTree = "<group>";
+			};
+			A60000000000000000000002 /* Account */ = {
+				isa = PBXGroup;
+				children = (
+					A2000000000000000000000A /* AccountAuthRootView.swift */,
+					A2000000000000000000000B /* LoginView.swift */,
+					A2000000000000000000000C /* RegisterView.swift */,
+					A2000000000000000000000D /* ForgotPasswordView.swift */,
+					A2000000000000000000000E /* AccountStatusCard.swift */,
+					A2000000000000000000000F /* AccountFormControls.swift */,
+				);
+				path = Account;
+				sourceTree = "<group>";
+			};
+			A60000000000000000000003 /* ClaudeMacTests */ = {
+				isa = PBXGroup;
+				children = (
+					A20000000000000000000020 /* AccountTokenStoreTests.swift */,
+				);
+				path = ClaudeMacTests;
+				sourceTree = "<group>";
+			};
+	/* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
 		P00000000000000000000002 /* ClaudeMac */ = {
@@ -214,11 +372,37 @@
 			dependencies = (
 			);
 			name = ClaudeMac;
-			productName = Acode;
-			productReference = F00000000000000000000023 /* Acode.app */;
+			packageProductDependencies = (
+				CHC000000000000000000003 /* ChatCore */,
+				CHU000000000000000000003 /* ChatUI */,
+				CWEBRTC000000000000003 /* WebRTC */,
+			);
+			productName = AnnaCode;
+			productReference = F00000000000000000000023 /* AnnaCode.app */;
 			productType = "com.apple.product-type.application";
 		};
-/* End PBXNativeTarget section */
+
+			A70000000000000000000001 /* ClaudeMacTests */ = {
+				isa = PBXNativeTarget;
+				buildConfigurationList = A90000000000000000000003 /* Build configuration list for PBXNativeTarget "ClaudeMacTests" */;
+				buildPhases = (
+					A80000000000000000000001 /* Sources */,
+					A40000000000000000000001 /* Frameworks */,
+					A50000000000000000000001 /* Resources */,
+				);
+				buildRules = (
+				);
+				dependencies = (
+					A31000000000000000000001 /* PBXTargetDependency */,
+				);
+				name = ClaudeMacTests;
+				packageProductDependencies = (
+				);
+				productName = ClaudeMacTests;
+				productReference = A20000000000000000000021 /* ClaudeMacTests.xctest */;
+				productType = "com.apple.product-type.bundle.unit-test";
+			};
+	/* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
 		P00000000000000000000001 /* Project object */ = {
@@ -231,7 +415,11 @@
 					P00000000000000000000002 = {
 						CreatedOnToolsVersion = 16.0;
 					};
-				};
+						A70000000000000000000001 = {
+							CreatedOnToolsVersion = 16.0;
+							TestTargetID = P00000000000000000000002;
+						};
+					};
 			};
 			buildConfigurationList = C00000000000000000000001 /* Build configuration list for PBXProject "ClaudeMac" */;
 			compatibilityVersion = "Xcode 14.0";
@@ -242,12 +430,18 @@
 				Base,
 			);
 			mainGroup = G00000000000000000000001;
+			packageReferences = (
+				CHC000000000000000000002 /* XCLocalSwiftPackageReference "Shared/ChatCore" */,
+				CHU000000000000000000002 /* XCLocalSwiftPackageReference "Shared/ChatUI" */,
+				CWEBRTC000000000000002 /* XCRemoteSwiftPackageReference "WebRTC" */,
+			);
 			productRefGroup = G00000000000000000000008 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				P00000000000000000000002 /* ClaudeMac */,
-			);
+					A70000000000000000000001 /* ClaudeMacTests */,
+				);
 		};
 /* End PBXProject section */
 
@@ -260,7 +454,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-/* End PBXResourcesBuildPhase section */
+
+			A50000000000000000000001 /* Resources */ = {
+				isa = PBXResourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+			};
+	/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		P00000000000000000000003 /* Sources */ = {
@@ -276,6 +478,8 @@
 				B00000000000000000000007 /* EditorTabBarView.swift in Sources */,
 				B00000000000000000000008 /* EditorAreaView.swift in Sources */,
 				B00000000000000000000009 /* ClaudeSessionPanelView.swift in Sources */,
+				B00000000000000000000046 /* ClaudeSessionPanelSupport.swift in Sources */,
+				B00000000000000000000047 /* ClaudeSessionPanelComposer.swift in Sources */,
 				B00000000000000000000010 /* GlassPanel.swift in Sources */,
 				B00000000000000000000011 /* VisualEffectView.swift in Sources */,
 				B00000000000000000000012 /* TextEditorRepresentable.swift in Sources */,
@@ -285,7 +489,6 @@
 				B00000000000000000000016 /* CommandBuilder.swift in Sources */,
 				B00000000000000000000017 /* TerminalLauncher.swift in Sources */,
 				B00000000000000000000018 /* LaunchHistoryStore.swift in Sources */,
-				B00000000000000000000019 /* ClaudeHistoryScanner.swift in Sources */,
 				B00000000000000000000021 /* SettingsView.swift in Sources */,
 				B00000000000000000000022 /* ChatModels.swift in Sources */,
 				B00000000000000000000023 /* ChatPanelState.swift in Sources */,
@@ -299,12 +502,60 @@
 				B00000000000000000000031 /* ChatModelService.swift in Sources */,
 				B00000000000000000000032 /* ChatRuntimeStore.swift in Sources */,
 				B00000000000000000000033 /* SubagentTranscriptStore.swift in Sources */,
+				B00000000000000000000034 /* RemoteChatDTOs.swift in Sources */,
+				B00000000000000000000035 /* RemoteChatHTTP.swift in Sources */,
+				B00000000000000000000036 /* RemoteChatRouter.swift in Sources */,
+				B00000000000000000000037 /* RemoteChatServer.swift in Sources */,
+				B00000000000000000000038 /* RemoteChatServerController.swift in Sources */,
+				B00000000000000000000039 /* RemoteChatWebSocket.swift in Sources */,
+				B00000000000000000000040 /* RemoteChatBridge.swift in Sources */,
+				B00000000000000000000042 /* RemoteSessionMirrorBus.swift in Sources */,
+				B00000000000000000000048 /* PanelStateBroadcaster.swift in Sources */,
+				B00000000000000000000049 /* RemoteChatCommandRouter.swift in Sources */,
+				B0000000000000000000004A /* PanelStateBroadcasterAdapter.swift in Sources */,
+				B0000000000000000000004B /* RemoteWebRTCBridge.swift in Sources */,
+				B0000000000000000000004C /* RemoteTunnelClient.swift in Sources */,
+				A10000000000000000000001 /* AccountAPIClient.swift in Sources */,
+				A10000000000000000000002 /* AccountAuthClient.swift in Sources */,
+				A10000000000000000000003 /* AccountTokenStore.swift in Sources */,
+				A10000000000000000000004 /* DeviceIdentityStore.swift in Sources */,
+				A10000000000000000000022 /* RemoteCredentialStore.swift in Sources */,
+				A10000000000000000000005 /* DeviceRegistrationClient.swift in Sources */,
+				A10000000000000000000006 /* RemoteAccountModels.swift in Sources */,
+				A10000000000000000000007 /* AccountRemoteSupport.swift in Sources */,
+				A10000000000000000000010 /* SignalingClient.swift in Sources */,
+				A10000000000000000000008 /* AccountAuthViewModel.swift in Sources */,
+				A10000000000000000000009 /* DeviceProvisioningViewModel.swift in Sources */,
+				A1000000000000000000000A /* AccountAuthRootView.swift in Sources */,
+				A1000000000000000000000B /* LoginView.swift in Sources */,
+				A1000000000000000000000C /* RegisterView.swift in Sources */,
+				A1000000000000000000000D /* ForgotPasswordView.swift in Sources */,
+				A1000000000000000000000E /* AccountStatusCard.swift in Sources */,
+				A1000000000000000000000F /* AccountFormControls.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-/* End PBXSourcesBuildPhase section */
 
-/* Begin XCBuildConfiguration section */
+			A80000000000000000000001 /* Sources */ = {
+				isa = PBXSourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+					A10000000000000000000020 /* AccountTokenStoreTests.swift in Sources */,
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+			};
+	/* End PBXSourcesBuildPhase section */
+
+
+/* Begin PBXTargetDependency section */
+			A31000000000000000000001 /* PBXTargetDependency */ = {
+				isa = PBXTargetDependency;
+				target = P00000000000000000000002 /* ClaudeMac */;
+				targetProxy = A30000000000000000000001 /* PBXContainerItemProxy */;
+			};
+/* End PBXTargetDependency section */
+
+	/* Begin XCBuildConfiguration section */
 		C00000000000000000000004 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -423,11 +674,12 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 					CODE_SIGN_ENTITLEMENTS = ClaudeMac/ClaudeMac.entitlements;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Manual;
-				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_HARDENED_RUNTIME = YES;
+					CODE_SIGN_IDENTITY = "Developer ID Application";
+					CODE_SIGN_STYLE = Manual;
+					COMBINE_HIDPI_IMAGES = YES;
+					CURRENT_PROJECT_VERSION = 4;
+					DEVELOPMENT_TEAM = XY6Z92AMPS;
+					ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ClaudeMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -435,9 +687,9 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = vin.anna.ClaudeMac;
-				PRODUCT_NAME = Acode;
+				PRODUCT_NAME = AnnaCode;
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -449,11 +701,12 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 					CODE_SIGN_ENTITLEMENTS = ClaudeMac/ClaudeMac.entitlements;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Manual;
-				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_HARDENED_RUNTIME = YES;
+					CODE_SIGN_IDENTITY = "Developer ID Application";
+					CODE_SIGN_STYLE = Manual;
+					COMBINE_HIDPI_IMAGES = YES;
+					CURRENT_PROJECT_VERSION = 4;
+					DEVELOPMENT_TEAM = XY6Z92AMPS;
+					ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ClaudeMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -461,16 +714,59 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = vin.anna.ClaudeMac;
-				PRODUCT_NAME = Acode;
+				PRODUCT_NAME = AnnaCode;
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
-/* End XCBuildConfiguration section */
+
+			A90000000000000000000001 /* Debug */ = {
+				isa = XCBuildConfiguration;
+				buildSettings = {
+					BUNDLE_LOADER = "$(TEST_HOST)";
+					CODE_SIGN_IDENTITY = "-";
+					CODE_SIGN_STYLE = Manual;
+					GENERATE_INFOPLIST_FILE = YES;
+					LD_RUNPATH_SEARCH_PATHS = (
+						"$(inherited)",
+						"@executable_path/../Frameworks",
+						"@loader_path/../Frameworks",
+					);
+					MACOSX_DEPLOYMENT_TARGET = 14.0;
+					PRODUCT_BUNDLE_IDENTIFIER = vin.anna.ClaudeMacTests;
+					PRODUCT_NAME = "$(TARGET_NAME)";
+					SDKROOT = macosx;
+					SWIFT_VERSION = 5.0;
+					TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AnnaCode.app/Contents/MacOS/AnnaCode";
+				};
+				name = Debug;
+			};
+			A90000000000000000000002 /* Release */ = {
+				isa = XCBuildConfiguration;
+				buildSettings = {
+					BUNDLE_LOADER = "$(TEST_HOST)";
+					CODE_SIGN_IDENTITY = "-";
+					CODE_SIGN_STYLE = Manual;
+					GENERATE_INFOPLIST_FILE = YES;
+					LD_RUNPATH_SEARCH_PATHS = (
+						"$(inherited)",
+						"@executable_path/../Frameworks",
+						"@loader_path/../Frameworks",
+					);
+					MACOSX_DEPLOYMENT_TARGET = 14.0;
+					PRODUCT_BUNDLE_IDENTIFIER = vin.anna.ClaudeMacTests;
+					PRODUCT_NAME = "$(TARGET_NAME)";
+					SDKROOT = macosx;
+					SWIFT_VERSION = 5.0;
+					TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AnnaCode.app/Contents/MacOS/AnnaCode";
+				};
+				name = Release;
+			};
+	/* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
 		C00000000000000000000001 /* Build configuration list for PBXProject "ClaudeMac" */ = {
@@ -491,7 +787,57 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-/* End XCConfigurationList section */
+
+			A90000000000000000000003 /* Build configuration list for PBXNativeTarget "ClaudeMacTests" */ = {
+				isa = XCConfigurationList;
+				buildConfigurations = (
+					A90000000000000000000001 /* Debug */,
+					A90000000000000000000002 /* Release */,
+				);
+				defaultConfigurationIsVisible = 0;
+				defaultConfigurationName = Release;
+			};
+	/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		CHC000000000000000000002 /* XCLocalSwiftPackageReference "Shared/ChatCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Shared/ChatCore;
+		};
+		CHU000000000000000000002 /* XCLocalSwiftPackageReference "Shared/ChatUI" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Shared/ChatUI;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		CWEBRTC000000000000002 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC";
+			requirement = {
+				kind = exactVersion;
+				version = 140.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		CHC000000000000000000003 /* ChatCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CHC000000000000000000002 /* XCLocalSwiftPackageReference "Shared/ChatCore" */;
+			productName = ChatCore;
+		};
+		CHU000000000000000000003 /* ChatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CHU000000000000000000002 /* XCLocalSwiftPackageReference "Shared/ChatUI" */;
+			productName = ChatUI;
+		};
+		CWEBRTC000000000000003 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CWEBRTC000000000000002 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = P00000000000000000000001 /* Project object */;
 }

@@ -1,0 +1,71 @@
+# Android Compose 设计基准
+
+用途：这个目录用于 Android 原生 Kotlin + Compose 还原 iOS Acode 的视觉和交互，不作为方案文档。Android 端稳定设计规范沉淀在 `/Users/oreo/Desktop/ClaudeMac/Android/DESIGN.md`。
+
+## 截图
+
+- `screenshots/01-chat-sidebar-overlay.png`：聊天页 + 左侧项目/模型/会话/文件抽屉。
+- `screenshots/02-remote-device-list.png`：远程设备页。
+- `screenshots/03-chat-thread.png`：聊天消息流。
+- `screenshots/04-chat-thread-duplicate-reference.png`：聊天消息流补充参考。
+- `screenshots/05-login.png`：登录页。
+- `screenshots/06-register.png`：创建账号页。
+
+## 已落地到 Android 的页面
+
+- 聊天主屏：顶部玻璃栏、消息列表、黑色用户气泡、底部输入栏、左侧抽屉。
+- 远程设备页：标题栏、分段控件、设备卡片、输入设备码卡片。
+- 设置页：三组玻璃卡片、菜单行、图标、分隔线。
+- 登录页：品牌图标、邮箱/密码输入、协议勾选、登录按钮、忘记密码/创建账号入口。
+- 创建账号页：返回按钮、品牌图标、邮箱/密码/确认密码输入、协议勾选、注册并登录按钮。
+
+## iOS 证据
+
+- 色彩、玻璃、圆角、阴影：`AcodeIOS/Acode/Views/VisualStyle.swift`
+- 聊天顶部栏、消息列表、空态、底部输入栏：`AcodeIOS/Acode/Views/ChatView.swift`
+- 输入框、附件按钮、发送按钮：`AcodeIOS/Acode/Views/InputBarView.swift`
+- 左侧抽屉：`AcodeIOS/Acode/Views/SidebarView.swift`
+- 侧栏遮罩、宽度、边缘手势：`AcodeIOS/Acode/Views/RootView.swift`
+- 远程设备：`AcodeIOS/Acode/Views/DeviceListView.swift`
+- 设置页：`AcodeIOS/Acode/Views/SettingsView.swift`
+- 登录/注册：`AcodeIOS/Acode/Views/Auth/LoginView.swift`、`AcodeIOS/Acode/Views/Auth/RegisterView.swift`
+- 登录/注册公共组件：`AcodeIOS/Acode/Views/Auth/AuthComponents.swift`
+- 登录/注册/法律文档接口：`AcodeIOS/Acode/ViewModels/AuthViewModel.swift`、`AcodeIOS/Acode/Networking/RemoteAuthClient.swift`、`AcodeIOS/Acode/Networking/RemoteLegalClient.swift`
+
+## 还原硬规则
+
+- 主色只用黑白灰，成功态用绿色点。
+- 页面背景是浅白玻璃感，不做彩色渐变。
+- 大卡片圆角 28-30dp，输入/列表行圆角 18-22dp，52dp 圆形按钮使用 26dp。
+- 图标按钮固定 44-52dp，圆形玻璃底。
+- 主操作用黑色胶囊按钮。
+- 文本层级：标题粗黑，说明灰色，消息正文保持高可读。
+- 抽屉宽度按 iOS：`min(max(width * 0.70, 272dp), 312dp)`，背后黑色遮罩 24%。
+- 按压反馈按 iOS：scale 0.94、opacity 0.82、duration 160ms。
+
+## Compose Token 落点
+
+- 颜色：`Android/app/src/main/java/com/acode/android/ui/theme/AcodeTheme.kt` 的 `AcodeColor`。
+- 圆角/间距/尺寸/字号/透明度/阴影/动效：`Android/app/src/main/java/com/acode/android/ui/theme/AcodeTokens.kt`。
+- 背景、玻璃卡片、圆形按钮：`Android/app/src/main/java/com/acode/android/ui/components/AcodeSurfaces.kt`。
+- 设置行、主按钮、状态点、分段控件：`Android/app/src/main/java/com/acode/android/ui/components/AcodeRows.kt`。
+
+## iOS -> Android Token 对照
+
+- `Color.acodeInk` -> `AcodeColor.Ink`：`#141414`。
+- `Color.acodeMuted` -> `AcodeColor.Muted`：`#6B6B6B`。
+- `Color.acodeGlassFill` -> `AcodeColor.GlassFill`：white 52%。
+- `Color.acodeGlassStroke` -> `AcodeColor.GlassStroke`：white 74%。
+- `Color.acodeAuthGlassFill` -> `AcodeColor.AuthGlassFill`：white 68%。
+- `Color.acodeAuthGlassStroke` -> `AcodeColor.AuthGlassStroke`：white 88%。
+- `GlassCard(cornerRadius: 28)` -> `AcodeGlassCard(corner = AcodeRadius.Chrome)`。
+- `AuthLiquidCard(cornerRadius: 30)` -> `AcodeRadius.Sheet` + `AcodeColor.AuthGlassFill`。
+- `AuthPrimaryButton(minHeight: 52, cornerRadius: 26)` -> `BlackCapsuleButton` + `AcodeSize.PrimaryButtonHeight` + `AcodeRadius.CircleControl`。
+- `.buttonStyle(.acodePress)` -> `AcodeMotion.PressScale` / `AcodeAlpha.PressedOpacity` / `AcodeMotion.PressMillis`。
+
+## 后续页面实现要求
+
+- 写 screen 前先读 `/Users/oreo/Desktop/ClaudeMac/Android/DESIGN.md`。
+- screen 里不要继续散写全局 magic number；优先用 `AcodeColor`、`AcodeRadius`、`AcodeSpace`、`AcodeSize`、`AcodeType`、`AcodeAlpha`。
+- 新增公共视觉值必须先沉淀到 token，再在组件或 screen 使用。
+- 截图负责视觉位置感，iOS 源码负责精确透明度、圆角、字号和交互值。

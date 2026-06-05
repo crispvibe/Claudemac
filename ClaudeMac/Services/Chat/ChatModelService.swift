@@ -66,6 +66,15 @@ final class ChatModelService: ObservableObject {
         return id
     }
 
+    func contextWindow(for id: String, cli: CLIType) -> Int {
+        let visibleCLI = cli.visibleValue
+        let executionID = ChatModelCatalog.executionModelID(for: id).lowercased()
+        let metadataWindow = options(for: visibleCLI)
+            .first { ChatModelCatalog.executionModelID(for: $0.id).lowercased() == executionID }?
+            .contextWindow
+        return ChatModelCatalog.contextWindow(for: id, cli: visibleCLI, metadataWindow: metadataWindow)
+    }
+
     func defaultReasoningEffort(for cli: CLIType) -> ChatReasoningEffort {
         .high
     }
@@ -108,8 +117,6 @@ final class ChatModelService: ObservableObject {
             return
         }
 
-        // Skip if same URL and we already have results
-        if trimmedURL == lastClaudeBaseURL && !claudeModels.isEmpty { return }
         lastClaudeBaseURL = trimmedURL
 
         isFetching = true
@@ -141,7 +148,6 @@ final class ChatModelService: ObservableObject {
             return
         }
 
-        if trimmedURL == lastCodexBaseURL && !codexModels.isEmpty { return }
         lastCodexBaseURL = trimmedURL
 
         isFetching = true
@@ -197,7 +203,7 @@ final class ChatModelService: ObservableObject {
         let configuredTitle = prettifyModelID(configured, cli: cli)
         return options.map { option in
             guard option.id == catalogDefault else { return option }
-            return ChatModelOption(id: option.id, title: "默认（\(configuredTitle)）", cli: option.cli)
+            return ChatModelOption(id: option.id, title: "默认（\(configuredTitle)）", cli: option.cli, contextWindow: option.contextWindow)
         }
     }
 
@@ -216,9 +222,10 @@ final class ChatModelService: ObservableObject {
             do {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else { continue }
-                if let ids = parseModelListResponse(data) {
-                    return ids.sorted().map { id in
-                        ChatModelOption(id: id, title: prettifyModelID(id, cli: cli), cli: cli)
+                if let models = parseModelListResponse(data) {
+                    return models.sorted { $0.id < $1.id }.map { model in
+                        let contextWindow = model.contextWindow ?? ChatModelCatalog.contextWindow(for: model.id, cli: cli)
+                        return ChatModelOption(id: model.id, title: prettifyModelID(model.id, cli: cli), cli: cli, contextWindow: contextWindow)
                     }
                 }
             } catch {
@@ -229,23 +236,63 @@ final class ChatModelService: ObservableObject {
         return []
     }
 
+    private struct FetchedModel {
+        let id: String
+        let contextWindow: Int?
+    }
+
     /// Parse OpenAI-compatible /models response.
-    private func parseModelListResponse(_ data: Data) -> [String]? {
+    private func parseModelListResponse(_ data: Data) -> [FetchedModel]? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             // Some relays return a plain array
             if let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                let ids = arr.compactMap { $0["id"] as? String }
-                return ids.isEmpty ? nil : ids
+                let models = arr.compactMap { modelOption(from: $0) }
+                return models.isEmpty ? nil : models
             }
             return nil
         }
 
         // OpenAI format: { "data": [{ "id": "model-name", ... }] }
         if let dataArray = json["data"] as? [[String: Any]] {
-            let ids = dataArray.compactMap { $0["id"] as? String }
-            return ids.isEmpty ? nil : ids
+            let models = dataArray.compactMap { modelOption(from: $0) }
+            return models.isEmpty ? nil : models
         }
 
+        return nil
+    }
+
+    private func modelOption(from object: [String: Any]) -> FetchedModel? {
+        guard let id = object["id"] as? String, !id.isEmpty else { return nil }
+        return FetchedModel(id: id, contextWindow: contextWindow(from: object))
+    }
+
+    private func contextWindow(from object: [String: Any]) -> Int? {
+        let keys = [
+            "context_window", "contextWindow",
+            "max_context_window", "maxContextWindow",
+            "context_length", "contextLength",
+            "max_context_tokens", "maxContextTokens",
+            "input_token_limit", "inputTokenLimit",
+            "max_input_tokens", "maxInputTokens"
+        ]
+        for key in keys {
+            if let value = intValue(object[key]), value > 0 {
+                return value
+            }
+        }
+        for nestedKey in ["metadata", "capabilities", "limits", "token_limits"] {
+            if let nested = object[nestedKey] as? [String: Any],
+               let nestedWindow = contextWindow(from: nested) {
+                return nestedWindow
+            }
+        }
+        return nil
+    }
+
+    private func intValue(_ value: Any?) -> Int? {
+        if let value = value as? Int { return value }
+        if let value = value as? NSNumber { return value.intValue }
+        if let value = value as? String { return Int(value.trimmingCharacters(in: .whitespacesAndNewlines)) }
         return nil
     }
 
@@ -262,7 +309,69 @@ final class ChatModelService: ObservableObject {
         return id
     }
 
-    private static func loadClaudeConfiguredModels() -> (defaultModelID: String?, modelIDs: [String]) {
+    /// Thread-safe snapshot of the model list and the effective default ID, read
+    /// directly from the on-disk configuration (catalog + ~/.claude/settings.json /
+    /// ~/.codex/config.toml + ProjectStore custom IDs).
+    /// Live-fetched relay models are NOT included here because they only exist on
+    /// the @MainActor live instance — the remote HTTP API uses this snapshot so it
+    /// can be called from the network thread without crossing actor boundaries.
+    nonisolated static func diskSnapshotOptions(for cli: CLIType) -> (options: [ChatModelOption], defaultModelID: String) {
+        let visibleCLI = cli.visibleValue
+        let catalog = ChatModelCatalog.options(for: visibleCLI)
+        let custom = loadCustomModels(for: visibleCLI)
+        let configured: [ChatModelOption]
+        let configuredDefault: String?
+        switch visibleCLI {
+        case .claude, .gemini, .custom:
+            let info = loadClaudeConfiguredModels()
+            configured = info.modelIDs.map { ChatModelOption(id: $0, title: snapshotPrettify($0, cli: .claude), cli: .claude) }
+            configuredDefault = info.defaultModelID?.nonEmptyTrimmed
+        case .codex:
+            let id = loadCodexConfiguredModel()
+            configured = id.map { [ChatModelOption(id: $0, title: snapshotPrettify($0, cli: .codex), cli: .codex)] } ?? []
+            configuredDefault = id?.nonEmptyTrimmed
+        }
+
+        let merged = snapshotMerge([catalog, configured, custom])
+        let effectiveDefault = configuredDefault ?? ChatModelCatalog.defaultModelID(for: visibleCLI)
+        let final = snapshotApplyDefaultTitle(merged, cli: visibleCLI, configured: effectiveDefault)
+        return (final, effectiveDefault)
+    }
+
+    nonisolated private static func snapshotMerge(_ groups: [[ChatModelOption]]) -> [ChatModelOption] {
+        groups.flatMap { $0 }.reduce(into: [ChatModelOption]()) { result, option in
+            let key = snapshotIdentityKey(option)
+            if let existingIndex = result.firstIndex(where: { snapshotIdentityKey($0) == key }) {
+                result[existingIndex] = option
+            } else {
+                result.append(option)
+            }
+        }
+    }
+
+    nonisolated private static func snapshotIdentityKey(_ option: ChatModelOption) -> String {
+        let executionID = ChatModelCatalog.executionModelID(for: option.id).lowercased()
+        return "\(option.cli.visibleValue.rawValue):\(executionID)"
+    }
+
+    nonisolated private static func snapshotPrettify(_ id: String, cli: CLIType) -> String {
+        let known = ChatModelCatalog.options(for: cli)
+        let executionID = ChatModelCatalog.executionModelID(for: id)
+        if let match = known.first(where: { $0.id == executionID }) { return match.title }
+        return id
+    }
+
+    nonisolated private static func snapshotApplyDefaultTitle(_ options: [ChatModelOption], cli: CLIType, configured: String) -> [ChatModelOption] {
+        let catalogDefault = ChatModelCatalog.defaultModelID(for: cli)
+        guard catalogDefault == "default", configured != catalogDefault else { return options }
+        let configuredTitle = snapshotPrettify(configured, cli: cli)
+        return options.map { option in
+            guard option.id == catalogDefault else { return option }
+            return ChatModelOption(id: option.id, title: "默认（\(configuredTitle)）", cli: option.cli, contextWindow: option.contextWindow)
+        }
+    }
+
+    nonisolated private static func loadClaudeConfiguredModels() -> (defaultModelID: String?, modelIDs: [String]) {
         guard let data = try? Data(contentsOf: claudeSettingsURL),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let env = json["env"] as? [String: String] else {
@@ -280,30 +389,34 @@ final class ChatModelService: ObservableObject {
         return (env["ANTHROPIC_MODEL"]?.nonEmptyTrimmed, unique(ids))
     }
 
-    private static func loadCodexConfiguredModel() -> String? {
+    nonisolated private static func loadCodexConfiguredModel() -> String? {
         guard let text = try? String(contentsOf: codexConfigURL, encoding: .utf8) else { return nil }
         return parseTomlValue(text, key: "model")?.nonEmptyTrimmed
     }
 
-    private static func loadCustomModels(for cli: CLIType) -> [ChatModelOption] {
+    nonisolated private static func loadCustomModels(for cli: CLIType) -> [ChatModelOption] {
         customModelIDs(for: cli).map { id in
             ChatModelOption(id: id, title: id, cli: cli.visibleValue == .codex ? .codex : .claude)
         }
     }
 
-    private static func customModelIDs(for cli: CLIType) -> [String] {
-        UserDefaults.standard.stringArray(forKey: customModelsKey(for: cli)) ?? []
+    nonisolated private static func customModelIDs(for cli: CLIType) -> [String] {
+        let settings = ProjectStore.loadSettings()
+        return cli.visibleValue == .codex ? settings.customCodexModelIDs : settings.customClaudeModelIDs
     }
 
     private static func saveCustomModels(_ ids: [String], for cli: CLIType) {
-        UserDefaults.standard.set(unique(ids), forKey: customModelsKey(for: cli))
+        var settings = ProjectStore.loadSettings()
+        let unique = unique(ids)
+        if cli.visibleValue == .codex {
+            settings.customCodexModelIDs = unique
+        } else {
+            settings.customClaudeModelIDs = unique
+        }
+        try? ProjectStore.saveSettings(settings)
     }
 
-    private static func customModelsKey(for cli: CLIType) -> String {
-        cli.visibleValue == .codex ? "customCodexModelIDs" : "customClaudeModelIDs"
-    }
-
-    private static func parseTomlValue(_ text: String, key: String) -> String? {
+    nonisolated private static func parseTomlValue(_ text: String, key: String) -> String? {
         let lines = text.components(separatedBy: .newlines)
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -317,24 +430,24 @@ final class ChatModelService: ObservableObject {
         return nil
     }
 
-    private static func unique(_ values: [String]) -> [String] {
+    nonisolated private static func unique(_ values: [String]) -> [String] {
         values.reduce(into: [String]()) { result, value in
             if !result.contains(value) { result.append(value) }
         }
     }
 
-    private static var realHomeDirectory: URL {
+    nonisolated private static var realHomeDirectory: URL {
         if let passwd = getpwuid(getuid()), let directory = passwd.pointee.pw_dir {
             return URL(fileURLWithPath: String(cString: directory), isDirectory: true)
         }
         return FileManager.default.homeDirectoryForCurrentUser
     }
 
-    private static var claudeSettingsURL: URL {
+    nonisolated private static var claudeSettingsURL: URL {
         realHomeDirectory.appendingPathComponent(".claude/settings.json")
     }
 
-    private static var codexConfigURL: URL {
+    nonisolated private static var codexConfigURL: URL {
         realHomeDirectory.appendingPathComponent(".codex/config.toml")
     }
 }
