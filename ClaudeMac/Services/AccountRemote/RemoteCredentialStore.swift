@@ -132,32 +132,37 @@ struct RemoteCredentialFileStorage: RemoteCredentialStorage, @unchecked Sendable
     }
 }
 
-private struct RemoteFailingCredentialStorage: RemoteCredentialStorage {
-    private let message: String
-
-    init(error: Error) {
-        self.message = error.localizedDescription
-    }
+/// Keychain-primary storage that transparently migrates any pre-existing plaintext-file
+/// credentials into the Keychain on first read, and falls back to file storage only when the
+/// Keychain itself is unavailable (so a missing entitlement can't lock the user out).
+struct MigratingKeychainStorage: RemoteCredentialStorage {
+    let keychain: RemoteCredentialStorage
+    let file: RemoteCredentialStorage?
 
     func loadData(service: String, account: String) throws -> Data? {
-        throw storageError()
+        if let data = try? keychain.loadData(service: service, account: account) {
+            return data
+        }
+        guard let file, let data = try? file.loadData(service: service, account: account) else {
+            return nil
+        }
+        try? keychain.saveData(data, service: service, account: account)
+        try? file.deleteData(service: service, account: account)
+        return data
     }
 
     func saveData(_ data: Data, service: String, account: String) throws {
-        throw storageError()
+        do {
+            try keychain.saveData(data, service: service, account: account)
+        } catch {
+            guard let file else { throw error }
+            try file.saveData(data, service: service, account: account)
+        }
     }
 
     func deleteData(service: String, account: String) throws {
-        throw storageError()
-    }
-
-    private func storageError() -> RemoteCredentialStoreError {
-        let error = NSError(
-            domain: "RemoteCredentialFileStorage",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: message]
-        )
-        return .storage(error)
+        try? keychain.deleteData(service: service, account: account)
+        try? file?.deleteData(service: service, account: account)
     }
 }
 
@@ -277,11 +282,12 @@ actor RemoteCredentialStore {
     }
 
     private static func makeDefaultStorage() -> RemoteCredentialStorage {
-        do {
-            return try RemoteCredentialFileStorage()
-        } catch {
-            return RemoteFailingCredentialStorage(error: error)
-        }
+        // Prefer the system Keychain (tokens + device signing private key are sensitive and
+        // must not sit in plaintext JSON). Keep file storage as a migration source / fallback
+        // for environments where the Keychain is unavailable (e.g. missing entitlement).
+        let keychain = RemoteSystemCredentialKeychainStorage()
+        let file = try? RemoteCredentialFileStorage()
+        return MigratingKeychainStorage(keychain: keychain, file: file)
     }
 
     func saveBlob(_ blob: RemoteCredentialBlob) throws {

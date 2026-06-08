@@ -38,6 +38,8 @@ struct ClaudeMacApp: App {
                 .onChange(of: appState.settings.apiKey) { _, _ in triggerModelFetch() }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     chatRuntimeStore.prepareForApplicationTermination()
+                    ProjectStore.flushPendingFileTreeState()
+                    ChatSessionStore.flushPendingDrafts()
                 }
         }
         .defaultSize(width: 1380, height: 820)

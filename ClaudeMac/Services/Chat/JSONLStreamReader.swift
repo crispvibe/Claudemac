@@ -3,6 +3,8 @@ import Foundation
 enum JSONLStreamReader {
     private static let newline: UInt8 = 0x0A
     private static let carriageReturn: UInt8 = 0x0D
+    // Backstop against a wedged/garbage stream with no newlines accumulating without bound.
+    private static let maxLineBytes = 16 * 1024 * 1024
 
     static func lines(from pipe: Pipe) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
@@ -16,9 +18,7 @@ enum JSONLStreamReader {
                     appendChunk(chunk, into: &buffer, continuation: continuation)
                 }
 
-                if !buffer.isEmpty, let line = String(data: buffer, encoding: .utf8), !line.isEmpty {
-                    continuation.yield(line)
-                }
+                emitLine(&buffer, continuation: continuation)
                 continuation.finish()
             }
             continuation.onTermination = { _ in
@@ -26,6 +26,17 @@ enum JSONLStreamReader {
                 try? handle.close()
             }
         }
+    }
+
+    /// Decode the buffered line lossily so a single invalid UTF-8 byte never silently drops an
+    /// entire line (which could be a terminal `result`), then reset the buffer.
+    private static func emitLine(
+        _ buffer: inout Data,
+        continuation: AsyncThrowingStream<String, Error>.Continuation
+    ) {
+        guard !buffer.isEmpty else { return }
+        continuation.yield(String(decoding: buffer, as: UTF8.self))
+        buffer.removeAll(keepingCapacity: true)
     }
 
     private static func appendChunk(
@@ -37,13 +48,14 @@ enum JSONLStreamReader {
         while cursor < chunk.endIndex {
             if let nlIndex = chunk[cursor..<chunk.endIndex].firstIndex(of: newline) {
                 appendStripped(chunk[cursor..<nlIndex], into: &buffer)
-                if !buffer.isEmpty, let line = String(data: buffer, encoding: .utf8), !line.isEmpty {
-                    continuation.yield(line)
-                }
-                buffer.removeAll(keepingCapacity: true)
+                emitLine(&buffer, continuation: continuation)
                 cursor = chunk.index(after: nlIndex)
             } else {
                 appendStripped(chunk[cursor..<chunk.endIndex], into: &buffer)
+                if buffer.count > maxLineBytes {
+                    // Oversized line with no newline: flush what we have to bound memory.
+                    emitLine(&buffer, continuation: continuation)
+                }
                 break
             }
         }

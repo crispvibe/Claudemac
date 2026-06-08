@@ -23,8 +23,16 @@ enum ChatSessionStore {
     }
 
     private static func loadSessionsUnlocked() -> [ChatSessionRecord] {
-        guard let data = try? Data(contentsOf: indexURL()) else { return [] }
-        return (try? JSONDecoder.chat.decode([ChatSessionRecord].self, from: data)) ?? []
+        let url = indexURL()
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        do {
+            return try JSONDecoder.chat.decode([ChatSessionRecord].self, from: data)
+        } catch {
+            // Index exists but won't decode — preserve it instead of returning empty and
+            // letting the next saveSession overwrite every other session.
+            ProjectStore.backupCorruptedFile(at: url)
+            return []
+        }
     }
 
     private static func loadSessionUnlocked(id: UUID) -> ChatSessionRecord? {

@@ -54,6 +54,11 @@ private final class FileTreeStatePersistenceQueue {
 }
 
 struct ProjectStore {
+    /// Serializes settings/projects/config-profile read-modify-write sequences so concurrent
+    /// writers (Settings UI vs the remote chat server queue) can't lose each other's updates.
+    /// Use the `mutate*` helpers for load+modify+save; direct `save*` calls also take it.
+    private static let ioLock = NSRecursiveLock()
+
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -108,13 +113,32 @@ struct ProjectStore {
             let url = try projectsURL
             guard FileManager.default.fileExists(atPath: url.path) else { return [] }
             let data = try Data(contentsOf: url)
-            return try decoder.decode([ProjectItem].self, from: data)
+            do {
+                return try decoder.decode([ProjectItem].self, from: data)
+            } catch {
+                // The file exists but failed to decode (crash mid-write, disk full, schema
+                // drift). Move it aside instead of returning empty and letting the next save
+                // atomically overwrite recoverable data.
+                backupCorruptedFile(at: url)
+                return []
+            }
         } catch {
             return []
         }
     }
 
+    /// Preserve a file that read OK but failed to decode, so a subsequent atomic save can't
+    /// destroy data the user may still be able to recover.
+    static func backupCorruptedFile(at url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let stamp = Int(Date().timeIntervalSince1970)
+        let backup = url.appendingPathExtension("corrupt-\(stamp)")
+        try? FileManager.default.moveItem(at: url, to: backup)
+    }
+
     static func saveProjects(_ projects: [ProjectItem]) throws {
+        ioLock.lock()
+        defer { ioLock.unlock() }
         let data = try encoder.encode(projects)
         try data.write(to: projectsURL, options: [.atomic])
     }
@@ -132,15 +156,42 @@ struct ProjectStore {
             let url = try settingsURL
             guard FileManager.default.fileExists(atPath: url.path) else { return .default }
             let data = try Data(contentsOf: url)
-            return try decoder.decode(AppSettings.self, from: data)
+            do {
+                return try decoder.decode(AppSettings.self, from: data)
+            } catch {
+                backupCorruptedFile(at: url)
+                return .default
+            }
         } catch {
             return .default
         }
     }
 
     static func saveSettings(_ settings: AppSettings) throws {
+        ioLock.lock()
+        defer { ioLock.unlock() }
         let data = try encoder.encode(settings)
         try data.write(to: settingsURL, options: [.atomic])
+    }
+
+    /// Atomically load → mutate → save settings under the I/O lock. Returns the saved value.
+    @discardableResult
+    static func mutateSettings(_ transform: (inout AppSettings) -> Void) -> AppSettings {
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        var settings = loadSettings()
+        transform(&settings)
+        try? saveSettings(settings)
+        return settings
+    }
+
+    /// Atomically load → mutate → save config profiles under the I/O lock.
+    static func mutateConfigProfiles(_ transform: (inout ConfigProfileCollection) throws -> Void) throws {
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        var collection = loadConfigProfiles()
+        try transform(&collection)
+        try saveConfigProfiles(collection)
     }
 
     /// One-time migration of legacy UserDefaults keys into AppSettings.
@@ -208,13 +259,20 @@ struct ProjectStore {
             let url = try configProfilesURL
             guard FileManager.default.fileExists(atPath: url.path) else { return .empty }
             let data = try Data(contentsOf: url)
-            return try decoder.decode(ConfigProfileCollection.self, from: data)
+            do {
+                return try decoder.decode(ConfigProfileCollection.self, from: data)
+            } catch {
+                backupCorruptedFile(at: url)
+                return .empty
+            }
         } catch {
             return .empty
         }
     }
 
     static func saveConfigProfiles(_ profiles: ConfigProfileCollection) throws {
+        ioLock.lock()
+        defer { ioLock.unlock() }
         let data = try encoder.encode(profiles)
         let url = try configProfilesURL
         try data.write(to: url, options: [.atomic])

@@ -1942,10 +1942,13 @@ final class ChatPanelController: ObservableObject {
         session.activeRunStartedAt = activeRunStartedAt
         currentSession = session
         do {
-            try ChatSessionStore.saveSession(session)
+            // Write the messages file FIRST, then the index. The index is the "commit
+            // pointer"; if we crash between the two writes, the index never references
+            // messages that weren't durably written.
             if shouldSaveMessages {
                 try ChatSessionStore.saveMessages(messagesForPersistence(sessionID: session.id), sessionID: session.id)
             }
+            try ChatSessionStore.saveSession(session)
             onSessionPersisted?()
             NotificationCenter.default.post(
                 name: .remoteChatSessionsDidChange,

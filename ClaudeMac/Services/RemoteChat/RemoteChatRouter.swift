@@ -5,6 +5,23 @@ import os
 
 private let remoteChatRouterLog = Logger(subsystem: "vin.anna.Acode", category: "RemoteChatRouter")
 
+/// Constant-time string comparison for secrets (bearer/transient tokens) to avoid a timing
+/// side-channel that a `==` short-circuit would leak over the network.
+func constantTimeEquals(_ a: String, _ b: String) -> Bool {
+    let aBytes = Array(a.utf8)
+    let bBytes = Array(b.utf8)
+    var diff = aBytes.count ^ bBytes.count
+    let n = Swift.max(aBytes.count, bBytes.count)
+    var index = 0
+    while index < n {
+        let x = index < aBytes.count ? aBytes[index] : 0
+        let y = index < bBytes.count ? bBytes[index] : 0
+        diff |= Int(x ^ y)
+        index += 1
+    }
+    return diff == 0
+}
+
 struct RemoteChatServerConfiguration {
     let port: UInt16
     let bindLAN: Bool
@@ -12,7 +29,7 @@ struct RemoteChatServerConfiguration {
 
     func acceptsBearerToken(_ bearerToken: String?) -> Bool {
         guard let bearerToken else { return false }
-        return bearerToken == token || RemoteChatServerController.shared.acceptsTransientToken(bearerToken)
+        return constantTimeEquals(bearerToken, token) || RemoteChatServerController.shared.acceptsTransientToken(bearerToken)
     }
 }
 
@@ -343,30 +360,32 @@ struct RemoteChatRouter {
     private func saveClaudeProfileResponse(_ request: RemoteChatHTTPRequest) -> RemoteChatHTTPResponse {
         do {
             let saveRequest = try JSONDecoder().decode(RemoteClaudeRelayProfileSaveRequestDTO.self, from: request.body)
-            var collection = ProjectStore.loadConfigProfiles()
-            var profile = saveRequest.profile.profile
-            let now = Date()
-            if let index = collection.claudeRelayProfiles.firstIndex(where: { $0.id == profile.id }) {
-                if profile.authToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   saveRequest.profile.authTokenSet {
-                    profile.authToken = collection.claudeRelayProfiles[index].authToken
+            let profileID = saveRequest.profile.profile.id
+            try ProjectStore.mutateConfigProfiles { collection in
+                var profile = saveRequest.profile.profile
+                let now = Date()
+                if let index = collection.claudeRelayProfiles.firstIndex(where: { $0.id == profile.id }) {
+                    if profile.authToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       saveRequest.profile.authTokenSet {
+                        profile.authToken = collection.claudeRelayProfiles[index].authToken
+                    }
+                    profile.createdAt = collection.claudeRelayProfiles[index].createdAt
+                    profile.updatedAt = now
+                    collection.claudeRelayProfiles[index] = profile
+                } else {
+                    profile.createdAt = now
+                    profile.updatedAt = now
+                    collection.claudeRelayProfiles.insert(profile, at: 0)
                 }
-                profile.createdAt = collection.claudeRelayProfiles[index].createdAt
-                profile.updatedAt = now
-                collection.claudeRelayProfiles[index] = profile
-            } else {
-                profile.createdAt = now
-                profile.updatedAt = now
-                collection.claudeRelayProfiles.insert(profile, at: 0)
+                if saveRequest.activate {
+                    collection.activeClaudeRelayProfileID = profile.id
+                }
             }
-            if saveRequest.activate {
-                collection.activeClaudeRelayProfileID = profile.id
-            }
-            try ProjectStore.saveConfigProfiles(collection)
-            if saveRequest.activate {
+            let updated = ProjectStore.loadConfigProfiles()
+            if saveRequest.activate, let profile = updated.claudeRelayProfiles.first(where: { $0.id == profileID }) {
                 try writeClaudeSettings(profile)
             }
-            return .json(RemoteConfigProfilesDTO(collection: collection))
+            return .json(RemoteConfigProfilesDTO(collection: updated))
         } catch {
             return .error("profile_save_failed", message: error.localizedDescription, statusCode: 400, reasonPhrase: "Bad Request")
         }
@@ -375,14 +394,20 @@ struct RemoteChatRouter {
     private func activateClaudeProfileResponse(_ request: RemoteChatHTTPRequest) -> RemoteChatHTTPResponse {
         do {
             let activateRequest = try JSONDecoder().decode(RemoteClaudeRelayProfileActivateRequestDTO.self, from: request.body)
-            var collection = ProjectStore.loadConfigProfiles()
-            guard let profile = collection.claudeRelayProfiles.first(where: { $0.id == activateRequest.id }) else {
+            var didFind = false
+            try ProjectStore.mutateConfigProfiles { collection in
+                guard let profile = collection.claudeRelayProfiles.first(where: { $0.id == activateRequest.id }) else { return }
+                collection.activeClaudeRelayProfileID = profile.id
+                didFind = true
+            }
+            guard didFind else {
                 return .error("profile_not_found", message: "没有找到这个配置，请刷新后重试。", statusCode: 404, reasonPhrase: "Not Found")
             }
-            collection.activeClaudeRelayProfileID = profile.id
-            try ProjectStore.saveConfigProfiles(collection)
-            try writeClaudeSettings(profile)
-            return .json(RemoteConfigProfilesDTO(collection: collection))
+            let updated = ProjectStore.loadConfigProfiles()
+            if let profile = updated.claudeRelayProfiles.first(where: { $0.id == activateRequest.id }) {
+                try writeClaudeSettings(profile)
+            }
+            return .json(RemoteConfigProfilesDTO(collection: updated))
         } catch {
             return .error("profile_activate_failed", message: error.localizedDescription, statusCode: 400, reasonPhrase: "Bad Request")
         }

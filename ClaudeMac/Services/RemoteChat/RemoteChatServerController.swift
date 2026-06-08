@@ -46,8 +46,9 @@ final class RemoteChatServerController {
 
         // Generate a token on first launch and persist it back so it survives restarts.
         if settings.remoteChatServerToken.isEmpty {
-            settings.remoteChatServerToken = Self.generateToken()
-            try? ProjectStore.saveSettings(settings)
+            settings = ProjectStore.mutateSettings { s in
+                if s.remoteChatServerToken.isEmpty { s.remoteChatServerToken = Self.generateToken() }
+            }
         }
 
         // Audit A-P1: stale attachment tmp files were never cleaned up; over
@@ -128,17 +129,16 @@ final class RemoteChatServerController {
     static func savedToken() -> String {
         var settings = ProjectStore.loadSettings()
         if settings.remoteChatServerToken.isEmpty {
-            settings.remoteChatServerToken = generateToken()
-            try? ProjectStore.saveSettings(settings)
+            settings = ProjectStore.mutateSettings { s in
+                if s.remoteChatServerToken.isEmpty { s.remoteChatServerToken = generateToken() }
+            }
         }
         return settings.remoteChatServerToken
     }
 
     static func resetToken() -> String {
-        var settings = ProjectStore.loadSettings()
         let token = generateToken()
-        settings.remoteChatServerToken = token
-        try? ProjectStore.saveSettings(settings)
+        ProjectStore.mutateSettings { $0.remoteChatServerToken = token }
         shared.restart()
         return token
     }
@@ -166,7 +166,7 @@ final class RemoteChatServerController {
         defer { transientTokenLock.unlock() }
         guard let transientToken, let transientTokenExpiresAt else { return false }
         guard transientTokenExpiresAt > Date() else { return false }
-        return token == transientToken
+        return constantTimeEquals(token, transientToken)
     }
 
     private static func generateToken() -> String {

@@ -1589,6 +1589,19 @@ final class AppState: ObservableObject {
         return didStart
     }
 
+    /// Rebase a file URL from the project's stored root path onto the currently resolved root.
+    /// Returns the original URL unchanged when the root hasn't moved or the file isn't under it
+    /// (the common case), so normal saves are unaffected.
+    private nonisolated static func rebasedFileURL(_ url: URL, fromRoot oldRootPath: String, toRoot newRoot: URL) -> URL {
+        let oldRoot = (oldRootPath as NSString).standardizingPath
+        let newRootPath = newRoot.standardizedFileURL.path
+        guard !oldRoot.isEmpty, newRootPath != oldRoot else { return url }
+        let filePath = url.standardizedFileURL.path
+        guard filePath == oldRoot || filePath.hasPrefix(oldRoot + "/") else { return url }
+        let relative = String(filePath.dropFirst(oldRoot.count)).drop(while: { $0 == "/" })
+        return newRoot.appendingPathComponent(String(relative))
+    }
+
     private nonisolated static func looksLikeOpenablePath(_ path: String) -> Bool {
         if path.hasPrefix("file://") || path.hasPrefix("/") { return true }
         if path.contains("/") { return true }
@@ -1725,10 +1738,15 @@ final class AppState: ObservableObject {
                 try tab.text.write(to: tab.url, atomically: true, encoding: .utf8)
                 modifiedAt = fileModifiedAt(tab.url) ?? Date()
             } else if let project = selectedProject {
-                modifiedAt = try withProjectAccess(project) { _ in
-                    try validateNoExternalModification(for: tab)
-                    try tab.text.write(to: tab.url, atomically: true, encoding: .utf8)
-                    return fileModifiedAt(tab.url) ?? Date()
+                modifiedAt = try withProjectAccess(project) { root in
+                    // If the project folder was moved/renamed (security-scoped bookmark follows
+                    // the inode, so `root` diverges from the stored path), rebase the write
+                    // target onto the resolved root so we never silently write to the stale
+                    // (possibly recreated) old location. No-op in the normal case.
+                    let target = Self.rebasedFileURL(tab.url, fromRoot: project.path, toRoot: root)
+                    try validateNoExternalModification(for: tab, at: target)
+                    try tab.text.write(to: target, atomically: true, encoding: .utf8)
+                    return fileModifiedAt(target) ?? Date()
                 }
             } else {
                 throw AppStateError.missingProjectForSave
@@ -1743,9 +1761,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func validateNoExternalModification(for tab: EditorTab) throws {
+    private func validateNoExternalModification(for tab: EditorTab, at url: URL? = nil) throws {
+        let target = url ?? tab.url
         do {
-            let currentText = try Self.readTextFile(tab.url)
+            let currentText = try Self.readTextFile(target)
             if currentText != tab.savedText {
                 throw AppStateError.fileModifiedExternally
             }

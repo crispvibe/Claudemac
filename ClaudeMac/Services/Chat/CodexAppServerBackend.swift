@@ -36,6 +36,18 @@ final class CodexAppServerBackend: ChatProcessBackend {
     /// 把已经标 .failed 的状态翻转回 .completed 并自动启动队列（旧 F14 bug）。
     private var didEmitTerminalEvent = false
     private var activityWatchdog: ChatProcessActivityWatchdog?
+    /// Guards all shared mutable state above (request/approval/interactive maps, nextID,
+    /// thread/turn ids, flags, process/inputPipe). It is concurrently touched by the stdout
+    /// reader Task and by respond*/interrupt/sendCompact on the MainActor. Recursive because
+    /// some locked sections call helpers that lock again. All stdin writes happen under it, so
+    /// JSON-RPC frames can't interleave.
+    private let stateLock = NSRecursiveLock()
+
+    private func locked<T>(_ body: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return body()
+    }
 
     func start(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, attachments: [ChatMessageAttachment]) -> AsyncThrowingStream<ChatBackendEvent, Error> {
         // TODO(B-P0-1 Codex): Codex `turn/start` JSON-RPC currently only
@@ -48,13 +60,15 @@ final class CodexAppServerBackend: ChatProcessBackend {
         return AsyncThrowingStream { continuation in
             let worker = Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self else { return }
-                self.didFinishTurn = false
-                self.didEmitTerminalEvent = false
-                self.pendingRequests = [:]
-                self.pendingApprovals = [:]
-                self.pendingInteractiveRequests = [:]
-                self.activeThreadID = nil
-                self.activeTurnID = nil
+                self.locked {
+                    self.didFinishTurn = false
+                    self.didEmitTerminalEvent = false
+                    self.pendingRequests = [:]
+                    self.pendingApprovals = [:]
+                    self.pendingInteractiveRequests = [:]
+                    self.activeThreadID = nil
+                    self.activeTurnID = nil
+                }
 
                 let process = Process()
                 let stdout = Pipe()
@@ -69,8 +83,10 @@ final class CodexAppServerBackend: ChatProcessBackend {
                 process.standardError = stderr
                 process.standardInput = stdin
                 ChatProcessLauncher.isolateProcessGroup(process)
-                self.process = process
-                self.inputPipe = stdin
+                self.locked {
+                    self.process = process
+                    self.inputPipe = stdin
+                }
                 let watchdog = ChatProcessActivityWatchdog(
                     process: process,
                     idleTimeout: Self.idleTimeout,
@@ -80,7 +96,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
 
                 do {
                     try process.run()
-                    self.activityWatchdog = watchdog
+                    self.locked { self.activityWatchdog = watchdog }
                     watchdog.markActivity()
                     watchdog.start()
                     continuation.yield(.backendActivity("process-started"))
@@ -102,12 +118,14 @@ final class CodexAppServerBackend: ChatProcessBackend {
                                 didYieldStdoutActivity = true
                                 continuation.yield(.backendActivity("stdout-first-line"))
                             }
-                            let events = self.events(
-                                fromCodexLine: line,
-                                prompt: prompt,
-                                options: options,
-                                session: session
-                            )
+                            let events = self.locked {
+                                self.events(
+                                    fromCodexLine: line,
+                                    prompt: prompt,
+                                    options: options,
+                                    session: session
+                                )
+                            }
                             if events.contains(where: Self.isVisibleOutput) {
                                 didReceiveVisibleOutput = true
                             }
@@ -127,9 +145,8 @@ final class CodexAppServerBackend: ChatProcessBackend {
                         }
                         // 与 turn/completed / error notification 走同一个终态 latch，
                         // 避免 stdout reader 报错与上游事件重复发出 .failed。
-                        if !self.didEmitTerminalEvent {
-                            self.didEmitTerminalEvent = true
-                            continuation.yield(.failed(error.localizedDescription))
+                        for event in self.emitTerminalIfNeeded(.failed(error.localizedDescription)) {
+                            continuation.yield(event)
                         }
                     }
                     return didReceiveVisibleOutput
@@ -156,9 +173,8 @@ final class CodexAppServerBackend: ChatProcessBackend {
                         }
                     } catch {
                         // 同 stdoutTask：stderr reader 报错也走 latch，跟上游保持一致。
-                        if !self.didEmitTerminalEvent {
-                            self.didEmitTerminalEvent = true
-                            continuation.yield(.failed(error.localizedDescription))
+                        for event in self.emitTerminalIfNeeded(.failed(error.localizedDescription)) {
+                            continuation.yield(event)
                         }
                     }
                     let output = stderrLines.joined(separator: "\n")
@@ -168,35 +184,40 @@ final class CodexAppServerBackend: ChatProcessBackend {
                 process.waitUntilExit()
                 let timedOut = watchdog.timedOut
                 watchdog.cancel()
-                self.activityWatchdog = nil
+                self.locked { self.activityWatchdog = nil }
                 let didReceiveVisibleOutput = await stdoutTask.value
                 let stderrOutput = await stderrTask.value
                 let didEmitStderrOutput = !stderrOutput.isEmpty
 
-                self.inputPipe = nil
-                self.process = nil
+                self.locked {
+                    self.inputPipe = nil
+                    self.process = nil
+                }
 
                 // 兜底：进程退出但流里没发出过终态事件时，根据退出状态推一个。
-                // 用 didEmitTerminalEvent 二次保险——如果上游已经发过 .failed/.finished
-                // （例如 events(fromError) 那条路径），这里就不能再覆盖一次。
-                if !self.didFinishTurn && !self.didEmitTerminalEvent {
-                    self.didEmitTerminalEvent = true
+                // emitTerminalIfNeeded 内部用 didEmitTerminalEvent latch 二次保险——
+                // 如果上游已经发过 .failed/.finished（例如 events(fromError) 那条路径），
+                // 这里就不会再覆盖一次。
+                if self.locked({ !self.didFinishTurn }) {
+                    let fallbackEvent: ChatBackendEvent
                     if timedOut {
-                        continuation.yield(.failed("Codex app-server 超时无响应，已停止进程。请检查认证、模型或网络配置。"))
+                        fallbackEvent = .failed("Codex app-server 超时无响应，已停止进程。请检查认证、模型或网络配置。")
                     } else if process.terminationStatus == 0 {
                         if didReceiveVisibleOutput || didEmitStderrOutput {
-                            continuation.yield(.finished)
+                            fallbackEvent = .finished
                         } else {
-                            continuation.yield(.failed("Codex app-server 没有输出任何对话内容。请检查 ~/.codex 权限、中转站 API Key 或模型设置。"))
+                            fallbackEvent = .failed("Codex app-server 没有输出任何对话内容。请检查 ~/.codex 权限、中转站 API Key 或模型设置。")
                         }
                     } else if process.terminationReason == .uncaughtSignal {
-                        continuation.yield(.failed("Codex 已停止。"))
+                        fallbackEvent = .failed("Codex 已停止。")
                     } else {
                         let stderr = stderrOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let message = stderr.isEmpty
+                        fallbackEvent = .failed(stderr.isEmpty
                             ? "Codex app-server 退出码：\(process.terminationStatus)"
-                            : "Codex app-server 退出码：\(process.terminationStatus)\n\(stderr)"
-                        continuation.yield(.failed(message))
+                            : "Codex app-server 退出码：\(process.terminationStatus)\n\(stderr)")
+                    }
+                    for event in self.emitTerminalIfNeeded(fallbackEvent) {
+                        continuation.yield(event)
                     }
                 }
                 continuation.finish()
@@ -209,68 +230,77 @@ final class CodexAppServerBackend: ChatProcessBackend {
     }
 
     func interrupt() {
-        activityWatchdog?.cancel()
-        activityWatchdog = nil
-        guard let process, process.isRunning else { return }
-        if let threadID = activeThreadID, let turnID = activeTurnID {
-            let id = sendRequest(method: "turn/interrupt", params: [
-                "threadId": threadID,
-                "turnId": turnID
-            ])
-            pendingRequests[id] = .interrupt
+        locked {
+            activityWatchdog?.cancel()
+            activityWatchdog = nil
+        }
+        guard let process = locked({ self.process }), process.isRunning else { return }
+        locked {
+            if let threadID = activeThreadID, let turnID = activeTurnID {
+                let id = sendRequest(method: "turn/interrupt", params: [
+                    "threadId": threadID,
+                    "turnId": turnID
+                ])
+                pendingRequests[id] = .interrupt
+            }
         }
         ChatProcessTerminator.stop(process, terminateAfter: .seconds(1), killAfter: .milliseconds(2200))
     }
 
     func respondToPermission(requestID: String, decision: ChatPermissionDecision) -> Bool {
-        guard let approval = pendingApprovals.removeValue(forKey: requestID) else { return false }
+        locked {
+            guard let approval = pendingApprovals.removeValue(forKey: requestID) else { return false }
 
-        let result: [String: Any]
-        switch approval.method {
-        case "item/commandExecution/requestApproval":
-            result = ["decision": codexApprovalDecision(from: decision)]
-        case "item/fileChange/requestApproval":
-            result = ["decision": codexApprovalDecision(from: decision)]
-        case "item/permissions/requestApproval":
-            result = [
-                "permissions": decision.isAllowed ? (approval.requestedPermissions ?? [:]) : [:],
-                "scope": decision == .allowForSession ? "session" : "turn"
-            ]
-        case "applyPatchApproval", "execCommandApproval":
-            result = ["decision": decision.isAllowed ? "approved" : "denied"]
-        default:
-            result = ["decision": codexApprovalDecision(from: decision)]
-        }
+            let result: [String: Any]
+            switch approval.method {
+            case "item/commandExecution/requestApproval":
+                result = ["decision": codexApprovalDecision(from: decision)]
+            case "item/fileChange/requestApproval":
+                result = ["decision": codexApprovalDecision(from: decision)]
+            case "item/permissions/requestApproval":
+                result = [
+                    "permissions": decision.isAllowed ? (approval.requestedPermissions ?? [:]) : [:],
+                    "scope": decision == .allowForSession ? "session" : "turn"
+                ]
+            case "applyPatchApproval", "execCommandApproval":
+                result = ["decision": decision.isAllowed ? "approved" : "denied"]
+            default:
+                result = ["decision": codexApprovalDecision(from: decision)]
+            }
 
-        let didWrite = sendResponse(id: approval.id, result: result)
-        if didWrite {
-            activityWatchdog?.resume()
+            let didWrite = sendResponse(id: approval.id, result: result)
+            if didWrite {
+                activityWatchdog?.resume()
+            }
+            return didWrite
         }
-        return didWrite
     }
 
     func respondToInteractiveRequest(requestID: String, response: ChatInteractiveResponse) -> Bool {
-        guard let request = pendingInteractiveRequests.removeValue(forKey: requestID) else { return false }
-        var result: [String: Any] = [
-            "selectedOptionIds": response.selectedOptionIDs,
-            "selected_option_ids": response.selectedOptionIDs,
-            "answer": response.customText ?? response.selectedOptionIDs.joined(separator: ", ")
-        ]
-        if let customText = response.customText?.nonEmptyTrimmed {
-            result["text"] = customText
-            result["value"] = customText
+        locked {
+            guard let request = pendingInteractiveRequests.removeValue(forKey: requestID) else { return false }
+            // Send a single, well-formed JSON-RPC result. The previous shotgun of duplicate
+            // snake_case keys plus a `method` field (invalid inside a result) risked Codex
+            // rejecting the response and wedging the turn.
+            var result: [String: Any] = ["selectedOptionIds": response.selectedOptionIDs]
+            if let customText = response.customText?.nonEmptyTrimmed {
+                result["text"] = customText
+            } else if !response.selectedOptionIDs.isEmpty {
+                result["answer"] = response.selectedOptionIDs.joined(separator: ", ")
+            }
+            let didWrite = sendResponse(id: request.id, result: result)
+            if didWrite {
+                activityWatchdog?.resume()
+            }
+            return didWrite
         }
-        result["method"] = request.method
-        let didWrite = sendResponse(id: request.id, result: result)
-        if didWrite {
-            activityWatchdog?.resume()
-        }
-        return didWrite
     }
 
     func sendCompact() -> Bool {
-        _ = sendRequest(method: "compact", params: [:])
-        return inputPipe != nil
+        locked {
+            _ = sendRequest(method: "compact", params: [:])
+            return inputPipe != nil
+        }
     }
 
     /// Audit B-P1-3: error-path teardown must escalate signals to child
@@ -290,17 +320,19 @@ final class CodexAppServerBackend: ChatProcessBackend {
     }
 
     private func bootstrapCodex() {
-        let id = sendRequest(method: "initialize", params: [
-            "clientInfo": [
-                "name": "Acode",
-                "title": "Acode",
-                "version": "1.0"
-            ],
-            "capabilities": [
-                "experimentalApi": true
-            ]
-        ])
-        pendingRequests[id] = .initialize
+        locked {
+            let id = sendRequest(method: "initialize", params: [
+                "clientInfo": [
+                    "name": "Acode",
+                    "title": "Acode",
+                    "version": "1.0"
+                ],
+                "capabilities": [
+                    "experimentalApi": true
+                ]
+            ])
+            pendingRequests[id] = .initialize
+        }
     }
 
     private func requestThread(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?) {
@@ -434,9 +466,11 @@ final class CodexAppServerBackend: ChatProcessBackend {
     /// Codex 在 error notification 之后还可能再发出 turn/completed，没有 latch 的话
     /// ChatPanelState 会先 .failed 再 .finished，导致 反复覆盖状态。
     private func emitTerminalIfNeeded(_ event: ChatBackendEvent) -> [ChatBackendEvent] {
-        guard !didEmitTerminalEvent else { return [] }
-        didEmitTerminalEvent = true
-        return [event]
+        locked {
+            guard !didEmitTerminalEvent else { return [] }
+            didEmitTerminalEvent = true
+            return [event]
+        }
     }
 
     private func events(fromServerRequest object: [String: Any], id: Any, method: String) -> [ChatBackendEvent] {
