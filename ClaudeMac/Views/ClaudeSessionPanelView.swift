@@ -1653,6 +1653,10 @@ struct ChatPanelView: View {
     func fileChangePreviewCard(_ payload: DiffPayload, message: ChatMessage, primary: ChatMessage) -> some View {
         if let preview = message.toolCodePreview ?? primary.toolCodePreview {
             toolCodePreviewCard(preview)
+        } else if let streaming = message.streamingToolCodePreview ?? primary.streamingToolCodePreview {
+            // Render the shell immediately and stream Write/Edit content in as it arrives,
+            // instead of waiting for the full tool input JSON (and the "已完成文件修改" placeholder).
+            toolCodePreviewCard(streaming)
         } else if message.kind == .diff || primary.kind == .diff {
             toolDiffPreviewCard(message.kind == .diff ? message : primary)
         } else {

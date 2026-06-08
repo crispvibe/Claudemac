@@ -4028,6 +4028,100 @@ extension ChatMessage {
         return nil
     }
 
+    /// Like `looseToolStringValue` but returns the in-progress value of a JSON string field
+    /// even when the closing quote hasn't streamed yet, and unescapes JSON escapes correctly
+    /// (`\n`, `\t`, `\"`, `\\`, `\uXXXX`, …). Used to stream Write/Edit content into the card
+    /// as the model types it, before the tool input JSON is complete.
+    func streamingToolStringValue(keys: [String], in body: String) -> String? {
+        for key in keys {
+            for marker in ["\"\(key)\":\"", "\"\(key)\": \""] {
+                guard let range = body.range(of: marker) else { continue }
+                let chars = Array(body[range.upperBound...])
+                var result = ""
+                var index = 0
+                var closed = false
+                loop: while index < chars.count {
+                    let character = chars[index]
+                    if character == "\"" {
+                        closed = true
+                        break loop
+                    }
+                    if character != "\\" {
+                        result.append(character)
+                        index += 1
+                        continue
+                    }
+                    // Escape sequence — need at least the escaped char; if it hasn't streamed
+                    // yet, stop and return what we have so far.
+                    guard index + 1 < chars.count else { break loop }
+                    let next = chars[index + 1]
+                    switch next {
+                    case "n": result.append("\n"); index += 2
+                    case "t": result.append("\t"); index += 2
+                    case "r": result.append("\r"); index += 2
+                    case "b": result.append("\u{08}"); index += 2
+                    case "f": result.append("\u{0C}"); index += 2
+                    case "\"": result.append("\""); index += 2
+                    case "\\": result.append("\\"); index += 2
+                    case "/": result.append("/"); index += 2
+                    case "u":
+                        guard index + 5 < chars.count else { break loop }
+                        if let code = UInt32(String(chars[(index + 2)...(index + 5)]), radix: 16),
+                           let scalar = Unicode.Scalar(code) {
+                            result.append(Character(scalar))
+                        }
+                        index += 6
+                    default:
+                        result.append(next); index += 2
+                    }
+                }
+                if closed || !result.isEmpty { return result }
+            }
+        }
+        return nil
+    }
+
+    /// A live, partial preview for a streaming Write/Edit tool call so the card renders
+    /// immediately and fills in as content streams. Nil unless the message is mid-stream.
+    var streamingToolCodePreview: ToolCodePreview? {
+        guard isStreaming else { return nil }
+        let displayPath = toolFilePath ?? "正在写入…"
+        switch toolName.lowercased() {
+        case "write", "create", "create_file", "new_file":
+            let content = streamingToolStringValue(keys: ["content", "text", "source", "new_string", "newString"], in: text) ?? ""
+            let lines = Self.previewContentLines(content, marker: "+", tint: .green, limit: Self.maxToolCodePreviewLines)
+            let lineCount = content.isEmpty ? 0 : content.split(separator: "\n", omittingEmptySubsequences: false).count
+            return ToolCodePreview(
+                title: Self.displayFileName(displayPath),
+                path: displayPath,
+                stats: content.isEmpty ? "写入中…" : "写入 \(lineCount) 行…",
+                changeStats: ToolChangeStats(added: lineCount, removed: 0),
+                lines: lines
+            )
+        case "edit", "multi_edit", "multiedit":
+            var lines: [ToolCodePreview.Line] = []
+            var added = 0
+            var removed = 0
+            if let oldValue = streamingToolStringValue(keys: ["old_string", "oldString", "old", "before"], in: text), !oldValue.isEmpty {
+                removed = oldValue.split(separator: "\n", omittingEmptySubsequences: false).count
+                lines.append(contentsOf: Self.previewContentLines(oldValue, marker: "-", tint: .red, limit: Self.maxToolCodePreviewLines / 2))
+            }
+            if let newValue = streamingToolStringValue(keys: ["new_string", "newString", "replacement", "after"], in: text), !newValue.isEmpty {
+                added = newValue.split(separator: "\n", omittingEmptySubsequences: false).count
+                lines.append(contentsOf: Self.previewContentLines(newValue, marker: "+", tint: .green, limit: Self.maxToolCodePreviewLines / 2))
+            }
+            return ToolCodePreview(
+                title: Self.displayFileName(displayPath),
+                path: displayPath,
+                stats: lines.isEmpty ? "编辑中…" : "+\(added) / -\(removed)",
+                changeStats: ToolChangeStats(added: added, removed: removed),
+                lines: lines
+            )
+        default:
+            return nil
+        }
+    }
+
     private func textCommandValue(from value: String) -> String? {
         let lines = value.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         for line in lines {
