@@ -29,6 +29,8 @@ enum ChatModelCatalog {
         case .claude:
             return [
                 ChatModelOption(id: defaultClaudeModelID, title: "默认", cli: .claude),
+                ChatModelOption(id: "claude-opus-4-8[1m]", title: "Opus 4.8 1M", cli: .claude, contextWindow: 1_000_000),
+                ChatModelOption(id: "claude-opus-4-8", title: "Opus 4.8", cli: .claude),
                 ChatModelOption(id: "claude-opus-4-7", title: "Opus 4.7 1M", cli: .claude, contextWindow: 1_000_000),
                 ChatModelOption(id: "claude-opus-4-6", title: "Opus 4.6", cli: .claude),
                 ChatModelOption(id: "claude-sonnet-4-6", title: "Sonnet 4.6", cli: .claude),

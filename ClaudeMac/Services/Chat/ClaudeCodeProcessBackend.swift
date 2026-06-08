@@ -7,6 +7,8 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         let terminationReason: Process.TerminationReason
         let didReceiveVisibleOutput: Bool
         let didReceiveSuccessfulResult: Bool
+        let didReceiveAssistantContent: Bool
+        let didReceiveErrorResult: Bool
         let stderrOutput: String
         let stdoutDiagnostics: String
         let timedOut: Bool
@@ -38,6 +40,16 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                 || lowercasedDiagnostics.contains("unexpected argument '--brief'")
         }
 
+        var shouldRetryWithoutPermissionPromptTool: Bool {
+            guard !timedOut, terminationStatus != 0 else { return false }
+            let lowercasedDiagnostics = diagnosticOutput.lowercased()
+            guard lowercasedDiagnostics.contains("permission-prompt-tool") else { return false }
+            return lowercasedDiagnostics.contains("unknown option")
+                || lowercasedDiagnostics.contains("unexpected argument")
+                || lowercasedDiagnostics.contains("unrecognized")
+                || lowercasedDiagnostics.contains("invalid option")
+        }
+
         var diagnosticOutput: String {
             [stderrOutput, stdoutDiagnostics]
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -49,6 +61,8 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
     private struct StdoutReadResult {
         let didReceiveVisibleOutput: Bool
         let didReceiveSuccessfulResult: Bool
+        let didReceiveAssistantContent: Bool
+        let didReceiveErrorResult: Bool
         let diagnostics: String
     }
 
@@ -66,7 +80,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         var activeBlocks: [Int: ClaudeContentBlock] = [:]
     }
 
-    private static let idleTimeout: TimeInterval = 5 * 60
+    private static let idleTimeout: TimeInterval = 30 * 60
 
     private var process: Process?
     private var inputPipe: Pipe?
@@ -76,6 +90,55 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
     private let compactStateLock = NSLock()
     private var isWaitingForCompactResult = false
 
+    /// One AskUserQuestion question parsed from a `can_use_tool` control_request,
+    /// retaining the option-id → label map so a user's selection can be turned back
+    /// into the `answers` map the CLI expects in `updatedInput`.
+    private struct ParsedAskQuestion {
+        let text: String
+        let multiSelect: Bool
+        let optionLabelsByID: [String: String]
+    }
+
+    /// A pending tool-permission / AskUserQuestion request awaiting our
+    /// `control_response`. `input`/`toolUseID` are echoed back verbatim so the CLI
+    /// runs the tool with the original (or answer-augmented) input.
+    private struct PendingControlRequest {
+        let requestID: String
+        let toolName: String
+        let input: [String: Any]
+        let toolUseID: String?
+        let questions: [ParsedAskQuestion]
+    }
+
+    private let controlLock = NSLock()
+    private var pendingControlRequests: [String: PendingControlRequest] = [:]
+    /// Serializes all writes to the child's stdin so concurrent replies (initial prompt,
+    /// permission/selection answers, /compact) from different tasks can't interleave and
+    /// corrupt the JSONL stream.
+    private let pipeWriteLock = NSLock()
+
+    private func writeJSONToInput(_ object: [String: Any]) -> Bool {
+        pipeWriteLock.lock()
+        defer { pipeWriteLock.unlock() }
+        return ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+    }
+
+    private func setPendingControlRequest(_ request: PendingControlRequest) {
+        controlLock.lock(); pendingControlRequests[request.requestID] = request; controlLock.unlock()
+    }
+
+    private func pendingControlRequest(_ id: String) -> PendingControlRequest? {
+        controlLock.lock(); defer { controlLock.unlock() }; return pendingControlRequests[id]
+    }
+
+    private func removePendingControlRequest(_ id: String) {
+        controlLock.lock(); pendingControlRequests.removeValue(forKey: id); controlLock.unlock()
+    }
+
+    private func clearPendingControlRequests() {
+        controlLock.lock(); pendingControlRequests.removeAll(); controlLock.unlock()
+    }
+
     func start(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, attachments: [ChatMessageAttachment]) -> AsyncThrowingStream<ChatBackendEvent, Error> {
         AsyncThrowingStream { continuation in
             let worker = Task.detached(priority: .userInitiated) { [weak self] in
@@ -84,6 +147,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                 var includeEffort = true
                 var includePartialMessages = true
                 var includeBrief = true
+                var includePermissionPromptTool = true
                 let finalRun: ProcessRunResult
 
                 while true {
@@ -95,10 +159,24 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                         includeEffort: includeEffort,
                         includePartialMessages: includePartialMessages,
                         includeBrief: includeBrief,
+                        includePermissionPromptTool: includePermissionPromptTool,
                         continuation: continuation
                     ) else {
                         continuation.finish()
                         return
+                    }
+
+                    if includePermissionPromptTool, run.shouldRetryWithoutPermissionPromptTool {
+                        includePermissionPromptTool = false
+                        continuation.yield(.appendMessage(
+                            kind: .system,
+                            title: "Claude Code",
+                            subtitle: "fallback",
+                            text: "当前 Claude Code 没有接受 --permission-prompt-tool，本次已改用默认权限处理重试。",
+                            status: "retry",
+                            requestID: nil
+                        ))
+                        continue
                     }
 
                     if includeBrief, run.shouldRetryWithoutBrief {
@@ -162,14 +240,16 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         includeEffort: Bool,
         includePartialMessages: Bool,
         includeBrief: Bool,
+        includePermissionPromptTool: Bool,
         continuation: AsyncThrowingStream<ChatBackendEvent, Error>.Continuation
     ) async -> ProcessRunResult? {
         let process = Process()
         let stdout = Pipe()
         let stderr = Pipe()
         let stdin = Pipe()
+        clearPendingControlRequests()
         process.executableURL = URL(fileURLWithPath: options.executablePath)
-        process.arguments = arguments(prompt: prompt, options: options, session: session, includeEffort: includeEffort, includePartialMessages: includePartialMessages, includeBrief: includeBrief)
+        process.arguments = arguments(prompt: prompt, options: options, session: session, includeEffort: includeEffort, includePartialMessages: includePartialMessages, includeBrief: includeBrief, includePermissionPromptTool: includePermissionPromptTool)
         process.currentDirectoryURL = URL(fileURLWithPath: options.projectPath, isDirectory: true)
         process.environment = ChatCLIEnvironment.processEnvironment
         process.standardOutput = stdout
@@ -222,6 +302,8 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         let stdoutTask = Task { () -> StdoutReadResult in
             var didReceiveVisibleOutput = false
             var didReceiveSuccessfulResult = false
+            var didReceiveAssistantContent = false
+            var didReceiveErrorResult = false
             var streamState = ClaudeStreamState()
             var eventCoalescer = ChatBackendEventCoalescer()
             var diagnostics: [String] = []
@@ -240,7 +322,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             func makeReadResult() -> StdoutReadResult {
                 let output = diagnostics.joined(separator: "\n")
                 let diagnosticOutput = didTruncateDiagnostics ? "... stdout diagnostics truncated to last 60 entries ...\n\(output)" : output
-                return StdoutReadResult(didReceiveVisibleOutput: didReceiveVisibleOutput, didReceiveSuccessfulResult: didReceiveSuccessfulResult, diagnostics: diagnosticOutput)
+                return StdoutReadResult(didReceiveVisibleOutput: didReceiveVisibleOutput, didReceiveSuccessfulResult: didReceiveSuccessfulResult, didReceiveAssistantContent: didReceiveAssistantContent, didReceiveErrorResult: didReceiveErrorResult, diagnostics: diagnosticOutput)
             }
 
             do {
@@ -250,10 +332,26 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                         didYieldStdoutActivity = true
                         continuation.yield(.backendActivity("stdout-first-line"))
                     }
+                    if let controlEvents = self.handleControlRequestLine(line) {
+                        didReceiveVisibleOutput = true
+                        // We are now blocked on the user; freeze the idle watchdog so a slow
+                        // human answer can't be mistaken for a dead process.
+                        watchdog.pause()
+                        for event in eventCoalescer.push(controlEvents) {
+                            continuation.yield(event)
+                        }
+                        continue
+                    }
                     appendDiagnostic(Self.diagnosticText(fromClaudeLine: line))
                     let events = Self.events(fromClaudeLine: line, streamState: &streamState)
                     if events.contains(where: Self.isVisibleOutput) {
                         didReceiveVisibleOutput = true
+                    }
+                    if events.contains(where: Self.isAssistantOutput) {
+                        didReceiveAssistantContent = true
+                    }
+                    if events.contains(where: Self.isErrorOutput) {
+                        didReceiveErrorResult = true
                     }
                     if events.contains(where: Self.shouldPauseActivityWatchdog) {
                         watchdog.pause()
@@ -370,6 +468,8 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             terminationReason: process.terminationReason,
             didReceiveVisibleOutput: stdoutResult.didReceiveVisibleOutput,
             didReceiveSuccessfulResult: stdoutResult.didReceiveSuccessfulResult,
+            didReceiveAssistantContent: stdoutResult.didReceiveAssistantContent,
+            didReceiveErrorResult: stdoutResult.didReceiveErrorResult,
             stderrOutput: stderrOutput,
             stdoutDiagnostics: stdoutResult.diagnostics,
             timedOut: timedOut
@@ -385,16 +485,18 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             return diagnostics.isEmpty ? message : "\(message)\n\(diagnostics)"
         }
 
-        if result.timedOut {
-            continuation.yield(.failed(messageWithDiagnostics("Claude Code 后端超时无响应，已停止进程。请检查认证、模型或网络配置。")))
-        } else if result.didReceiveSuccessfulResult {
+        if result.didReceiveSuccessfulResult {
             continuation.yield(.finished)
+        } else if result.didReceiveAssistantContent && !result.didReceiveErrorResult {
+            // The turn was cut short (idle/hard timeout, signal, or aborted stream) but it had
+            // already streamed real assistant content and reported no error — finish gracefully
+            // and keep what arrived. We intentionally do NOT treat error results / error
+            // messages as a clean finish, so auth/quota/error_* failures still surface.
+            continuation.yield(.finished)
+        } else if result.timedOut {
+            continuation.yield(.failed(messageWithDiagnostics("Claude Code 后端超时无响应，已停止进程。请检查认证、模型或网络配置。")))
         } else if result.terminationStatus == 0 {
-            if result.didReceiveVisibleOutput {
-                continuation.yield(.finished)
-            } else {
-                continuation.yield(.failed("Claude Code 没有输出任何对话内容。请检查认证配置或模型设置。"))
-            }
+            continuation.yield(.failed("Claude Code 没有输出任何对话内容。请检查认证配置或模型设置。"))
         } else if result.terminationReason == .uncaughtSignal {
             continuation.yield(.failed(messageWithDiagnostics("Claude Code 已停止。")))
         } else {
@@ -413,41 +515,191 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
     }
 
     func respondToPermission(requestID: String, decision: ChatPermissionDecision) -> Bool {
-        var response: [String: Any] = ["allowed": decision.isAllowed]
-        if decision == .allowForSession {
-            response["scope"] = "session"
+        let pending = pendingControlRequest(requestID)
+        var inner: [String: Any] = [:]
+        if decision.isAllowed {
+            inner["behavior"] = "allow"
+            inner["updatedInput"] = pending?.input ?? [:]
+            if decision == .allowForSession, let toolName = pending?.toolName {
+                inner["updatedPermissions"] = [[
+                    "type": "addRules",
+                    "rules": [["toolName": toolName]],
+                    "behavior": "allow",
+                    "destination": "session"
+                ]]
+            }
+        } else {
+            inner["behavior"] = "deny"
+            inner["message"] = "用户拒绝了该操作。"
         }
-        let object: [String: Any] = [
-            "type": "control_response",
-            "request_id": requestID,
-            "response": response
-        ]
-        let didWrite = ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+        if let toolUseID = pending?.toolUseID { inner["toolUseID"] = toolUseID }
+        let didWrite = writeControlResponse(requestID: requestID, inner: inner)
         if didWrite {
+            removePendingControlRequest(requestID)
             activityWatchdog?.resume()
         }
         return didWrite
     }
 
     func respondToInteractiveRequest(requestID: String, response: ChatInteractiveResponse) -> Bool {
-        let answerText = response.customText?.nonEmptyTrimmed ?? response.selectedOptionIDs.joined(separator: ", ").nonEmptyTrimmed
-        guard let answerText else { return false }
-        var result: [String: Any] = [
-            "selectedOptionIds": response.selectedOptionIDs,
-            "selected_option_ids": response.selectedOptionIDs,
-            "answer": answerText,
-            "text": answerText,
-            "value": answerText
-        ]
-        if let customText = response.customText?.nonEmptyTrimmed {
-            result["customText"] = customText
-            result["custom_text"] = customText
+        guard let pending = pendingControlRequest(requestID), !pending.questions.isEmpty else {
+            // No control gate recorded (legacy/custom interactive tool): best-effort send as a
+            // plain user message so the turn isn't left hanging.
+            let answer = response.customText?.nonEmptyTrimmed ?? response.selectedOptionIDs.joined(separator: ", ").nonEmptyTrimmed
+            guard let answer else { return false }
+            let didWrite = writeStreamUserMessage(text: answer, attachments: [], sessionID: activeSessionID?.nonEmptyTrimmed, parentToolUseID: requestID, toolUseResult: nil, projectPath: nil)
+            if didWrite { activityWatchdog?.resume() }
+            return didWrite
         }
-        let didWrite = writeStreamUserMessage(text: answerText, attachments: [], sessionID: activeSessionID?.nonEmptyTrimmed, parentToolUseID: requestID, toolUseResult: result, projectPath: nil)
+
+        // Map selected option IDs (formatted "q{qi}o{oi}") back to per-question answer labels.
+        var labelsByQuestion: [Int: [String]] = [:]
+        for optionID in response.selectedOptionIDs {
+            for (index, question) in pending.questions.enumerated() {
+                if let label = question.optionLabelsByID[optionID] {
+                    labelsByQuestion[index, default: []].append(label)
+                    break
+                }
+            }
+        }
+        var answers: [String: String] = [:]
+        for (index, question) in pending.questions.enumerated() {
+            if let labels = labelsByQuestion[index], !labels.isEmpty {
+                answers[question.text] = labels.joined(separator: ", ")
+            }
+        }
+        // Free-text reply: only valid for a text-mode question (one with no preset options).
+        if answers.isEmpty, let custom = response.customText?.nonEmptyTrimmed,
+           let first = pending.questions.first, first.optionLabelsByID.isEmpty {
+            answers[first.text] = custom
+        }
+        guard !answers.isEmpty else { return false }
+
+        var updatedInput = pending.input
+        updatedInput["answers"] = answers
+        var inner: [String: Any] = ["behavior": "allow", "updatedInput": updatedInput]
+        if let toolUseID = pending.toolUseID { inner["toolUseID"] = toolUseID }
+        let didWrite = writeControlResponse(requestID: requestID, inner: inner)
         if didWrite {
+            removePendingControlRequest(requestID)
             activityWatchdog?.resume()
         }
         return didWrite
+    }
+
+    /// Serialize the authoritative control_response envelope. `request_id` is nested inside
+    /// `response` (not top-level), and the innermost `response` is the PermissionResult.
+    private func writeControlResponse(requestID: String, inner: [String: Any]) -> Bool {
+        let object: [String: Any] = [
+            "type": "control_response",
+            "response": [
+                "subtype": "success",
+                "request_id": requestID,
+                "response": inner
+            ]
+        ]
+        return writeJSONToInput(object)
+    }
+
+    /// Parse a `can_use_tool` control_request line, record its context for the eventual
+    /// control_response, and return the UI event (permission card or interactive picker).
+    /// Returns nil for non-control lines so the caller falls through to normal parsing.
+    private func handleControlRequestLine(_ line: String) -> [ChatBackendEvent]? {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (object["type"] as? String) == "control_request",
+              let request = object["request"] as? [String: Any],
+              (request["subtype"] as? String) == "can_use_tool" else { return nil }
+
+        let requestID = Self.stringValue(object["request_id"]) ?? Self.stringValue(object["id"]) ?? UUID().uuidString
+        let toolName = Self.stringValue(request["tool_name"]) ?? "tool"
+        let displayName = Self.stringValue(request["display_name"]) ?? toolName
+        let input = (request["input"] as? [String: Any]) ?? [:]
+        let toolUseID = Self.stringValue(request["tool_use_id"])
+
+        if Self.isAskUserQuestionName(toolName) {
+            let (interactive, questions) = Self.buildInteractiveRequest(requestID: requestID, input: input)
+            setPendingControlRequest(PendingControlRequest(requestID: requestID, toolName: toolName, input: input, toolUseID: toolUseID, questions: questions))
+            return [.interactiveRequest(interactive)]
+        }
+
+        setPendingControlRequest(PendingControlRequest(requestID: requestID, toolName: toolName, input: input, toolUseID: toolUseID, questions: []))
+        return [.permissionRequest(id: requestID, title: displayName, text: Self.permissionPromptText(toolName: displayName, input: input))]
+    }
+
+    private static func isAskUserQuestionName(_ name: String?) -> Bool {
+        guard let name else { return false }
+        return name.lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
+            .contains("askuserquestion")
+    }
+
+    private static func permissionPromptText(toolName: String, input: [String: Any]) -> String {
+        if let command = stringValue(input["command"]), !command.isEmpty {
+            return command
+        }
+        if let path = stringValue(input["file_path"]) ?? stringValue(input["path"]), !path.isEmpty {
+            return path
+        }
+        let summary = compactText(from: input)
+        return summary.isEmpty ? "请求使用 \(toolName)" : summary
+    }
+
+    /// Build the interactive picker plus the option-id → label map used to translate the
+    /// user's selection back into the AskUserQuestion `answers` object.
+    private static func buildInteractiveRequest(requestID: String, input: [String: Any]) -> (ChatInteractiveRequest, [ParsedAskQuestion]) {
+        let rawQuestions = (input["questions"] as? [[String: Any]]) ?? []
+        let multiQuestion = rawQuestions.count > 1
+        var parsed: [ParsedAskQuestion] = []
+        var options: [ChatInteractiveOption] = []
+        var prompts: [String] = []
+        var anyMultiSelect = false
+
+        for (questionIndex, question) in rawQuestions.enumerated() {
+            let questionText = stringValue(question["question"]) ?? stringValue(question["prompt"]) ?? stringValue(question["message"]) ?? "问题 \(questionIndex + 1)"
+            let header = stringValue(question["header"])
+            let multiSelect = boolValue(question["multiSelect"]) ?? boolValue(question["multi_select"]) ?? false
+            if multiSelect { anyMultiSelect = true }
+            prompts.append(questionText)
+
+            var labelsByID: [String: String] = [:]
+            let rawOptions = (question["options"] as? [Any]) ?? (question["choices"] as? [Any]) ?? []
+            for (optionIndex, rawOption) in rawOptions.enumerated() {
+                let optionID = "q\(questionIndex)o\(optionIndex)"
+                let label: String
+                let detail: String
+                if let text = stringValue(rawOption) {
+                    label = text
+                    detail = ""
+                } else if let dict = rawOption as? [String: Any] {
+                    label = stringValue(dict["label"]) ?? stringValue(dict["title"]) ?? stringValue(dict["value"]) ?? "选项 \(optionIndex + 1)"
+                    detail = stringValue(dict["description"]) ?? stringValue(dict["detail"]) ?? ""
+                } else {
+                    label = "选项 \(optionIndex + 1)"
+                    detail = ""
+                }
+                labelsByID[optionID] = label
+                let displayLabel = multiQuestion ? "\(header ?? "问题 \(questionIndex + 1)")：\(label)" : label
+                options.append(ChatInteractiveOption(id: optionID, label: displayLabel, detail: detail))
+            }
+            parsed.append(ParsedAskQuestion(text: questionText, multiSelect: multiSelect, optionLabelsByID: labelsByID))
+        }
+
+        let mode: ChatInteractiveMode = options.isEmpty ? .text : ((anyMultiSelect || multiQuestion) ? .multipleChoice : .singleChoice)
+        let title = (rawQuestions.count == 1 ? stringValue(rawQuestions[0]["header"]) : nil) ?? "需要选择"
+        let request = ChatInteractiveRequest(
+            id: requestID,
+            title: title,
+            prompt: prompts.joined(separator: "\n\n"),
+            mode: mode,
+            options: options,
+            allowCustomInput: options.isEmpty,
+            placeholder: "输入自定义回复",
+            status: .waiting
+        )
+        return (request, parsed)
     }
 
     /// Audit B-P0-1: write the user message to Claude stdin with optional
@@ -508,7 +760,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         if let toolUseResult {
             object["tool_use_result"] = toolUseResult
         }
-        return ChatPipeWriter.writeJSONObject(object, to: inputPipe)
+        return writeJSONToInput(object)
     }
 
     /// Build a single Anthropic content block for an attachment. Images get
@@ -603,6 +855,12 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
     }
 
     func sendCompact() -> Bool {
+        // Don't issue a second /compact while one is still in flight (a transient low
+        // token-usage reading could otherwise re-trigger auto-compaction and spam the CLI).
+        compactStateLock.lock()
+        let alreadyWaiting = isWaitingForCompactResult
+        compactStateLock.unlock()
+        if alreadyWaiting { return false }
         let didWrite = writeStreamUserMessage(
             text: "/compact",
             attachments: [],
@@ -640,7 +898,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         return ([executablePath] + displayArguments).joined(separator: " ")
     }
 
-    private func arguments(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, includeEffort: Bool, includePartialMessages: Bool, includeBrief: Bool) -> [String] {
+    private func arguments(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, includeEffort: Bool, includePartialMessages: Bool, includeBrief: Bool, includePermissionPromptTool: Bool) -> [String] {
         var args: [String] = []
         if options.sessionMode == .continueLast {
             args.append("--continue")
@@ -664,6 +922,12 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             args.append("--include-partial-messages")
         }
         args.append(contentsOf: ["--permission-mode", options.permissionMode.claudePermissionMode])
+        if options.supportsStreamJSONInput, includePermissionPromptTool {
+            // Route tool-permission and AskUserQuestion gating to our stdin/stdout control
+            // channel so we can answer with a proper control_response. Without this the CLI
+            // either resolves silently or waits for a TTY that doesn't exist and aborts.
+            args.append(contentsOf: ["--permission-prompt-tool", "stdio"])
+        }
         if includeEffort {
             args.append(contentsOf: ["--effort", options.reasoningEffort.claudeArgument])
         }
@@ -698,6 +962,10 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
 
         let type = object["type"] as? String ?? object["event"] as? String ?? "raw"
         guard type != "user" else { return events }
+        // control_request (tool permission / AskUserQuestion gating) is handled by the
+        // instance loop via handleControlRequestLine, which can store the request context
+        // needed to build a correct control_response. Don't emit a generic card here.
+        guard type != "control_request", type != "control_cancel_request" else { return events }
         if let errorText = errorText(from: object, type: type) {
             events.append(.appendMessage(kind: .error, title: "Claude Code", subtitle: type, text: errorText, status: "failed", requestID: stringValue(object["request_id"]) ?? stringValue(object["id"])))
             return events
@@ -851,6 +1119,9 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                 streamState.activeBlocks[blockIndex] = block
             }
             guard blockType != "text" && blockType != "thinking" else { return [] }
+            // AskUserQuestion is surfaced (and answered) via its can_use_tool control_request,
+            // so suppress the streaming tool_use card to avoid showing it twice.
+            if Self.isAskUserQuestionName(block.name) { return [] }
             let kind = kindForClaudeBlockType(blockType)
             guard kind != .rawOutput else { return [] }
             return [.appendMessage(
@@ -877,6 +1148,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                 return [.appendDelta(kind: .reasoning, title: "thinking", subtitle: "Claude Code", text: text, status: "streaming", requestID: activeBlock?.id)]
             }
             if deltaType == "input_json_delta", let activeBlock, let text = stringValue(delta["partial_json"]), !text.isEmpty {
+                if Self.isAskUserQuestionName(activeBlock.name) { return [] }
                 return [.appendDelta(kind: .toolCall, title: activeBlock.type, subtitle: activeBlock.name ?? "", text: text, status: "streaming", requestID: activeBlock.id)]
             }
             return []
@@ -887,6 +1159,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                 streamState.activeBlocks.removeValue(forKey: blockIndex)
             }
             guard let activeBlock, activeBlock.type != "text", activeBlock.type != "thinking" else { return [] }
+            if Self.isAskUserQuestionName(activeBlock.name) { return [] }
             return [.finishStreamingMessage(kind: kindForClaudeBlockType(activeBlock.type), requestID: activeBlock.id, status: "done")]
         }
 
@@ -962,6 +1235,19 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         }
     }
 
+    /// True for events that signal a real failure (error messages or a non-success terminal
+    /// result). Used so a turn that only emitted an error isn't reported as a clean finish.
+    private static func isErrorOutput(_ event: ChatBackendEvent) -> Bool {
+        switch event {
+        case .appendMessage(let kind, _, _, _, _, _):
+            kind == .error
+        case .failed:
+            true
+        default:
+            false
+        }
+    }
+
     private static func assistantEvents(from object: [String: Any], streamState: inout ClaudeStreamState) -> [ChatBackendEvent] {
         var events: [ChatBackendEvent] = []
         if !streamState.didReceiveStreamEventAssistantTextDelta,
@@ -979,6 +1265,10 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                 let id = stringValue(item["id"]) ?? stringValue(item["tool_use_id"]) ?? compactText(from: item)
                 guard !streamState.emittedContentItemIDs.contains(id) else { continue }
                 streamState.emittedContentItemIDs.insert(id)
+                // AskUserQuestion is rendered/answered via its can_use_tool control_request;
+                // drop the assistant-side copy (matched by name OR the questions shape) so the
+                // picker isn't shown twice and a duplicate, ungated card can't be answered.
+                if isAskUserQuestionName(stringValue(item["name"])) || item["questions"] != nil { continue }
                 events.append(contentsOf: contentItemEvents(from: item))
             }
         }

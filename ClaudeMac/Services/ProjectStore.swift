@@ -240,15 +240,24 @@ struct ProjectStore {
     }
 
     static func resolveURL(for project: ProjectItem) throws -> URL {
+        // A stale bookmark still resolves to a valid, usable URL — staleness only signals
+        // that the bookmark should be recreated, not that access is gone. This app is
+        // non-sandboxed, so when the bookmark can't be resolved at all we fall back to the
+        // stored path, which is directly readable once the user grants disk access.
         var isStale = false
-        let url = try URL(
+        if let url = try? URL(
             resolvingBookmarkData: project.bookmarkData,
             options: [.withSecurityScope],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
-        )
-        if isStale { throw ProjectStoreError.bookmarkInvalid }
-        return url
+        ) {
+            return url
+        }
+        let fallback = URL(fileURLWithPath: project.path, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: fallback.path) else {
+            throw ProjectStoreError.bookmarkInvalid
+        }
+        return fallback
     }
 
     @MainActor

@@ -44,6 +44,7 @@ struct ChatPanelView: View {
     @State var isTranscriptAtBottom = true
     @State var composerTextHeight: CGFloat = 42
     @State var composerChromeHeight: CGFloat = 0
+    @State var decisionOverlayContentHeight: CGFloat = 0
     @State var selectedSubagentDetail: SubagentDetailRequest?
     @State var selectedAppendRulePreview: AppendRulePreview?
     @State var loadingThinkingText = Self.thinkingPhrases[0]
@@ -131,6 +132,12 @@ struct ChatPanelView: View {
                 globalPickerLayer(activePicker)
                     .zIndex(1_000)
             }
+
+            agentRunningOverlay()
+                .zIndex(950)
+
+            pendingDecisionOverlay()
+                .zIndex(980)
         }
         .background(chatPanelSurface)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -1017,7 +1024,13 @@ struct ChatPanelView: View {
             messageRow(message, lastVisibleMessageID: lastVisibleMessageID)
         case .toolGroup(let group):
             if group.primary.isExitPlanModeCall {
-                planConfirmationRow(group.primary)
+                if isActivePendingDecision(group.primary) {
+                    EmptyView() // shown in the floating decision overlay
+                } else {
+                    planConfirmationRow(group.primary)
+                }
+            } else if group.primary.isAgentTool {
+                agentTranscriptRow(group.primary, context: group.responses.last ?? group.primary)
             } else {
                 toolInvocationRow(group)
             }
@@ -1040,14 +1053,28 @@ struct ChatPanelView: View {
             errorMessageRow(message)
         case .toolCall, .toolResult, .command, .commandOutput, .diff:
             if message.isExitPlanModeCall {
-                planConfirmationRow(message)
+                if isActivePendingDecision(message) {
+                    EmptyView() // shown in the floating decision overlay
+                } else {
+                    planConfirmationRow(message)
+                }
+            } else if message.isAgentTool {
+                agentTranscriptRow(message, context: message)
             } else {
                 toolInvocationRow(message)
             }
         case .permissionRequest:
-            permissionRequestRow(message)
+            if isActivePendingDecision(message) {
+                EmptyView() // shown in the floating decision overlay
+            } else {
+                permissionRequestRow(message)
+            }
         case .interactiveRequest:
-            interactiveRequestRow(message)
+            if isActivePendingDecision(message) {
+                EmptyView() // shown in the floating decision overlay
+            } else {
+                interactiveRequestRow(message)
+            }
         case .system, .result, .rawOutput:
             EmptyView()
         }
@@ -1258,12 +1285,11 @@ struct ChatPanelView: View {
     @ViewBuilder
     func toolInvocationRow(_ message: ChatMessage) -> some View {
         if shouldShowCurrentCLIToolCards {
-            let showsInlineDetail = shouldShowInlineToolDetail(message)
-            let isPinnedOpen = isAlwaysVisibleTool(message)
-            let isTextOnly = isTextOnlyTool(message)
-            let isExpanded = expandedTranscriptMessageIDs.contains(message.id)
-            let isDetailVisible = !isTextOnly && (isPinnedOpen || isExpanded || (showsInlineDetail && !collapsedInlineToolIDs.contains(message.id)))
-            toolInvocationCard(message, statusMessage: message, isDetailVisible: isDetailVisible, isInlineDetail: showsInlineDetail, isCollapsible: !isPinnedOpen && !isTextOnly) {
+            // Only file-change tools (Write/Edit/MultiEdit) and failed tools keep their rich,
+            // expandable detail. Every other (successful) tool collapses to a single static
+            // line — no chevron, no detail body, no payload parsing — the main perf win.
+            let isRich = isFileChangeTool(message) || message.toolStatusKind == .failed
+            toolInvocationCard(message, statusMessage: message, isDetailVisible: isRich, isInlineDetail: isRich, isCollapsible: false) {
                 toolDetailCard(message)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -1273,13 +1299,11 @@ struct ChatPanelView: View {
     @ViewBuilder
     func toolInvocationRow(_ group: ToolInvocationGroup) -> some View {
         if shouldShowCurrentCLIToolCards {
-            let showsInlineDetail = shouldShowInlineToolDetail(group)
             let statusMessage = group.responses.last ?? group.primary
-            let isPinnedOpen = isAlwaysVisibleTool(group.primary) || isAlwaysVisibleTool(statusMessage)
-            let isTextOnly = isTextOnlyTool(group.primary) || isTextOnlyTool(statusMessage)
-            let isExpanded = expandedTranscriptMessageIDs.contains(group.primary.id)
-            let isDetailVisible = !isTextOnly && (isPinnedOpen || isExpanded || (showsInlineDetail && !collapsedInlineToolIDs.contains(group.primary.id)))
-            toolInvocationCard(group.primary, statusMessage: statusMessage, isDetailVisible: isDetailVisible, isInlineDetail: showsInlineDetail, isCollapsible: !isPinnedOpen && !isTextOnly, feedbackCount: group.responses.count) {
+            let isRich = isFileChangeTool(group.primary)
+                || group.primary.toolStatusKind == .failed
+                || statusMessage.toolStatusKind == .failed
+            toolInvocationCard(group.primary, statusMessage: statusMessage, isDetailVisible: isRich, isInlineDetail: isRich, isCollapsible: false, feedbackCount: group.responses.count) {
                 toolDetailCard(group)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -1299,7 +1323,7 @@ struct ChatPanelView: View {
         feedbackCount: Int = 0,
         @ViewBuilder detail: () -> Detail
     ) -> some View {
-        let hidesHeader = isTodoTool(message) || isTodoTool(statusMessage)
+        let hidesHeader = (isTodoTool(message) || isTodoTool(statusMessage)) && isDetailVisible
         return VStack(alignment: .leading, spacing: 0) {
             if !hidesHeader {
                 toolInvocationHeader(
@@ -2015,6 +2039,199 @@ struct ChatPanelView: View {
     func subagentSummaryCard(_ message: ChatMessage, context: ChatMessage) -> some View {
         let payload = ToolPayloadCache.payload(for: message, context: context).semanticAgentPayload(message: message, context: context)
         return subagentSummaryCard(payload, message: message, context: context)
+    }
+
+    /// Whether a finished tool_result already exists for this agent call.
+    func agentToolResultExists(for requestID: String?) -> Bool {
+        guard let requestID = requestID?.nonEmptyTrimmed else { return false }
+        return chatState.messages.contains { $0.kind == .toolResult && $0.requestID == requestID }
+    }
+
+    /// An agent call is "running" until its tool_result arrives (or the turn ends).
+    func isAgentRunning(_ message: ChatMessage) -> Bool {
+        guard message.isAgentTool else { return false }
+        if agentToolResultExists(for: message.requestID) { return false }
+        return chatState.status.isRunning
+    }
+
+    /// Agent calls don't render an inline card while running — a floating progress pill above
+    /// the composer represents them instead (see agentRunningOverlay). Once complete they
+    /// collapse to a single tappable line that opens the full sub-agent transcript.
+    @ViewBuilder
+    func agentTranscriptRow(_ message: ChatMessage, context: ChatMessage) -> some View {
+        if isAgentRunning(message) {
+            EmptyView()
+        } else {
+            agentResultRow(message, context: context)
+        }
+    }
+
+    func agentResultRow(_ message: ChatMessage, context: ChatMessage) -> some View {
+        let request = subagentTranscriptRequest(message: message, context: context)
+        let title = context.subagentDisplayTitle.nonEmptyTrimmed ?? message.subagentDisplayTitle.nonEmptyTrimmed ?? "Agent"
+        return HStack(spacing: 5) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary.opacity(0.6))
+                .frame(width: 13, height: 13)
+            Text(title)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary.opacity(0.82))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+            if request != nil {
+                Image(systemName: "arrow.up.forward")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.6))
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard let request else { return }
+            selectedSubagentDetail = request
+        }
+        .help(title)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Agent calls currently in flight, used to drive the floating progress pill.
+    var runningAgentMessages: [ChatMessage] {
+        guard chatState.status.isRunning else { return [] }
+        let messages = chatState.messages
+        var resultRequestIDs = Set<String>()
+        for message in messages where message.kind == .toolResult {
+            if let requestID = message.requestID?.nonEmptyTrimmed {
+                resultRequestIDs.insert(requestID)
+            }
+        }
+        return messages.filter { message in
+            guard message.isAgentTool, message.kind == .toolCall else { return false }
+            guard let requestID = message.requestID?.nonEmptyTrimmed else { return true }
+            return !resultRequestIDs.contains(requestID)
+        }
+    }
+
+    @ViewBuilder
+    func agentRunningOverlay() -> some View {
+        let agents = runningAgentMessages
+        if !agents.isEmpty {
+            let title = agents.last?.subagentDisplayTitle.nonEmptyTrimmed
+            let label = agents.count > 1 ? "\(agents.count) 个 Agent 运行中…" : "Agent 运行中：\(title ?? "子任务")"
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 14, height: 14)
+                    Text(label)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(AppTheme.weakHairline, lineWidth: 1))
+                .shadow(color: Color.black.opacity(0.12), radius: 8, y: 2)
+                .padding(.bottom, composerChromeHeight + 10)
+            }
+            .frame(maxWidth: .infinity)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
+    }
+
+    private enum PendingDecision {
+        case permission(ChatMessage)
+        case interactive(ChatMessage)
+        case plan(ChatMessage)
+    }
+
+    /// The decision currently awaiting the user (permission y/n, AskUserQuestion选择题, or
+    /// plan execution confirmation). These pop up in a floating layer above the composer
+    /// (IDE quick-pick style) instead of rendering inline in the transcript.
+    private var activePendingDecision: PendingDecision? {
+        for message in chatState.messages.reversed() {
+            if message.kind == .permissionRequest, message.status == "waiting" {
+                return .permission(message)
+            }
+            if message.kind == .interactiveRequest, (message.interactiveRequest?.status ?? .waiting) == .waiting {
+                return .interactive(message)
+            }
+            if message.isExitPlanModeCall, canActOnExitPlanMode(for: message) {
+                return .plan(message)
+            }
+            if message.kind == .user { break }
+        }
+        return nil
+    }
+
+    private func decisionMessageID(_ decision: PendingDecision) -> UUID {
+        switch decision {
+        case .permission(let message), .interactive(let message), .plan(let message):
+            return message.id
+        }
+    }
+
+    /// Single source of truth shared by the overlay and the inline transcript: a message is
+    /// suppressed inline iff it is the one currently shown in the floating decision overlay.
+    /// This guarantees the two can never disagree (which could otherwise hide a prompt).
+    private func isActivePendingDecision(_ message: ChatMessage) -> Bool {
+        guard let decision = activePendingDecision else { return false }
+        return decisionMessageID(decision) == message.id
+    }
+
+    @ViewBuilder
+    func pendingDecisionOverlay() -> some View {
+        if let decision = activePendingDecision {
+            let maxOverlayHeight: CGFloat = 460
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                ScrollView {
+                    decisionCard(decision)
+                        .padding(14)
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear.preference(key: DecisionOverlayHeightPreferenceKey.self, value: proxy.size.height)
+                            }
+                        )
+                }
+                .frame(height: min(max(decisionOverlayContentHeight, 1), maxOverlayHeight))
+                .scrollBounceBehavior(.basedOnSize)
+                .id(decisionMessageID(decision))
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(AppTheme.hairline, lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(0.18), radius: 16, y: 4)
+                .padding(.horizontal, 12)
+                .padding(.bottom, composerChromeHeight + 10)
+            }
+            .frame(maxWidth: .infinity)
+            .onPreferenceChange(DecisionOverlayHeightPreferenceKey.self) { height in
+                guard abs(decisionOverlayContentHeight - height) > 0.5 else { return }
+                decisionOverlayContentHeight = height
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    @ViewBuilder
+    private func decisionCard(_ decision: PendingDecision) -> some View {
+        switch decision {
+        case .permission(let message):
+            permissionRequestRow(message)
+        case .interactive(let message):
+            interactiveRequestRow(message)
+        case .plan(let message):
+            planConfirmationRow(message)
+        }
     }
 
     func subagentSummaryCard(_ payload: AgentPayload, message: ChatMessage, context: ChatMessage) -> some View {

@@ -137,6 +137,7 @@ final class ChatPanelController: ObservableObject {
     }
 
     private static let compactThreshold: Double = 0.90
+    private static let compactRearmThreshold: Double = 0.70
     private static let firstVisibleOutputTimeoutNanoseconds: UInt64 = 45_000_000_000
     nonisolated static let historyInitialMessageLimit = 240
     private var didAutoCompact = false
@@ -2157,8 +2158,14 @@ final class ChatPanelController: ObservableObject {
     }
 
     private func checkAutoCompact() {
-        guard !didAutoCompact, tokensTotal > 0 else { return }
+        guard tokensTotal > 0 else { return }
         let usage = Double(tokensUsed) / Double(tokensTotal)
+        // Re-arm once a previous compaction (or a fresh turn) has brought usage back down,
+        // so a long session can auto-compact more than once instead of latching forever.
+        if usage < Self.compactRearmThreshold {
+            didAutoCompact = false
+        }
+        guard !didAutoCompact else { return }
         if usage >= Self.compactThreshold {
             if activeBackend?.sendCompact() == true {
                 didAutoCompact = true

@@ -243,7 +243,7 @@ enum ChatProcessTerminator {
 
 final class ChatProcessActivityWatchdog {
     static let defaultIdleTimeout: TimeInterval = 90
-    static let defaultHardTimeout: TimeInterval = 15 * 60
+    static let defaultHardTimeout: TimeInterval = 6 * 60 * 60
 
     private let process: Process
     private let idleTimeout: TimeInterval
@@ -330,9 +330,16 @@ final class ChatProcessActivityWatchdog {
     private func shouldStopProcess() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard !isCancelled, !isPaused, !didTimeout, process.isRunning else { return false }
+        guard !isCancelled, !didTimeout, process.isRunning else { return false }
         let now = Date()
-        if now.timeIntervalSince(lastActivityAt) >= idleTimeout || now.timeIntervalSince(startedAt) >= hardTimeout {
+        // The hard cap always applies as a zombie backstop, even while paused.
+        if now.timeIntervalSince(startedAt) >= hardTimeout {
+            didTimeout = true
+            return true
+        }
+        // The idle cap is suspended while paused (e.g. waiting on a user permission /
+        // selection answer), so a slow human can't be mistaken for a dead process.
+        if !isPaused, now.timeIntervalSince(lastActivityAt) >= idleTimeout {
             didTimeout = true
             return true
         }

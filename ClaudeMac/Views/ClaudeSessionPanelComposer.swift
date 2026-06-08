@@ -545,7 +545,6 @@ extension ChatPanelView {
             return
         }
         guard canSend else { return }
-        requestTranscriptBottomFollow()
         if let editingMessageID, !chatState.status.isRunning {
             chatState.removeMessageThread(editingMessageID)
             self.editingMessageID = nil
@@ -573,6 +572,9 @@ extension ChatPanelView {
             clearComposerText()
             attachedPaths.removeAll()
         }
+        // Request the bottom-follow AFTER the message is appended so the scroll cascade has
+        // the new trailing row to anchor on, rather than scrolling the old/empty content.
+        requestTranscriptBottomFollow()
     }
 
     func sendQueuedMessageNow() {
@@ -630,18 +632,18 @@ extension ChatPanelView {
             for (index, delay) in [16_000_000, 90_000_000, 180_000_000, 320_000_000, 600_000_000, 1_000_000_000].enumerated() {
                 try? await Task.sleep(nanoseconds: UInt64(delay))
                 guard !Task.isCancelled, transcriptUserIntent == .followBottom else { return }
-                // First scroll to the last real item to force LazyVStack to materialize it.
-                // Without this, the bottom sentinel may resolve to a position that doesn't
-                // include the trailing rows because LazyVStack hasn't laid them out yet.
-                if let lastItemID = cachedTranscriptItems.last?.id {
-                    proxy.scrollTo(lastItemID, anchor: .bottom)
-                }
+                // Anchor on the LAST REAL row (re-read each iteration so it tracks newly
+                // appended/streamed rows). We deliberately do NOT scroll to the trailing
+                // clear spacer: while LazyVStack is still materializing/measuring the new
+                // rows, the spacer resolves to a position past the realized content and the
+                // view parks in blank space. Anchoring the last row's bottom never overshoots.
+                guard let lastItemID = cachedTranscriptItems.last?.id else { continue }
                 if animated && index == 0 {
                     withAnimation(.easeOut(duration: 0.12)) {
-                        proxy.scrollTo(transcriptBottomID, anchor: .bottom)
+                        proxy.scrollTo(lastItemID, anchor: .bottom)
                     }
                 } else {
-                    proxy.scrollTo(transcriptBottomID, anchor: .bottom)
+                    proxy.scrollTo(lastItemID, anchor: .bottom)
                 }
             }
         }

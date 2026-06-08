@@ -444,9 +444,8 @@ final class AppState: ObservableObject {
             let scanner = FileTreeScanner(ignoredNames: ignoredNames)
             do {
                 let root = try ProjectStore.resolveURL(for: project)
-                let didStart = root.startAccessingSecurityScopedResource()
-                guard didStart else { throw AppStateError.projectAuthorizationLost }
-                defer { root.stopAccessingSecurityScopedResource() }
+                let didStart = try Self.beginScopedAccess(root, deniedError: .projectAuthorizationLost)
+                defer { if didStart { root.stopAccessingSecurityScopedResource() } }
 
                 let rootNodes = try scanner.scanChildren(of: root)
                 let rootLoadingIDs = Self.loadingNodeIDs(in: rootNodes, expandedPaths: expandedPaths)
@@ -527,9 +526,8 @@ final class AppState: ObservableObject {
     private nonisolated static func scanDirectory(_ directory: URL, project: ProjectItem, ignoredNames: Set<String>) throws -> [FileNode] {
         let scanner = FileTreeScanner(ignoredNames: ignoredNames)
         let root = try ProjectStore.resolveURL(for: project)
-        let didStart = root.startAccessingSecurityScopedResource()
-        guard didStart else { throw AppStateError.projectAuthorizationLost }
-        defer { root.stopAccessingSecurityScopedResource() }
+        let didStart = try Self.beginScopedAccess(root, deniedError: .projectAuthorizationLost)
+        defer { if didStart { root.stopAccessingSecurityScopedResource() } }
         return try scanner.scanChildren(of: directory)
     }
 
@@ -1577,6 +1575,20 @@ final class AppState: ObservableObject {
         return FileManager.default.isReadableFile(atPath: url.path)
     }
 
+    /// Begins best-effort security-scoped access to `url`. This app is non-sandboxed, so
+    /// `startAccessingSecurityScopedResource()` often returns false even when the file is
+    /// fully readable (e.g. after the user grants Full Disk Access, or once a bookmark goes
+    /// stale across an app update). Treat that as an authorization failure only when the
+    /// path is genuinely unreadable. Returns whether scoped access started — the caller must
+    /// stop it via `stopAccessingSecurityScopedResource()` only when the result is true.
+    private nonisolated static func beginScopedAccess(_ url: URL, deniedError: AppStateError) throws -> Bool {
+        let didStart = url.startAccessingSecurityScopedResource()
+        if !didStart && !FileManager.default.isReadableFile(atPath: url.path) {
+            throw deniedError
+        }
+        return didStart
+    }
+
     private nonisolated static func looksLikeOpenablePath(_ path: String) -> Bool {
         if path.hasPrefix("file://") || path.hasPrefix("/") { return true }
         if path.contains("/") { return true }
@@ -1705,10 +1717,9 @@ final class AppState: ObservableObject {
             let modifiedAt: Date
             if tab.isExternal {
                 let accessURL = authorizedFolderURL(containing: tab.url) ?? tab.url
-                let didStart = accessURL.startAccessingSecurityScopedResource()
-                guard didStart else { throw AppStateError.externalFileAuthorizationLost }
+                let didStart = try Self.beginScopedAccess(accessURL, deniedError: .externalFileAuthorizationLost)
                 defer {
-                    accessURL.stopAccessingSecurityScopedResource()
+                    if didStart { accessURL.stopAccessingSecurityScopedResource() }
                 }
                 try validateNoExternalModification(for: tab)
                 try tab.text.write(to: tab.url, atomically: true, encoding: .utf8)
@@ -2103,18 +2114,16 @@ final class AppState: ObservableObject {
     private nonisolated static func loadEditorFileResult(url: URL, project: ProjectItem?, accessURL: URL?) throws -> LoadedEditorFileResult {
         if let project {
             let root = try ProjectStore.resolveURL(for: project)
-            let didStart = root.startAccessingSecurityScopedResource()
-            guard didStart else { throw AppStateError.projectAuthorizationLost }
-            defer { root.stopAccessingSecurityScopedResource() }
+            let didStart = try Self.beginScopedAccess(root, deniedError: .projectAuthorizationLost)
+            defer { if didStart { root.stopAccessingSecurityScopedResource() } }
             let content = try readEditorFile(url)
             let modifiedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
             return LoadedEditorFileResult(content: content, modifiedAt: modifiedAt)
         }
 
         guard let accessURL else { throw AppStateError.externalFileAuthorizationLost }
-        let didStart = accessURL.startAccessingSecurityScopedResource()
-        guard didStart else { throw AppStateError.externalFileAuthorizationLost }
-        defer { accessURL.stopAccessingSecurityScopedResource() }
+        let didStart = try Self.beginScopedAccess(accessURL, deniedError: .externalFileAuthorizationLost)
+        defer { if didStart { accessURL.stopAccessingSecurityScopedResource() } }
         let content = try readEditorFile(url)
         let modifiedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
         return LoadedEditorFileResult(content: content, modifiedAt: modifiedAt)
@@ -2203,10 +2212,9 @@ final class AppState: ObservableObject {
 
     private func withProjectAccess<T>(_ project: ProjectItem, operation: (URL) throws -> T) throws -> T {
         let url = try ProjectStore.resolveURL(for: project)
-        let didStart = url.startAccessingSecurityScopedResource()
-        guard didStart else { throw AppStateError.projectAuthorizationLost }
+        let didStart = try Self.beginScopedAccess(url, deniedError: .projectAuthorizationLost)
         defer {
-            url.stopAccessingSecurityScopedResource()
+            if didStart { url.stopAccessingSecurityScopedResource() }
         }
         return try operation(url)
     }

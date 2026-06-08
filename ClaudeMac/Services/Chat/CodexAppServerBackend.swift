@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 final class CodexAppServerBackend: ChatProcessBackend {
-    private static let idleTimeout: TimeInterval = 5 * 60
+    private static let idleTimeout: TimeInterval = 30 * 60
 
     private enum PendingRequest {
         case initialize
