@@ -1012,6 +1012,44 @@ final class ChatPanelController: ObservableObject {
         }
     }
 
+    /// The AskUserQuestion (选择题) currently awaiting an answer in the active turn, if any.
+    /// Lets the composer route a typed answer into the interactive response instead of starting
+    /// a new turn (which would leave the CLI blocked on its control_response).
+    var firstWaitingInteractiveRequest: ChatInteractiveRequest? {
+        for message in messages.reversed() {
+            if message.kind == .interactiveRequest,
+               let request = message.interactiveRequest,
+               request.status == .waiting {
+                return request
+            }
+            if message.kind == .user { break }
+        }
+        return nil
+    }
+
+    /// True while the active turn is blocked on a user decision (选择题 or permission). Used to
+    /// keep the "no visible output" backstop from killing a run that is just waiting for input.
+    var hasPendingUserDecision: Bool {
+        for message in messages.reversed() {
+            if message.kind == .interactiveRequest, (message.interactiveRequest?.status ?? .waiting) == .waiting {
+                return true
+            }
+            if message.kind == .permissionRequest, message.status == "waiting" {
+                return true
+            }
+            if message.kind == .user { break }
+        }
+        return false
+    }
+
+    /// Answer a pending AskUserQuestion with free text typed in the composer.
+    @discardableResult
+    func answerPendingInteractiveWithCustomText(_ text: String) -> Bool {
+        guard let request = firstWaitingInteractiveRequest else { return false }
+        respondToInteractiveRequest(ChatInteractiveResponse(requestID: request.id, selectedOptionIDs: [], customText: text))
+        return true
+    }
+
     private func interruptIfNeededForLoad() {
         if status.isRunning { interrupt() }
     }
@@ -1792,7 +1830,10 @@ final class ChatPanelController: ObservableObject {
         guard isAwaitingFirstModelOutput,
               status.isRunning,
               !isUserStopping,
-              !isMirroringRemoteSession else { return }
+              !isMirroringRemoteSession,
+              // Never kill a run that's just waiting for the user to answer a 选择题 / permission
+              // prompt — the model HAS produced output (the question), it's the user's turn.
+              !hasPendingUserDecision else { return }
         let backend = activeBackend
         activeBackend = nil
         currentTask?.cancel()

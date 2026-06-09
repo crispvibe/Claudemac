@@ -413,6 +413,7 @@ extension ChatPanelView {
     }
 
     var primaryActionHelp: String {
+        if chatState.firstWaitingInteractiveRequest != nil && canSend { return "用输入内容回答选择题" }
         if chatState.hasPendingPlanConfirmation && !canSend { return "等待用户确认方案" }
         if shouldSendQueuedMessageNow { return "发送队首队列消息" }
         if chatState.isMirroringRemoteSession {
@@ -540,6 +541,16 @@ extension ChatPanelView {
     }
 
     func sendMessage() {
+        // If a 选择题 (AskUserQuestion) is awaiting an answer, route the typed text into the
+        // interactive response (custom input) instead of starting/queuing a NEW turn — otherwise
+        // the CLI stays blocked on its control_response and the run appears to hang.
+        let interactiveAnswer = draftMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !interactiveAnswer.isEmpty, chatState.firstWaitingInteractiveRequest != nil {
+            chatState.answerPendingInteractiveWithCustomText(interactiveAnswer)
+            clearComposerText()
+            attachedPaths.removeAll()
+            return
+        }
         if !canSend && !chatState.queuedRequests.isEmpty {
             sendQueuedMessageNow()
             return

@@ -603,10 +603,15 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                 answers[question.text] = labels.joined(separator: ", ")
             }
         }
-        // Free-text reply: only valid for a text-mode question (one with no preset options).
-        if answers.isEmpty, let custom = response.customText?.nonEmptyTrimmed,
-           let first = pending.questions.first, first.optionLabelsByID.isEmpty {
-            answers[first.text] = custom
+        // Free-text reply (typed in the composer or the card's custom field): use it as the
+        // answer to the first question not already answered via options — works whether or not
+        // that question has preset options, so custom input is always accepted.
+        if let custom = response.customText?.nonEmptyTrimmed {
+            if let firstUnanswered = pending.questions.firstIndex(where: { answers[$0.text] == nil }) {
+                answers[pending.questions[firstUnanswered].text] = custom
+            } else if let first = pending.questions.first, answers.isEmpty {
+                answers[first.text] = custom
+            }
         }
         guard !answers.isEmpty else { return false }
 
