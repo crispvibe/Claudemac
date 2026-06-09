@@ -146,6 +146,10 @@ final class ChatPanelController: ObservableObject {
     nonisolated static let historyInitialMessageLimit = 240
     private var didAutoCompact = false
     private var didReceiveBackendActivityAfterStart = false
+    /// Caches the immutable paged-out history prefix used when persisting a paged session, so
+    /// every persist no longer synchronously re-decodes the entire on-disk transcript on the
+    /// main actor (a periodic hitch on large sessions). Keyed by (sessionID, prefixCount).
+    private var cachedPersistencePrefix: (sessionID: UUID, count: Int, messages: [ChatMessage])?
 
     static func defaultContextWindow(
         for modelID: String,
@@ -292,6 +296,10 @@ final class ChatPanelController: ObservableObject {
 
     func prepareForApplicationTermination() {
         persistActiveRunSnapshotBeforeCleanup()
+        // The app is exiting now: synchronously kill the CLI process group so backgrounded
+        // children (e.g. a running xcodebuild) aren't orphaned. interrupt()'s async signal
+        // ladder would never fire before the process exits.
+        activeBackend?.terminateImmediately()
         cleanupActiveRun()
     }
 
@@ -1936,8 +1944,13 @@ final class ChatPanelController: ObservableObject {
 
     private func messagesForPersistence(sessionID: UUID) -> [ChatMessage] {
         guard let prefixCount = historyNextBeforeIndex, prefixCount > 0 else { return messages }
+        if let cached = cachedPersistencePrefix, cached.sessionID == sessionID, cached.count == prefixCount {
+            return cached.messages + messages
+        }
         let existingMessages = ChatSessionStore.loadMessages(sessionID: sessionID)
-        return Array(existingMessages.prefix(min(prefixCount, existingMessages.count))) + messages
+        let prefix = Array(existingMessages.prefix(min(prefixCount, existingMessages.count)))
+        cachedPersistencePrefix = (sessionID, prefixCount, prefix)
+        return prefix + messages
     }
 
     private func actuallyPersist(saveMessages shouldSaveMessages: Bool = true) {

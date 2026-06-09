@@ -1871,6 +1871,28 @@ final class AppState: ObservableObject {
         NSPasteboard.general.setString(commandPreview, forType: .string)
     }
 
+    /// Open the default terminal in the selected project and launch an interactive Claude
+    /// session with full permissions: `cd <project> && claude --dangerously-skip-permissions`.
+    func openClaudeInTerminal() {
+        guard let projectPath = selectedHistoryProjectPath ?? selectedProject?.path else {
+            errorMessage = "请先添加并选择项目。"
+            return
+        }
+        let command = "cd \(Self.shellQuoted(projectPath)) && claude --dangerously-skip-permissions"
+        let terminal = selectedTerminal
+        Task {
+            do {
+                try await TerminalLauncher.launch(command: command, terminal: terminal)
+            } catch {
+                show(error)
+            }
+        }
+    }
+
+    private static func shellQuoted(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     func openTerminal() {
         guard let projectPath = selectedHistoryProjectPath ?? selectedProject?.path else {
             errorMessage = "请先添加并选择项目。"

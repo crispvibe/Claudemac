@@ -525,7 +525,7 @@ extension ChatPanelView {
     }
 
     func openCommandInTerminal() {
-        appState.openTerminal()
+        appState.openClaudeInTerminal()
     }
 
     func showCopyToast() {

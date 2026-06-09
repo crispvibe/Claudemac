@@ -478,7 +478,7 @@ struct ChatPanelView: View {
             .buttonStyle(CircularIconButtonStyle(size: 30, background: Color.primary.opacity(0.055)))
             .foregroundStyle(.secondary)
             .disabled(appState.selectedProject == nil && appState.selectedHistoryProjectPath == nil)
-            .help("在设置的默认终端中打开")
+            .help("在终端中打开 Claude（cd 项目 + 完全权限）")
         }
     }
 

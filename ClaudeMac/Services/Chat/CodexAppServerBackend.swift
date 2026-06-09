@@ -247,6 +247,15 @@ final class CodexAppServerBackend: ChatProcessBackend {
         ChatProcessTerminator.stop(process, terminateAfter: .seconds(1), killAfter: .milliseconds(2200))
     }
 
+    func terminateImmediately() {
+        locked {
+            activityWatchdog?.cancel()
+            activityWatchdog = nil
+        }
+        guard let process = locked({ self.process }), process.isRunning else { return }
+        ChatProcessTerminator.killNow(process)
+    }
+
     func respondToPermission(requestID: String, decision: ChatPermissionDecision) -> Bool {
         locked {
             guard let approval = pendingApprovals.removeValue(forKey: requestID) else { return false }

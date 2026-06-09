@@ -541,6 +541,14 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
         ChatProcessTerminator.stop(process, terminateAfter: .milliseconds(800), killAfter: .seconds(2))
     }
 
+    func terminateImmediately() {
+        activityWatchdog?.cancel()
+        activityWatchdog = nil
+        closeInputPipeIfNeeded()
+        guard let process, process.isRunning else { return }
+        ChatProcessTerminator.killNow(process)
+    }
+
     func respondToPermission(requestID: String, decision: ChatPermissionDecision) -> Bool {
         let pending = pendingControlRequest(requestID)
         var inner: [String: Any] = [:]

@@ -4,6 +4,10 @@ import Foundation
 protocol ChatProcessBackend: AnyObject {
     func start(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, attachments: [ChatMessageAttachment]) -> AsyncThrowingStream<ChatBackendEvent, Error>
     func interrupt()
+    /// Synchronously kill the CLI process (and its group/descendants) right now. Used on app
+    /// termination / conversation close, where `interrupt()`'s async signal ladder would never
+    /// fire before the app exits, leaving backgrounded children (e.g. xcodebuild) orphaned.
+    func terminateImmediately()
     func respondToPermission(requestID: String, decision: ChatPermissionDecision) -> Bool
     func respondToInteractiveRequest(requestID: String, response: ChatInteractiveResponse) -> Bool
     func sendCompact() -> Bool
@@ -184,6 +188,15 @@ enum ChatProcessLauncher {
 }
 
 enum ChatProcessTerminator {
+    /// Synchronous best-effort SIGKILL of the process, its group, and all descendants — right
+    /// now, no async delay. For app-termination / close where the async `stop` ladder below
+    /// would never fire before the app exits.
+    static func killNow(_ process: Process) {
+        guard process.isRunning else { return }
+        let pid = process.processIdentifier
+        signal(SIGKILL, process: process, pid: pid, knownDescendants: descendantPIDs(of: pid))
+    }
+
     static func stop(_ process: Process, terminateAfter: DispatchTimeInterval, killAfter: DispatchTimeInterval) {
         guard process.isRunning else { return }
         let pid = process.processIdentifier
