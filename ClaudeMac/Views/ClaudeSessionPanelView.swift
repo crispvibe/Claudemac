@@ -35,6 +35,7 @@ struct ChatPanelView: View {
     @State var attachedPaths: [String] = []
     @State var expandedTranscriptMessageIDs: Set<UUID> = []
     @State var collapsedInlineToolIDs: Set<UUID> = []
+    @State var expandedToolBatchIDs: Set<String> = []
     @State var transcriptScrollKick = UUID()
     @State var transcriptScrollTargetID: String?
     @State var composerHasMarkedText = false
@@ -462,6 +463,15 @@ struct ChatPanelView: View {
 
     var terminalFallbackActions: some View {
         HStack(spacing: 4) {
+            Button(action: copyEntireTranscript) {
+                Image(systemName: "text.quote")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .buttonStyle(CircularIconButtonStyle(size: 30, background: Color.primary.opacity(0.055)))
+            .foregroundStyle(.secondary)
+            .disabled(chatState.messages.isEmpty)
+            .help("复制整段对话")
+
             Button(action: copyCommandToClipboard) {
                 Image(systemName: "doc.on.doc")
                     .font(.system(size: 11, weight: .medium))
@@ -638,6 +648,7 @@ struct ChatPanelView: View {
             item: item,
             expandedMessageIDs: expandedTranscriptMessageIDs,
             collapsedInlineToolIDs: collapsedInlineToolIDs,
+            expandedToolBatchIDs: expandedToolBatchIDs,
             isRunning: chatState.status.isRunning,
             lastVisibleMessageID: lastVisibleMessageID,
             loadingText: loadingThinkingText,
@@ -795,6 +806,13 @@ struct ChatPanelView: View {
                 guard let primary = messagesByID[group.primary.id] else { return nil }
                 let responses = group.responses.compactMap { messagesByID[$0.id] }
                 return .toolGroup(ToolInvocationGroup(primary: primary, responses: responses))
+            case .toolBatch(let batch):
+                let groups = batch.groups.compactMap { group -> ToolInvocationGroup? in
+                    guard let primary = messagesByID[group.primary.id] else { return nil }
+                    let responses = group.responses.compactMap { messagesByID[$0.id] }
+                    return ToolInvocationGroup(primary: primary, responses: responses)
+                }
+                return groups.isEmpty ? nil : .toolBatch(ToolBatchGroup(groups: groups))
             case .loading:
                 return snapshot.isAwaitingFirstModelOutput && snapshot.hasProject ? .loading : nil
             }
@@ -828,7 +846,35 @@ struct ChatPanelView: View {
         if snapshot.isAwaitingFirstModelOutput && snapshot.hasProject {
             items.append(.loading)
         }
-        return items
+        return coalesceToolBatches(items)
+    }
+
+    nonisolated private static func coalesceToolBatches(_ items: [ChatTranscriptItem]) -> [ChatTranscriptItem] {
+        var result: [ChatTranscriptItem] = []
+        result.reserveCapacity(items.count)
+        var run: [ToolInvocationGroup] = []
+        func flush() {
+            if run.count >= 2 {
+                result.append(.toolBatch(ToolBatchGroup(groups: run)))
+            } else {
+                result.append(contentsOf: run.map(ChatTranscriptItem.toolGroup))
+            }
+            run.removeAll(keepingCapacity: true)
+        }
+        for item in items {
+            if case .toolGroup(let group) = item, isBatchableToolGroup(group) {
+                run.append(group)
+            } else {
+                flush()
+                result.append(item)
+            }
+        }
+        flush()
+        return result
+    }
+
+    nonisolated private static func isBatchableToolGroup(_ group: ToolInvocationGroup) -> Bool {
+        ["read", "grep", "glob"].contains(group.primary.toolKindKey)
     }
 
     nonisolated private static func toolInvocationGroup(startingAt index: Int, messages: [ChatMessage], groupedMessageIDs: Set<UUID>, snapshot: TranscriptBuildSnapshot) -> ToolInvocationGroup? {
@@ -1025,6 +1071,8 @@ struct ChatPanelView: View {
             } else {
                 toolInvocationRow(group)
             }
+        case .toolBatch(let batch):
+            toolBatchRow(batch)
         case .loading:
             loadingMessageRow
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .leading)))
@@ -1244,6 +1292,58 @@ struct ChatPanelView: View {
         appState.openFile(path: reference.path, line: reference.line, column: reference.column)
     }
 
+    func copyEntireTranscript() {
+        var blocks: [String] = []
+        for item in buildTranscriptItems() {
+            switch item {
+            case .message(let message):
+                blocks.append(transcriptCopyText(for: message))
+            case .toolGroup(let group):
+                let title = group.primary.toolPrimaryTitle
+                let detail = group.detailText
+                blocks.append(detail.isEmpty ? "### \(title)" : "### \(title)\n\(detail)")
+            case .toolBatch(let batch):
+                for group in batch.groups {
+                    let title = group.primary.toolPrimaryTitle
+                    let detail = group.detailText
+                    blocks.append(detail.isEmpty ? "### \(title)" : "### \(title)\n\(detail)")
+                }
+            case .loading:
+                break
+            }
+        }
+        let text = blocks
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func transcriptCopyText(for message: ChatMessage) -> String {
+        let body: String
+        if message.isStreaming, let live = chatState.streamingTextStore.text(for: message.id), !live.isEmpty {
+            body = live
+        } else {
+            body = message.text
+        }
+        switch message.kind {
+        case .user:
+            return "## 用户\n\(body)"
+        case .assistant:
+            return "## 助手\n\(body)"
+        case .reasoning:
+            return "## 思考\n\(body)"
+        case .error:
+            return "## 错误\n\(body)"
+        default:
+            let title = message.toolPrimaryTitle
+            let detail = message.isTerminalTool ? message.terminalDetailText : message.toolDetailText
+            return detail.isEmpty ? "### \(title)" : "### \(title)\n\(detail)"
+        }
+    }
+
     var loadingMessageRow: some View {
         HStack(spacing: 8) {
             ProgressView()
@@ -1303,6 +1403,73 @@ struct ChatPanelView: View {
 
     var shouldShowCurrentCLIToolCards: Bool {
         true
+    }
+
+    @ViewBuilder
+    func toolBatchRow(_ batch: ToolBatchGroup) -> some View {
+        let expanded = expandedToolBatchIDs.contains(batch.id)
+        VStack(alignment: .leading, spacing: expanded ? 4 : 0) {
+            toolBatchHeader(batch, expanded: expanded)
+            if expanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(batch.groups) { group in
+                        toolInvocationRow(group)
+                    }
+                }
+                .padding(.leading, 16)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    func toolBatchHeader(_ batch: ToolBatchGroup, expanded: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.secondary.opacity(0.58))
+                .frame(width: 9)
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary.opacity(0.58))
+                .frame(width: 13, height: 13)
+            Text(toolBatchSummaryText(batch))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary.opacity(0.82))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                toggleToolBatch(batch.id)
+            }
+        }
+        .help(expanded ? "折叠工具步骤" : "展开工具步骤")
+    }
+
+    func toolBatchSummaryText(_ batch: ToolBatchGroup) -> String {
+        var counts: [String: Int] = [:]
+        for group in batch.groups {
+            counts[group.primary.toolKindKey, default: 0] += 1
+        }
+        let labels: [(String, String)] = [("read", "读取"), ("grep", "搜索"), ("glob", "匹配")]
+        let parts = labels.compactMap { key, label -> String? in
+            guard let count = counts[key], count > 0 else { return nil }
+            return "\(label) \(count)"
+        }
+        let prefix = parts.isEmpty ? "工具" : parts.joined(separator: " · ")
+        return "\(prefix) · 共 \(batch.groups.count) 步"
+    }
+
+    func toggleToolBatch(_ id: String) {
+        if expandedToolBatchIDs.contains(id) {
+            expandedToolBatchIDs.remove(id)
+        } else {
+            expandedToolBatchIDs.insert(id)
+        }
     }
 
     func toolInvocationCard<Detail: View>(
@@ -1371,13 +1538,29 @@ struct ChatPanelView: View {
             .layoutPriority(3)
 
             if let summaryText = toolHeaderSummary(for: message, resultMessage: statusMessage, summary: summary, feedbackCount: feedbackCount) {
-                Text(summaryText)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary.opacity(0.78))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let filePath = summary.filePath, message.toolHeaderFileIsOpenable {
+                    Button {
+                        openFileReference(FileReference(path: filePath))
+                    } label: {
+                        Text(summaryText)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary.opacity(0.78))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .help("打开 \(filePath)")
                     .layoutPriority(0)
+                } else {
+                    Text(summaryText)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary.opacity(0.78))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .layoutPriority(0)
+                }
             } else {
                 Spacer(minLength: 0)
             }

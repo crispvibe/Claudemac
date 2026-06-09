@@ -27,6 +27,7 @@ struct ChatTranscriptStructureKey: Equatable {
 enum ChatTranscriptItem: Identifiable, Equatable {
     case message(ChatMessage)
     case toolGroup(ToolInvocationGroup)
+    case toolBatch(ToolBatchGroup)
     case loading
 
     var id: String {
@@ -35,6 +36,8 @@ enum ChatTranscriptItem: Identifiable, Equatable {
             "message-\(message.id.uuidString)"
         case .toolGroup(let group):
             group.id
+        case .toolBatch(let batch):
+            batch.id
         case .loading:
             "loading"
         }
@@ -46,6 +49,8 @@ enum ChatTranscriptItem: Identifiable, Equatable {
             message.isStreaming
         case .toolGroup(let group):
             group.primary.isStreaming || group.responses.contains(where: \.isStreaming)
+        case .toolBatch(let batch):
+            batch.isStreaming
         case .loading:
             true
         }
@@ -57,6 +62,8 @@ enum ChatTranscriptItem: Identifiable, Equatable {
             message.id
         case .toolGroup(let group):
             (group.responses.last ?? group.primary).id
+        case .toolBatch(let batch):
+            batch.groups.last.map { ($0.responses.last ?? $0.primary).id }
         case .loading:
             nil
         }
@@ -67,6 +74,7 @@ struct EquatableTranscriptItemRow: View, Equatable {
     let item: ChatTranscriptItem
     let expandedMessageIDs: Set<UUID>
     let collapsedInlineToolIDs: Set<UUID>
+    let expandedToolBatchIDs: Set<String>
     let isRunning: Bool
     let lastVisibleMessageID: UUID?
     let loadingText: String
@@ -90,6 +98,7 @@ struct EquatableTranscriptItemRow: View, Equatable {
             && (lhsFingerprint.kind != .loading || lhs.loadingText == rhs.loadingText)
             && lhs.expandedMessageIDs == rhs.expandedMessageIDs
             && lhs.collapsedInlineToolIDs == rhs.collapsedInlineToolIDs
+            && lhs.expandedToolBatchIDs == rhs.expandedToolBatchIDs
             && lhsFingerprint == rhsFingerprint
     }
 }
@@ -102,6 +111,7 @@ struct ChatTranscriptItemFingerprint: Equatable {
     enum Kind: Equatable {
         case message
         case toolGroup
+        case toolBatch
         case loading
     }
 }
@@ -148,6 +158,13 @@ func transcriptItemFingerprint(_ item: ChatTranscriptItem) -> ChatTranscriptItem
             primary: ChatMessageFingerprint(group.primary),
             responses: group.responses.map(ChatMessageFingerprint.init)
         )
+    case .toolBatch(let batch):
+        let all = batch.groups.flatMap { [$0.primary] + $0.responses }
+        return ChatTranscriptItemFingerprint(
+            kind: .toolBatch,
+            primary: ChatMessageFingerprint(all.first ?? loadingPlaceholderMessage),
+            responses: all.dropFirst().map(ChatMessageFingerprint.init)
+        )
     case .loading:
         return ChatTranscriptItemFingerprint(kind: .loading, primary: ChatMessageFingerprint(loadingPlaceholderMessage), responses: [])
     }
@@ -174,6 +191,16 @@ struct ToolInvocationGroup: Identifiable, Equatable {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
+    }
+}
+
+struct ToolBatchGroup: Identifiable, Equatable {
+    let groups: [ToolInvocationGroup]
+
+    var id: String { "tool-batch-\(groups.first?.primary.id.uuidString ?? "empty")" }
+
+    var isStreaming: Bool {
+        groups.contains { $0.primary.isStreaming || $0.responses.contains(where: \.isStreaming) }
     }
 }
 
@@ -2649,7 +2676,7 @@ enum ToolInvocationSummaryCache {
         let summary = ToolInvocationSummary(
             primaryTitle: message.toolPrimaryTitle,
             plainSummary: message.cheapToolHeaderSummary(toolKey: toolKey),
-            filePath: nil,
+            filePath: message.toolFilePath,
             isAgentTool: toolKey == "agent"
         )
         cache.setObject(ToolInvocationSummaryBox(summary), forKey: key)
@@ -3956,8 +3983,14 @@ extension ChatMessage {
         return String(detail.prefix(16_000)) + "\n\n…详情过长，已暂停完整渲染；复制详情可获取完整内容。"
     }
 
-    var toolFilePath: String? {
-        if let path = jsonToolFilePath(from: text) {
+    var toolHeaderFileIsOpenable: Bool {
+        if kind == .diff { return true }
+        let toolKey = toolKindKey
+        return toolKey == "read"
+            || ["edit", "write", "create", "create_file", "new_file", "multi_edit", "multiedit"].contains(toolKey)
+    }
+
+    var toolFilePath: String? {        if let path = jsonToolFilePath(from: text) {
             return path
         }
         if let loosePath = firstToolStringValue(keys: ["file_path", "filePath", "filepath", "path", "filename", "notebook_path"], in: text),
