@@ -603,7 +603,7 @@ extension ChatPanelView {
 
     func scrollTranscriptIfFollowing(_ proxy: ScrollViewProxy, animated: Bool) {
         guard transcriptUserIntent == .followBottom else { return }
-        scrollTranscriptToBottom(proxy, animated: animated)
+        scrollTranscriptToBottomOnce(proxy)
     }
 
     func scheduleStreamingScrollIfFollowing(_ proxy: ScrollViewProxy) {
@@ -612,7 +612,7 @@ extension ChatPanelView {
         pendingStreamingScrollTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 90_000_000)
             guard !Task.isCancelled else { return }
-            scrollTranscriptToBottom(proxy, animated: false)
+            scrollTranscriptToBottomOnce(proxy)
         }
     }
 
@@ -622,21 +622,28 @@ extension ChatPanelView {
         pendingStreamingScrollTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 16_000_000)
             guard !Task.isCancelled else { return }
-            scrollTranscriptToBottom(proxy, animated: false)
+            scrollTranscriptToBottomOnce(proxy)
         }
     }
 
+    /// A single, gentle scroll to the last real row. Used while following during streaming and
+    /// on content changes — anchoring the last row's bottom never overshoots into blank, and
+    /// doing exactly ONE scroll (instead of the 6-step retry loop) avoids the up/down judder
+    /// that came from restarting the loop on every streaming delta.
+    func scrollTranscriptToBottomOnce(_ proxy: ScrollViewProxy) {
+        guard transcriptUserIntent == .followBottom, let lastItemID = cachedTranscriptItems.last?.id else { return }
+        proxy.scrollTo(lastItemID, anchor: .bottom)
+    }
+
     func scrollTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        // The 6-step retry loop is reserved for OPEN / conversation-switch / explicit kicks,
+        // where the LazyVStack is still materializing rows and a single scroll may land before
+        // the trailing rows exist. Streaming/content updates use scrollTranscriptToBottomOnce.
         pendingTranscriptScrollTask?.cancel()
         pendingTranscriptScrollTask = Task { @MainActor in
             for (index, delay) in [16_000_000, 90_000_000, 180_000_000, 320_000_000, 600_000_000, 1_000_000_000].enumerated() {
                 try? await Task.sleep(nanoseconds: UInt64(delay))
                 guard !Task.isCancelled, transcriptUserIntent == .followBottom else { return }
-                // Anchor on the LAST REAL row (re-read each iteration so it tracks newly
-                // appended/streamed rows). We deliberately do NOT scroll to the trailing
-                // clear spacer: while LazyVStack is still materializing/measuring the new
-                // rows, the spacer resolves to a position past the realized content and the
-                // view parks in blank space. Anchoring the last row's bottom never overshoots.
                 guard let lastItemID = cachedTranscriptItems.last?.id else { continue }
                 if animated && index == 0 {
                     withAnimation(.easeOut(duration: 0.12)) {

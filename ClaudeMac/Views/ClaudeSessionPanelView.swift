@@ -573,31 +573,23 @@ struct ChatPanelView: View {
             .onChange(of: cachedTranscriptItems.count) { _, _ in
                 scrollTranscriptIfFollowing(proxy, animated: false)
                 scrollTranscriptToPendingTarget(proxy)
-                if transcriptUserIntent == .followBottom {
-                    requestNSScrollToBottom()
-                }
             }
             .onChange(of: cachedTranscriptItems.last?.id) { _, _ in
                 scrollTranscriptIfFollowing(proxy, animated: false)
-                if transcriptUserIntent == .followBottom {
-                    requestNSScrollToBottom()
-                }
             }
             .onPreferenceChange(TranscriptContentHeightPreferenceKey.self) { height in
                 guard abs(transcriptContentHeight - height) > 0.5 else { return }
+                // Height is an OUTPUT of scrolling: a LazyVStack realizes/de-realizes rows as
+                // we scroll, so its measured height keeps changing. Driving a scroll from it
+                // creates a feedback loop that juts the transcript up and down (worst on long
+                // history and while tall edit-diff cards materialize). Record the height only —
+                // scrolling is driven by discrete content changes and streaming deltas.
                 transcriptContentHeight = height
-                scheduleLayoutScrollIfFollowing(proxy)
-                if transcriptUserIntent == .followBottom {
-                    requestNSScrollToBottom()
-                }
             }
             .onChange(of: composerChromeHeight) { oldHeight, newHeight in
                 guard oldHeight > 0 else { return }
                 guard abs(oldHeight - newHeight) > 0.5 else { return }
                 scheduleLayoutScrollIfFollowing(proxy)
-                if transcriptUserIntent == .followBottom {
-                    requestNSScrollToBottom()
-                }
             }
             .onReceive(chatState.streamingTextStore.$entries.map { _ in () }) { _ in
                 scheduleTranscriptRefresh(revision: chatState.structureRevision)
@@ -2051,11 +2043,20 @@ struct ChatPanelView: View {
         return chatState.messages.contains { $0.kind == .toolResult && $0.requestID == requestID }
     }
 
-    /// An agent call is "running" until its tool_result arrives (or the turn ends).
+    /// An agent call is "running" only within the current turn until its tool_result arrives.
+    /// Earlier-turn / history agents are always considered done so they render their result row.
     func isAgentRunning(_ message: ChatMessage) -> Bool {
-        guard message.isAgentTool else { return false }
+        guard message.isAgentTool, chatState.status.isRunning else { return false }
+        guard isInCurrentTurn(message) else { return false }
         if agentToolResultExists(for: message.requestID) { return false }
-        return chatState.status.isRunning
+        return true
+    }
+
+    private func isInCurrentTurn(_ message: ChatMessage) -> Bool {
+        let messages = chatState.messages
+        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return false }
+        let turnStart = messages.lastIndex(where: { $0.kind == .user }).map { $0 + 1 } ?? 0
+        return index >= turnStart
     }
 
     /// Agent calls don't render an inline card while running — a floating progress pill above
@@ -2101,19 +2102,25 @@ struct ChatPanelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Agent calls currently in flight, used to drive the floating progress pill.
+    /// Agent calls currently in flight, used to drive the floating progress pill. Scoped to the
+    /// CURRENT turn (after the last user message) so completed agents from earlier turns / loaded
+    /// history don't get counted as "running" (which produced the bogus "N 个 Agent 运行中").
     var runningAgentMessages: [ChatMessage] {
         guard chatState.status.isRunning else { return [] }
         let messages = chatState.messages
+        let turnStart = messages.lastIndex(where: { $0.kind == .user }).map { $0 + 1 } ?? 0
+        guard turnStart < messages.count else { return [] }
+        let turnMessages = messages[turnStart...]
         var resultRequestIDs = Set<String>()
-        for message in messages where message.kind == .toolResult {
+        for message in turnMessages where message.kind == .toolResult {
             if let requestID = message.requestID?.nonEmptyTrimmed {
                 resultRequestIDs.insert(requestID)
             }
         }
-        return messages.filter { message in
+        return turnMessages.filter { message in
             guard message.isAgentTool, message.kind == .toolCall else { return false }
-            guard let requestID = message.requestID?.nonEmptyTrimmed else { return true }
+            // Without a request id we can't tell whether it finished, so don't surface it.
+            guard let requestID = message.requestID?.nonEmptyTrimmed else { return false }
             return !resultRequestIDs.contains(requestID)
         }
     }
