@@ -2438,7 +2438,9 @@ struct ChatPanelView: View {
     }
 
     func reasoningMessageRow(_ message: ChatMessage, lastVisibleMessageID: UUID?) -> some View {
-        let isThinking = message.isStreaming && lastVisibleMessageID == message.id
+        // Keep the thinking block expanded while it's streaming (even if a tool/text row has
+        // since appeared after it), so reasoning renders live instead of staying collapsed.
+        let isThinking = message.isStreaming
         let isExpanded = isThinking || expandedTranscriptMessageIDs.contains(message.id)
 
         return VStack(alignment: .leading, spacing: 5) {

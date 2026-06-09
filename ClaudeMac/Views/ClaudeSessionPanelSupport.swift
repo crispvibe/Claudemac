@@ -3731,7 +3731,9 @@ extension ChatMessage {
             return diffCodePreview
         }
         switch toolName.lowercased() {
-        case "edit", "multi_edit", "multiedit":
+        case "multi_edit", "multiedit":
+            return multiEditCodePreview ?? editCodePreview
+        case "edit":
             return editCodePreview
         case "write", "create", "create_file", "new_file":
             return writeCodePreview
@@ -3779,6 +3781,53 @@ extension ChatMessage {
         guard !lines.isEmpty else { return nil }
         let lineCount = content.split(separator: "\n", omittingEmptySubsequences: false).count
         return ToolCodePreview(title: Self.displayFileName(path), path: path, stats: "写入 \(lineCount) 行", changeStats: ToolChangeStats(added: lineCount, removed: 0), lines: lines)
+    }
+
+    /// Completed MultiEdit preview: iterate EVERY edit in the `edits` array (the single-pair
+    /// `editCodePreview`/`firstToolStringValue` path only ever surfaces the first edit).
+    private var multiEditCodePreview: ToolCodePreview? {
+        guard let path = toolFilePath,
+              let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let edits = Self.firstEditsArray(in: object), !edits.isEmpty else { return nil }
+        var lines: [ToolCodePreview.Line] = []
+        var added = 0
+        var removed = 0
+        let perEditLimit = max(2, Self.maxToolCodePreviewLines / max(1, min(edits.count, 8)))
+        for edit in edits {
+            if lines.count >= Self.maxToolCodePreviewLines { break }
+            if let oldValue = (edit["old_string"] as? String) ?? (edit["oldString"] as? String), !oldValue.isEmpty {
+                removed += oldValue.split(separator: "\n", omittingEmptySubsequences: false).count
+                lines.append(contentsOf: Self.previewContentLines(oldValue, marker: "-", tint: .red, limit: perEditLimit))
+            }
+            if let newValue = (edit["new_string"] as? String) ?? (edit["newString"] as? String), !newValue.isEmpty {
+                added += newValue.split(separator: "\n", omittingEmptySubsequences: false).count
+                lines.append(contentsOf: Self.previewContentLines(newValue, marker: "+", tint: .green, limit: perEditLimit))
+            }
+        }
+        guard !lines.isEmpty else { return nil }
+        return ToolCodePreview(
+            title: Self.displayFileName(path),
+            path: path,
+            stats: "+\(added) / -\(removed)",
+            changeStats: ToolChangeStats(added: added, removed: removed),
+            lines: Array(lines.prefix(Self.maxToolCodePreviewLines))
+        )
+    }
+
+    private static func firstEditsArray(in object: Any) -> [[String: Any]]? {
+        if let dictionary = object as? [String: Any] {
+            if let edits = dictionary["edits"] as? [[String: Any]] { return edits }
+            for value in dictionary.values {
+                if let found = firstEditsArray(in: value) { return found }
+            }
+        }
+        if let array = object as? [Any] {
+            for value in array {
+                if let found = firstEditsArray(in: value) { return found }
+            }
+        }
+        return nil
     }
 
     var isTerminalTool: Bool {

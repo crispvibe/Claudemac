@@ -1722,8 +1722,16 @@ final class ChatPanelController: ObservableObject {
 
     private func shouldAppendDeltaToExistingMessage(kind: ChatMessageKind, requestID: String?, activeMessageID: UUID) -> Bool {
         switch kind {
-        case .assistant, .reasoning:
+        case .assistant:
+            // Top-level assistant text often streams with a nil requestID, so we only keep
+            // appending to the active bubble while it's the last visible row — otherwise a
+            // reply that resumes after a tool call would merge into the pre-tool bubble.
             guard lastVisibleMessageID == activeMessageID else { return false }
+            return true
+        case .reasoning:
+            // Reasoning blocks carry a stable block id (requestID), so keep streaming into the
+            // same thinking bubble even once a tool/text row follows it. Without this, mid-turn
+            // thinking interleaved with tool calls fragments or stops rendering live.
             return true
         default:
             return true
