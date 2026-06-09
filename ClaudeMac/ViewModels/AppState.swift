@@ -1645,8 +1645,14 @@ final class AppState: ObservableObject {
                 }
             } catch {
                 let message = Self.message(for: error)
+                let isAuthorizationError = Self.isProjectAuthorizationError(error)
                 await MainActor.run { [weak self] in
                     self?.applyEditorLoadFailure(message, to: tabID, generation: generation)
+                    // A project file we should be able to read got denied — surface an
+                    // actionable re-authorize prompt instead of just a dead tab error.
+                    if isAuthorizationError, project != nil {
+                        self?.showProjectReauthorizePrompt()
+                    }
                 }
             }
         }
@@ -2329,6 +2335,49 @@ final class AppState: ObservableObject {
         )
     }
 
+    /// A project file failed to read (commonly: the project sits in a TCC-protected folder like
+    /// ~/Desktop and its security-scoped bookmark went stale across an app update). Offer a
+    /// direct "re-authorize" (re-pick the folder → fresh bookmark) plus the Full Disk Access path.
+    private func showProjectReauthorizePrompt() {
+        guard let project = selectedProject else {
+            showFullDiskAccessPrompt()
+            return
+        }
+        permissionPrompt = PermissionPrompt(
+            title: "需要重新授权项目",
+            message: "macOS 拒绝读取项目「\(project.name)」内的文件——通常是项目在桌面/文稿等受保护目录、授权已失效。点“重新授权”重新选择该项目文件夹即可恢复访问；或开启完整磁盘访问一劳永逸。",
+            primaryButtonTitle: "重新授权",
+            secondaryButtonTitle: "打开完整磁盘访问",
+            action: .reauthorizeProject(project.id),
+            secondaryAction: .openFullDiskAccessSettings
+        )
+    }
+
+    /// Re-pick the project's folder via NSOpenPanel to mint a fresh security-scoped bookmark,
+    /// restoring access after a stale bookmark.
+    func reauthorizeProject(_ projectID: UUID) {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        let project = projects[index]
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: project.path, isDirectory: true)
+        panel.message = "重新选择项目文件夹「\(project.name)」以恢复访问权限。"
+        panel.prompt = "授权"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+            projects[index].bookmarkData = bookmark
+            projects[index].path = url.path
+            projects[index].updatedAt = Date()
+            try ProjectStore.saveProjects(projects)
+        } catch {
+            show(error)
+        }
+    }
+
     func handlePermissionPromptAction(_ action: PermissionPrompt.Action) {
         switch action {
         case .openFullDiskAccessSettings:
@@ -2345,6 +2394,9 @@ final class AppState: ObservableObject {
             } catch {
                 show(error)
             }
+        case .reauthorizeProject(let projectID):
+            permissionPrompt = nil
+            reauthorizeProject(projectID)
         }
     }
 
@@ -2366,6 +2418,7 @@ struct PermissionPrompt: Identifiable, Equatable {
         case openFullDiskAccessSettings
         case authorizeCommonFolders
         case dismissFolderPermissionOnboarding
+        case reauthorizeProject(UUID)
     }
 
     let id = UUID()

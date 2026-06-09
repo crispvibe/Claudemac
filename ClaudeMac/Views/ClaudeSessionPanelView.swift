@@ -1439,7 +1439,7 @@ struct ChatPanelView: View {
             return result.toolExecutedCommand.map { "$ \(Self.inlinePreview($0, limit: 80))" } ?? message.toolExecutedCommand.map { "$ \(Self.inlinePreview($0, limit: 80))" }
         }
         if toolKey == "read" {
-            return (message.toolFilePath ?? summary.filePath).map(relativeToolPath)
+            return (message.toolFilePath ?? summary.filePath).map { ($0 as NSString).lastPathComponent }
         }
         if toolKey == "grep" {
             return message.toolSearchPattern.map { "pattern: \(Self.inlinePreview($0, limit: 44))" }
@@ -1465,7 +1465,7 @@ struct ChatPanelView: View {
             return "反馈 \(feedbackCount)"
         }
         if let path = summary.filePath ?? message.toolFilePath {
-            return relativeToolPath(path)
+            return (path as NSString).lastPathComponent
         }
         return summary.plainSummary
     }

@@ -854,7 +854,7 @@ extension ChatPanelView {
 
     func appendDroppedPaths(_ paths: [String]) {
         DispatchQueue.main.async {
-            _ = appendAttachedPathCandidates(paths)
+            for path in paths { insertReferencePathIntoDraft(path) }
         }
     }
 
@@ -864,8 +864,30 @@ extension ChatPanelView {
 
     func appendDroppedPath(_ path: String) {
         DispatchQueue.main.async {
-            _ = appendAttachedPathCandidates([path])
+            insertReferencePathIntoDraft(path)
         }
+    }
+
+    /// Insert a dragged/dropped file or image as plain, selectable absolute-path text into the
+    /// composer — prefixed "图片"/"文件" so the model knows what it is — instead of a separate
+    /// attachment chip. Keeping it as text means the path stays copyable and unambiguous.
+    func insertReferencePathIntoDraft(_ rawPath: String) {
+        guard let standardized = standardizedExistingPath(from: rawPath) else { return }
+        let label = Self.isImageReferencePath(standardized) ? "图片" : "文件"
+        let token = "\(label) \(standardized)"
+        if draftMessage.isEmpty {
+            draftMessage = token + " "
+        } else if draftMessage.hasSuffix(" ") || draftMessage.hasSuffix("\n") {
+            draftMessage += token + " "
+        } else {
+            draftMessage += " " + token + " "
+        }
+        persistComposerDraft(draftMessage)
+    }
+
+    static func isImageReferencePath(_ path: String) -> Bool {
+        let ext = (path as NSString).pathExtension.lowercased()
+        return ["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "tiff", "tif", "svg", "ico"].contains(ext)
     }
 
     @discardableResult
