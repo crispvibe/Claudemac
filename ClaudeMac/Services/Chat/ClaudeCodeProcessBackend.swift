@@ -304,6 +304,10 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
             var didReceiveSuccessfulResult = false
             var didReceiveAssistantContent = false
             var didReceiveErrorResult = false
+            // Count of background tasks (Bash run_in_background) the model launched that haven't
+            // reported completion. While >0, a turn-ending `result` is NOT terminal: claude
+            // stays alive, the task notification will arrive, and the model auto-continues.
+            var pendingBackgroundTasks = 0
             var streamState = ClaudeStreamState()
             var eventCoalescer = ChatBackendEventCoalescer()
             var diagnostics: [String] = []
@@ -343,6 +347,15 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                         continue
                     }
                     appendDiagnostic(Self.diagnosticText(fromClaudeLine: line))
+                    switch Self.backgroundTaskTransition(forLine: line) {
+                    case .started:
+                        pendingBackgroundTasks += 1
+                    case .completed:
+                        pendingBackgroundTasks = max(0, pendingBackgroundTasks - 1)
+                        watchdog.resume()
+                    case .none:
+                        break
+                    }
                     let events = Self.events(fromClaudeLine: line, streamState: &streamState)
                     if events.contains(where: Self.isVisibleOutput) {
                         didReceiveVisibleOutput = true
@@ -372,6 +385,20 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                         try? await Task.sleep(nanoseconds: 250_000_000)
                         if self.consumeCompactResultWait() {
                             watchdog.markActivity()
+                        } else if pendingBackgroundTasks > 0 {
+                            // The model ended its turn but a background task it launched is still
+                            // running. claude stays alive and auto-continues when the task's
+                            // notification arrives, so DON'T close stdin / finish / stop the
+                            // process here (that would abort the background build). Pause the idle
+                            // watchdog while we wait for the silent task to complete.
+                            watchdog.pause()
+                            for event in eventCoalescer.flush() {
+                                if case .sessionID(let sessionID) = event {
+                                    self.activeSessionID = sessionID
+                                }
+                                continuation.yield(event)
+                            }
+                            continuation.yield(.updateStreamingStatus("后台任务进行中…"))
                         } else {
                             didReceiveSuccessfulResult = Self.isSuccessfulTerminalResultLine(line)
                             for event in eventCoalescer.flush() {
@@ -822,6 +849,21 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
     private static func shouldCloseStdinAfterLine(_ line: String) -> Bool {
         let compact = line.filter { !$0.isWhitespace }
         return isTerminalResult(compact)
+    }
+
+    private enum BackgroundTaskTransition { case started, completed, none }
+
+    /// Detect a `system` event that starts or completes a background task (Bash
+    /// run_in_background). `task_started` means a task is now running; `task_notification`/
+    /// `task_completed` means one finished (and the model will auto-continue).
+    private static func backgroundTaskTransition(forLine line: String) -> BackgroundTaskTransition {
+        let compact = line.filter { !$0.isWhitespace }
+        guard compact.contains("\"type\":\"system\"") else { return .none }
+        if compact.contains("\"subtype\":\"task_started\"") { return .started }
+        if compact.contains("\"subtype\":\"task_notification\"") || compact.contains("\"subtype\":\"task_completed\"") {
+            return .completed
+        }
+        return .none
     }
 
     private static func isSuccessfulTerminalResultLine(_ line: String) -> Bool {
