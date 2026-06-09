@@ -62,7 +62,6 @@ struct ChatPanelView: View {
     @State var transcriptBuildTask: Task<Void, Never>?
     @State var pendingTranscriptScrollTask: Task<Void, Never>?
     @State var pendingStreamingScrollTask: Task<Void, Never>?
-    @State var stableChatState: ChatPanelState?
     @State var nsScrollToBottomToken: Int = 0
     let transcriptInitialMessageLimit = ChatPanelState.historyInitialMessageLimit
     let transcriptMessagePageSize = ChatPanelState.historyInitialMessageLimit
@@ -81,18 +80,12 @@ struct ChatPanelView: View {
     let composerCardTint = AppTheme.composerSurfaceTint
 
     var chatState: ChatPanelState {
-        let live = chatRuntimeStore.state(
+        chatRuntimeStore.state(
             for: appState,
             modelID: selectedModelID,
             permissionMode: permissionMode,
             reasoningEffort: reasoningEffort
         )
-        DispatchQueue.main.async {
-            if stableChatState !== live {
-                stableChatState = live
-            }
-        }
-        return live
     }
 
     var body: some View {

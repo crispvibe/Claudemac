@@ -267,6 +267,7 @@ final class ChatPanelController: ObservableObject {
     private var pendingDeltaRequestIDs: [UUID: String] = [:]
     private var pendingOutputTokenCounts: [UUID: Int] = [:]
     private var deltaFlushTask: Task<Void, Never>?
+    private var runSnapshotTask: Task<Void, Never>?
     private var stopFallbackTask: Task<Void, Never>?
     private var queuedStartTask: Task<Void, Never>?
     private var firstVisibleOutputTimeoutTask: Task<Void, Never>?
@@ -426,6 +427,8 @@ final class ChatPanelController: ObservableObject {
         pendingOutputTokenCounts.removeAll()
         deltaFlushTask?.cancel()
         deltaFlushTask = nil
+        runSnapshotTask?.cancel()
+        runSnapshotTask = nil
         stopFallbackTask?.cancel()
         stopFallbackTask = nil
         queuedStartTask?.cancel()
@@ -499,6 +502,7 @@ final class ChatPanelController: ObservableObject {
             self.status = loaded.0?.runStatus ?? .idle
             self.statusText = loaded.0?.statusText ?? "已加载本地会话"
             self.resetHistoryPagingState(totalCount: loaded.1.totalCount, nextBeforeIndex: loaded.1.nextBeforeIndex)
+            self.reconcileLoadedRunStateIfStale()
             self.isLoadingHistory = false
             self.historyLoadID = nil
             self.historyLoadTask = nil
@@ -544,6 +548,7 @@ final class ChatPanelController: ObservableObject {
             self.status = loaded.0?.runStatus ?? .idle
             self.statusText = loaded.0?.statusText ?? "已加载本地会话"
             self.resetHistoryPagingState(totalCount: loaded.1.totalCount, nextBeforeIndex: loaded.1.nextBeforeIndex)
+            self.reconcileLoadedRunStateIfStale()
             if let session = loaded.0 {
                 self.composerCLI = session.cli.visibleValue
                 self.composerModelID = session.modelID
@@ -858,10 +863,12 @@ final class ChatPanelController: ObservableObject {
                     self.finishStreamingMessages(status: "failed")
                     self.setAwaitingFirstModelOutput(false)
                     self.shouldStartQueuedRequestAfterBackendEnds = false
+                    self.stopRunSnapshotLoop()
                     self.actuallyPersist()
                 }
             }
         }
+        startRunSnapshotLoop()
         return true
     }
 
@@ -929,6 +936,7 @@ final class ChatPanelController: ObservableObject {
         // `activeBackend == nil` and degrades to `.failed`. Mark them as
         // cancelled here so the UI collapses cleanly.
         cancelWaitingInteractiveRequestsOnInterrupt()
+        stopRunSnapshotLoop()
         actuallyPersist()
         scheduleStopFallback()
     }
@@ -1418,6 +1426,7 @@ final class ChatPanelController: ObservableObject {
             statusText = isUserStopping ? "已停止" : "完成"
             playCompletionSoundIfNeeded(stopped: isUserStopping)
             isUserStopping = false
+            stopRunSnapshotLoop()
             actuallyPersist()
         }
         if shouldStartQueuedRequest {
@@ -1716,6 +1725,29 @@ final class ChatPanelController: ObservableObject {
         }
     }
 
+    private func reconcileLoadedRunStateIfStale() {
+        // 进入这里时刚加载完一个本地持久化会话,没有任何 live backend / Task。若它的
+        // runStatus 仍落在"运行中"区间,说明上次是异常退出(强制退出 / 强杀 / 崩溃)时
+        // 被周期快照写下的中间态——纠正为已停止,并给残留的流式消息收尾,避免 UI 卡在
+        // "运行中 / 打字中"且 Allow/Deny、停止等按钮点击后必然失败。镜像会话(iOS 端
+        // 正在跑、Mac 端只镜像显示)的运行态是合法的,不在此列。
+        guard !isMirroringRemoteSession, currentTask == nil, activeBackend == nil else { return }
+        guard status.isRunning else { return }
+        for index in messages.indices where messages[index].isStreaming {
+            messages[index].isStreaming = false
+            if messages[index].status == "streaming" || messages[index].status.isEmpty {
+                messages[index].status = "stopped"
+            }
+        }
+        status = .completed
+        statusText = "已停止(上次异常退出已恢复)"
+        currentSession?.runStatus = .completed
+        currentSession?.statusText = statusText
+        currentSession?.lastCompletedAt = Date()
+        bumpStructureRevision()
+        actuallyPersist()
+    }
+
     private func scheduleNextQueuedRequestIfNeeded() {
         guard !queuedRequests.isEmpty else { return }
         guard !hasPendingPlanConfirmation else {
@@ -1961,6 +1993,37 @@ final class ChatPanelController: ObservableObject {
         messages[index].status = status.rawValue
         messages[index].interactiveRequest?.status = status
         bumpStructureRevision()
+    }
+
+    // 流式期间的崩溃保护:每隔几秒把正在进行的对话(含尚未完成的流式消息)落盘一次。
+    // 否则一整段 AI 回复只会在 run 正常结束(backendStreamDidEnd)或优雅退出钩子
+    // (willTerminateNotification)时才写盘——强制退出 / 强杀进程 / 崩溃 / 断电时这两者
+    // 都不触发,整段进行中的回复会全部丢失。
+    private func startRunSnapshotLoop() {
+        runSnapshotTask?.cancel()
+        runSnapshotTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                guard !Task.isCancelled else { return }
+                let keepRunning = await MainActor.run { () -> Bool in
+                    guard let self, self.status.isRunning else { return false }
+                    self.snapshotActiveRunToDisk()
+                    return true
+                }
+                if !keepRunning { return }
+            }
+        }
+    }
+
+    private func stopRunSnapshotLoop() {
+        runSnapshotTask?.cancel()
+        runSnapshotTask = nil
+    }
+
+    private func snapshotActiveRunToDisk() {
+        guard currentSession != nil, !isMirroringRemoteSession else { return }
+        flushPendingDeltas()
+        actuallyPersist()
     }
 
     private func persistCurrentSession(saveMessages shouldSaveMessages: Bool = true) {

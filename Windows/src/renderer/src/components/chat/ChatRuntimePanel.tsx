@@ -280,6 +280,7 @@ export function ChatRuntimePanel() {
   const [isNearBottom, setIsNearBottom] = useState(true);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
+  const programmaticScrollRef = useRef(false);
   const composerComposingRef = useRef(false);
   const project = useCurrentProject();
   const settings = useSettingsStore((state) => state.settings);
@@ -330,9 +331,13 @@ export function ChatRuntimePanel() {
     return Array.from(new Set(values));
   }, [activeCLI, activeProfile?.model, settings?.model, settings?.profiles]);
   const appendRuleText = settings?.appendRule.enabled ? settings.appendRule.content.trim() : "";
-  const messageScrollSignature = messages
-    .map((message) => `${message.id}:${message.text.length}:${message.status ?? ""}:${message.isStreaming ? "1" : "0"}`)
-    .join("|");
+  const messageScrollSignature = useMemo(
+    () =>
+      messages
+        .map((message) => `${message.id}:${message.text.length}:${message.status ?? ""}:${message.isStreaming ? "1" : "0"}`)
+        .join("|"),
+    [messages]
+  );
   const canSend = Boolean(project?.path && (input.trim() || attachments.length > 0));
 
   useEffect(() => {
@@ -381,13 +386,23 @@ export function ChatRuntimePanel() {
       if (!viewport) {
         return;
       }
+      // Mark this as a programmatic scroll so the resulting scroll event doesn't bounce back
+      // through updateScrollPosition and fight the rAF (which can thrash with tall, variable-height
+      // cards like a pending choice question).
+      programmaticScrollRef.current = true;
       viewport.scrollTo({ top: viewport.scrollHeight, behavior: "auto" });
       setIsNearBottom(true);
+      window.requestAnimationFrame(() => {
+        programmaticScrollRef.current = false;
+      });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [messageScrollSignature, queuedRequests.length, statusText]);
 
   function updateScrollPosition() {
+    if (programmaticScrollRef.current) {
+      return;
+    }
     const viewport = viewportRef.current;
     if (!viewport) {
       return;
