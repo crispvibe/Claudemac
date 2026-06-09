@@ -626,31 +626,31 @@ extension ChatPanelView {
         }
     }
 
-    /// A single, gentle scroll to the last real row. Used while following during streaming and
-    /// on content changes — anchoring the last row's bottom never overshoots into blank, and
-    /// doing exactly ONE scroll (instead of the 6-step retry loop) avoids the up/down judder
-    /// that came from restarting the loop on every streaming delta.
+    /// A single, gentle scroll to the bottom anchor (the trailing spacer). Targeting the SAME
+    /// anchor as the AppKit observer (which scrolls to content max, incl. the spacer) keeps the
+    /// two engines from fighting over a 24pt difference, and preserves the gap between the last
+    /// row and the input box. Used while following during streaming / on content changes.
     func scrollTranscriptToBottomOnce(_ proxy: ScrollViewProxy) {
-        guard transcriptUserIntent == .followBottom, let lastItemID = cachedTranscriptItems.last?.id else { return }
-        proxy.scrollTo(lastItemID, anchor: .bottom)
+        guard transcriptUserIntent == .followBottom else { return }
+        proxy.scrollTo(transcriptBottomID, anchor: .bottom)
     }
 
     func scrollTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
         // The 6-step retry loop is reserved for OPEN / conversation-switch / explicit kicks,
         // where the LazyVStack is still materializing rows and a single scroll may land before
-        // the trailing rows exist. Streaming/content updates use scrollTranscriptToBottomOnce.
+        // the trailing rows exist. Targets the bottom spacer (same anchor as the AppKit engine)
+        // so the two don't tug the offset back and forth.
         pendingTranscriptScrollTask?.cancel()
         pendingTranscriptScrollTask = Task { @MainActor in
             for (index, delay) in [16_000_000, 90_000_000, 180_000_000, 320_000_000, 600_000_000, 1_000_000_000].enumerated() {
                 try? await Task.sleep(nanoseconds: UInt64(delay))
                 guard !Task.isCancelled, transcriptUserIntent == .followBottom else { return }
-                guard let lastItemID = cachedTranscriptItems.last?.id else { continue }
                 if animated && index == 0 {
                     withAnimation(.easeOut(duration: 0.12)) {
-                        proxy.scrollTo(lastItemID, anchor: .bottom)
+                        proxy.scrollTo(transcriptBottomID, anchor: .bottom)
                     }
                 } else {
-                    proxy.scrollTo(lastItemID, anchor: .bottom)
+                    proxy.scrollTo(transcriptBottomID, anchor: .bottom)
                 }
             }
         }

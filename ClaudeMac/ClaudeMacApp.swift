@@ -108,6 +108,8 @@ private struct WindowConfigurator: NSViewRepresentable {
         window.backgroundColor = .clear
         window.isOpaque = false
         window.styleMask.insert(.fullSizeContentView)
+        window.styleMask.insert(.resizable)
+        window.minSize = NSSize(width: 720, height: 480)
         window.contentView?.wantsLayer = true
         window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
         window.isRestorable = false

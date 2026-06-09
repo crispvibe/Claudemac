@@ -8,6 +8,12 @@ final class ChatRuntimeStore: ObservableObject {
     private weak var lastKnownState: ChatPanelState?
     private var lastKnownRuntimeKey: String?
     private var lastKnownProjectID: UUID?
+    // LRU order (oldest first) of distinct in-memory session states, used to evict idle ones.
+    private var lruOrder: [ObjectIdentifier] = []
+    // Keep at most this many idle (finished, non-visible) session states in memory; the rest
+    // are evicted (they reload from disk on re-select). Bounds memory for users who visit many
+    // conversations. Running / queued / visible states are never evicted.
+    private let maxRetainedIdleStates = 12
     private var activityRefreshGeneration = 0
     private var remoteChatSessionsObserver: NSObjectProtocol?
     @Published private var activityBySessionID: [String: ChatSessionActivity] = [:]
@@ -295,6 +301,45 @@ final class ChatRuntimeStore: ObservableObject {
         lastKnownState = state
         lastKnownRuntimeKey = key
         lastKnownProjectID = projectID
+        touchLRU(state)
+        evictIdleStatesIfNeeded()
+    }
+
+    private func touchLRU(_ state: ChatPanelState) {
+        let identifier = ObjectIdentifier(state)
+        lruOrder.removeAll { $0 == identifier }
+        lruOrder.append(identifier)
+    }
+
+    /// Drop the oldest idle (non-running, non-visible) session states beyond the cap so memory
+    /// doesn't grow unbounded as the user visits many conversations. Evicted states deallocate
+    /// (all aliases removed) and reload from disk if re-selected. Never evicts a state with a
+    /// live run / queued requests / mirroring, nor the currently visible one.
+    private func evictIdleStatesIfNeeded() {
+        var statesByIdentifier: [ObjectIdentifier: ChatPanelState] = [:]
+        for state in statesByKey.values {
+            statesByIdentifier[ObjectIdentifier(state)] = state
+        }
+        // Drop identifiers for states no longer held anywhere.
+        lruOrder.removeAll { statesByIdentifier[$0] == nil }
+        let visibleIdentifier = lastKnownState.map(ObjectIdentifier.init)
+        let evictable = lruOrder.filter { identifier in
+            guard let state = statesByIdentifier[identifier], identifier != visibleIdentifier else { return false }
+            return !state.shouldRetainRuntime
+        }
+        let overflow = evictable.count - maxRetainedIdleStates
+        guard overflow > 0 else { return }
+        for identifier in evictable.prefix(overflow) {
+            guard let state = statesByIdentifier[identifier] else { continue }
+            state.setRuntimeVisible(false)
+            statesByKey = statesByKey.filter { $0.value !== state }
+            lruOrder.removeAll { $0 == identifier }
+            if lastKnownState === state {
+                lastKnownState = nil
+                lastKnownRuntimeKey = nil
+                lastKnownProjectID = nil
+            }
+        }
     }
 
     private func stateMatchesSelectedHistory(_ state: ChatPanelState, appState: AppState) -> Bool {

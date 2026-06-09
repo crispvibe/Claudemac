@@ -3322,7 +3322,12 @@ extension ChatMessage {
     }
 
     var isAgentTool: Bool {
-        toolName.lowercased() == "agent" || subagentID != nil
+        // ONLY the actual sub-agent–spawning tool (Agent/Task). Previously this also returned
+        // true for any message whose text merely contained an agentId/agent_id field — which
+        // includes a running sub-agent's INNER tool calls (Grep/Read), so the floating pill
+        // counted every inner tool as a separate "running agent" (the bogus "N 个 Agent 运行中").
+        let key = toolName.lowercased()
+        return key == "agent" || key == "task"
     }
 
     var isExitPlanModeCall: Bool {

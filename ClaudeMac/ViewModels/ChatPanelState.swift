@@ -232,6 +232,7 @@ final class ChatPanelController: ObservableObject {
             || status == .waitingInput
             || !queuedRequests.isEmpty
             || isLoadingHistory
+            || isMirroringRemoteSession
     }
 
     var hasPendingPlanConfirmation: Bool {
