@@ -4082,14 +4082,20 @@ extension ChatMessage {
     /// (`\n`, `\t`, `\"`, `\\`, `\uXXXX`, …). Used to stream Write/Edit content into the card
     /// as the model types it, before the tool input JSON is complete.
     func streamingToolStringValue(keys: [String], in body: String) -> String? {
+        // The card preview only renders the first ~300 lines, so cap how much of the (possibly
+        // huge, still-growing) value we scan/copy per render. Without this, a large file write
+        // re-scans the whole content on every delta — O(n²) over the stream.
+        let maxValueChars = 20_000
         for key in keys {
             for marker in ["\"\(key)\":\"", "\"\(key)\": \""] {
                 guard let range = body.range(of: marker) else { continue }
-                let chars = Array(body[range.upperBound...])
+                let chars = Array(body[range.upperBound...].prefix(maxValueChars * 2))
                 var result = ""
+                result.reserveCapacity(min(chars.count, maxValueChars))
                 var index = 0
                 var closed = false
                 loop: while index < chars.count {
+                    if result.count >= maxValueChars { break loop }
                     let character = chars[index]
                     if character == "\"" {
                         closed = true
