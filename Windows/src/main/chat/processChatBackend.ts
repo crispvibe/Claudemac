@@ -850,6 +850,21 @@ function compactText(value: unknown): string {
   return JSON.stringify(object);
 }
 
+const fileChangeToolNames = new Set(["edit", "write", "multiedit", "create", "create_file", "new_file", "notebookedit"]);
+
+// File-change tools need their structured input (file_path + old/new_string or content) preserved
+// so the renderer can draw a proper diff card — compactText would flatten Write down to bare
+// content and drop the path. Everything else stays on compactText to keep tool noise short.
+function toolCallText(name: string | null | undefined, input: unknown): string {
+  if (name && fileChangeToolNames.has(name.toLowerCase())) {
+    const record = recordValue(input);
+    if (record) {
+      return JSON.stringify(record);
+    }
+  }
+  return compactText(input);
+}
+
 function assistantEventsFromContent(message: JSONRecord, requestID: string | null | undefined): ChatBackendEvent[] {
   const content = message.content;
   if (typeof content === "string" && content) {
@@ -872,7 +887,7 @@ function assistantEventsFromContent(message: JSONRecord, requestID: string | nul
         events.push({ type: "appendDelta", kind: "assistant", title: "assistant", subtitle: "Claude Code", text, status: "streaming", requestID: id });
       }
     } else if (type === "tool_use") {
-      events.push({ type: "appendMessage", kind: "toolCall", title: stringValue(item.name) ?? "tool", subtitle: "Claude Code", text: compactText(item.input), status: "done", requestID: id });
+      events.push({ type: "appendMessage", kind: "toolCall", title: stringValue(item.name) ?? "tool", subtitle: "Claude Code", text: toolCallText(stringValue(item.name), item.input), status: "done", requestID: id });
     } else if (type === "tool_result") {
       events.push({ type: "appendMessage", kind: "toolResult", title: "tool result", subtitle: "Claude Code", text: compactText(item.content), status: "done", requestID: id });
     }
@@ -896,7 +911,7 @@ function claudeStreamEvents(object: JSONRecord, fallbackID: string | null | unde
       kind: "toolCall",
       title: stringValue(contentBlock.name) ?? "tool",
       subtitle: "Claude Code",
-      text: compactText(contentBlock.input),
+      text: toolCallText(stringValue(contentBlock.name), contentBlock.input),
       status: "streaming",
       requestID: stringValue(contentBlock.id) ?? fallbackID
     }];

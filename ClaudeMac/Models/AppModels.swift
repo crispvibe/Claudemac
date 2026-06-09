@@ -173,6 +173,8 @@ struct LaunchRecord: Identifiable, Codable, Equatable {
 }
 
 struct CLIHistorySession: Identifiable, Equatable {
+    static let draftSessionId = "__draft__"
+
     var id: String { "\(cli.rawValue):\(sessionId)" }
     let cli: CLIType
     let sessionId: String
@@ -182,6 +184,8 @@ struct CLIHistorySession: Identifiable, Equatable {
     let storagePath: String?
     let createdAt: Date?
     let updatedAt: Date?
+
+    var isDraft: Bool { sessionId == Self.draftSessionId }
 
     var sourceLabel: String {
         "\(cli.displayName) 历史"

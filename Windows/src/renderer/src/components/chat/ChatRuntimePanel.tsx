@@ -12,7 +12,7 @@ import {
   Terminal,
   X
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
   ChatMessage,
@@ -91,6 +91,161 @@ type MessageTextBlock =
 
 const hiddenTranscriptKinds = new Set<ChatMessage["kind"]>(["system", "result", "rawOutput"]);
 
+const foldableToolNames = new Set(["read", "grep", "glob"]);
+
+function toolName(message: ChatMessage): string {
+  return (message.title || message.subtitle || kindLabel(message.kind)).trim();
+}
+
+function isFoldableReadTool(message: ChatMessage): boolean {
+  return message.kind === "toolCall" && foldableToolNames.has(toolName(message).toLowerCase());
+}
+
+const toolPathKeys = ["file_path", "filePath", "filepath", "path", "filename", "notebook_path"];
+
+function extractToolFilePath(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      for (const key of toolPathKeys) {
+        const value = parsed[key];
+        if (typeof value === "string" && value.trim()) {
+          return value.trim();
+        }
+      }
+    } catch {
+      // fall through to regex below
+    }
+  }
+  for (const key of toolPathKeys) {
+    const match = new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, "u").exec(trimmed);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+function toolHeaderSummary(message: ChatMessage): string | null {
+  const path = extractToolFilePath(message.text);
+  if (path) {
+    return basename(path);
+  }
+  const firstLine = message.text.split("\n").map((line) => line.trim()).find(Boolean);
+  if (!firstLine) {
+    return null;
+  }
+  return firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
+}
+
+const fileChangeToolNames = new Set(["edit", "write", "multiedit", "create", "create_file", "new_file", "notebookedit"]);
+
+function isFileChangeMessage(message: ChatMessage): boolean {
+  return message.kind === "diff" || (message.kind === "toolCall" && fileChangeToolNames.has(toolName(message).toLowerCase()));
+}
+
+type DiffLine = { marker: "+" | "-" | " "; text: string };
+
+const maxDiffPreviewLines = 300;
+
+function capDiffLines(lines: DiffLine[]): DiffLine[] {
+  return lines.length > maxDiffPreviewLines ? lines.slice(0, maxDiffPreviewLines) : lines;
+}
+
+// Turns a file-change tool payload into red/green diff lines, mirroring the Mac code-preview card:
+// Edit → old_string(-)/new_string(+); MultiEdit → each edit; Write → content(+); diff kind → +/- prefixes.
+function buildDiffLines(message: ChatMessage): DiffLine[] {
+  const text = message.text.trim();
+  const pushBlock = (lines: DiffLine[], value: unknown, marker: DiffLine["marker"]) => {
+    String(value)
+      .split("\n")
+      .forEach((line) => lines.push({ marker, text: line }));
+  };
+
+  if (text.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const lines: DiffLine[] = [];
+      if (Array.isArray(parsed.edits)) {
+        for (const entry of parsed.edits) {
+          const edit = entry as Record<string, unknown>;
+          if (typeof edit.old_string === "string" && edit.old_string) pushBlock(lines, edit.old_string, "-");
+          if (typeof edit.new_string === "string" && edit.new_string) pushBlock(lines, edit.new_string, "+");
+        }
+        if (lines.length > 0) return capDiffLines(lines);
+      }
+      if (typeof parsed.old_string === "string" || typeof parsed.new_string === "string") {
+        if (typeof parsed.old_string === "string" && parsed.old_string) pushBlock(lines, parsed.old_string, "-");
+        if (typeof parsed.new_string === "string" && parsed.new_string) pushBlock(lines, parsed.new_string, "+");
+        if (lines.length > 0) return capDiffLines(lines);
+      }
+      if (typeof parsed.content === "string") {
+        pushBlock(lines, parsed.content, "+");
+        return capDiffLines(lines);
+      }
+    } catch {
+      // fall through to raw handling
+    }
+  }
+
+  const raw = text.split("\n");
+  if (message.kind === "diff") {
+    const lines = raw
+      .filter(
+        (line) =>
+          !line.startsWith("diff --git") && !line.startsWith("+++") && !line.startsWith("---") && !line.startsWith("@@")
+      )
+      .map<DiffLine>((line) => {
+        if (line.startsWith("+")) return { marker: "+", text: line.slice(1) };
+        if (line.startsWith("-")) return { marker: "-", text: line.slice(1) };
+        return { marker: " ", text: line.startsWith(" ") ? line.slice(1) : line };
+      });
+    return capDiffLines(lines);
+  }
+  return capDiffLines(raw.map<DiffLine>((line) => ({ marker: " ", text: line })));
+}
+
+type RenderItem =
+  | { type: "message"; message: ChatMessage }
+  | { type: "toolBatch"; id: string; messages: ChatMessage[] };
+
+// Mirrors the Mac transcript: collapse runs of consecutive Read/Grep/Glob tool calls (and the
+// tool results interleaved with them) into a single foldable batch so the transcript stays clean.
+function buildRenderItems(messages: ChatMessage[]): RenderItem[] {
+  const items: RenderItem[] = [];
+  let run: ChatMessage[] = [];
+
+  const flush = () => {
+    if (run.length === 0) {
+      return;
+    }
+    const foldableCount = run.filter(isFoldableReadTool).length;
+    if (foldableCount >= 2) {
+      items.push({ type: "toolBatch", id: `tool-batch-${run[0].id}`, messages: run });
+    } else {
+      for (const message of run) {
+        items.push({ type: "message", message });
+      }
+    }
+    run = [];
+  };
+
+  for (const message of messages) {
+    if (isFoldableReadTool(message) || (message.kind === "toolResult" && run.length > 0)) {
+      run.push(message);
+    } else {
+      flush();
+      items.push({ type: "message", message });
+    }
+  }
+  flush();
+  return items;
+}
+
 function parseMessageText(text: string): MessageTextBlock[] {
   const blocks: MessageTextBlock[] = [];
   const fencePattern = /```([^\n`]*)\n?([\s\S]*?)(?:```|$)/g;
@@ -145,7 +300,17 @@ export function ChatRuntimePanel() {
   const stop = useChatStore((state) => state.stop);
   const cancelQueuedRequest = useChatStore((state) => state.cancelQueuedRequest);
   const activateProject = useChatStore((state) => state.activateProject);
+  const respondToInteractiveRequest = useChatStore((state) => state.respondToInteractiveRequest);
+  const openFile = useEditorStore((state) => state.openFile);
   const isRunning = isChatRunStatusRunning(status);
+  const waitingInteractive = useMemo(
+    () =>
+      messages.find(
+        (message) => message.kind === "interactiveRequest" && message.interactiveRequest?.status === "waiting"
+      )?.interactiveRequest ?? null,
+    [messages]
+  );
+  const renderItems = useMemo(() => buildRenderItems(messages), [messages]);
   const activeCLI = settings?.defaultCLI ?? "claude";
   const activeProfile = useMemo(() => {
     const profiles = settings?.profiles.filter((profile) => profile.kind === activeCLI && profile.enabled) ?? [];
@@ -324,6 +489,24 @@ export function ChatRuntimePanel() {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = input.trim();
+    // Answer a pending choice/text question straight from the main composer (parity with Mac),
+    // instead of forcing the user down into the inline card.
+    if (
+      text &&
+      waitingInteractive &&
+      (waitingInteractive.allowCustomInput || waitingInteractive.mode === "text")
+    ) {
+      const didRespond = respondToInteractiveRequest({
+        requestID: waitingInteractive.id,
+        selectedOptionIDs: [],
+        customText: text
+      });
+      if (didRespond) {
+        setInput("");
+        setActivePicker(null);
+        return;
+      }
+    }
     if ((!text && attachments.length === 0) || !project?.path) {
       return;
     }
@@ -355,24 +538,29 @@ export function ChatRuntimePanel() {
             <span>{project ? "输入需求后会在这里显示 Windows 端对话流。" : "添加或选择项目后才能开始会话。"}</span>
           </div>
         ) : (
-          messages.map((message) => (
-            <ChatMessageRow
-              key={message.id}
-              message={message}
-              reasoningExpanded={expandedReasoningIds.has(message.id)}
-              onToggleReasoning={() => {
-                setExpandedReasoningIds((current) => {
-                  const next = new Set(current);
-                  if (next.has(message.id)) {
-                    next.delete(message.id);
-                  } else {
-                    next.add(message.id);
-                  }
-                  return next;
-                });
-              }}
-            />
-          ))
+          renderItems.map((item) =>
+            item.type === "toolBatch" ? (
+              <ToolBatchCard key={item.id} messages={item.messages} onOpenFile={openFile} />
+            ) : (
+              <ChatMessageRow
+                key={item.message.id}
+                message={item.message}
+                onOpenFile={openFile}
+                reasoningExpanded={expandedReasoningIds.has(item.message.id)}
+                onToggleReasoning={() => {
+                  setExpandedReasoningIds((current) => {
+                    const next = new Set(current);
+                    if (next.has(item.message.id)) {
+                      next.delete(item.message.id);
+                    } else {
+                      next.add(item.message.id);
+                    }
+                    return next;
+                  });
+                }}
+              />
+            )
+          )
         )}
         {isAwaitingFirstModelOutput ? (
           <div className="chat-loading-row">
@@ -397,7 +585,13 @@ export function ChatRuntimePanel() {
 
       <form className="composer-card" onSubmit={handleSubmit}>
         <textarea
-          placeholder={project ? "输入你的需求" : "先选择项目"}
+          placeholder={
+            !project
+              ? "先选择项目"
+              : waitingInteractive && (waitingInteractive.allowCustomInput || waitingInteractive.mode === "text")
+                ? "输入你的选择或回复"
+                : "输入你的需求"
+          }
           rows={3}
           value={input}
           disabled={!project}
@@ -605,12 +799,14 @@ function ComposerAttachments({
   );
 }
 
-function ChatMessageRow({
+const ChatMessageRow = memo(function ChatMessageRow({
   message,
+  onOpenFile,
   onToggleReasoning,
   reasoningExpanded
 }: {
   message: ChatMessage;
+  onOpenFile: (path: string) => void | Promise<void>;
   onToggleReasoning: () => void;
   reasoningExpanded: boolean;
 }) {
@@ -661,8 +857,12 @@ function ChatMessageRow({
     return <DiagnosticEventCard message={message} />;
   }
 
-  return <TranscriptEventCard message={message} />;
-}
+  if (isFileChangeMessage(message)) {
+    return <FileChangeCard message={message} onOpenFile={onOpenFile} />;
+  }
+
+  return <ToolCard message={message} onOpenFile={onOpenFile} />;
+});
 
 function AssistantMessageCard({ message }: { message: ChatMessage }) {
   return (
@@ -701,18 +901,154 @@ function MessageText({ text }: { text: string }) {
   );
 }
 
-function TranscriptEventCard({ message }: { message: ChatMessage }) {
-  const className = ["chat-event-row", "transcript-event-card", `kind-${message.kind}`, message.kind === "error" ? "error" : ""]
+function FileChangeCard({
+  message,
+  onOpenFile
+}: {
+  message: ChatMessage;
+  onOpenFile: (path: string) => void | Promise<void>;
+}) {
+  const filePath = extractToolFilePath(message.text);
+  const fileName = filePath ? basename(filePath) : message.title || "文件变更";
+  const lines = useMemo(() => buildDiffLines(message), [message.text, message.kind]);
+  const added = lines.filter((line) => line.marker === "+").length;
+  const removed = lines.filter((line) => line.marker === "-").length;
+
+  return (
+    <div className="chat-event-row transcript-event-card file-change-card kind-diff">
+      <div className="file-change-header">
+        <button
+          type="button"
+          className="file-change-name"
+          disabled={!filePath}
+          title={filePath ?? fileName}
+          onClick={() => {
+            if (filePath) {
+              void onOpenFile(filePath);
+            }
+          }}
+        >
+          <FileText size={12} />
+          <span>{fileName}</span>
+        </button>
+        <span className="file-change-stats">
+          {added > 0 ? <em className="add">+{added}</em> : null}
+          {removed > 0 ? <em className="del">-{removed}</em> : null}
+        </span>
+      </div>
+      {lines.length > 0 ? (
+        <div className="file-change-body">
+          {lines.map((line, index) => (
+            <div
+              key={index}
+              className={`diff-line ${line.marker === "+" ? "add" : line.marker === "-" ? "del" : ""}`}
+            >
+              <span className="diff-ln">{index + 1}</span>
+              <span className="diff-mk">{line.marker}</span>
+              <span className="diff-tx">{line.text || " "}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="file-change-empty">{message.isStreaming ? "正在写入…" : "暂无变更预览。"}</p>
+      )}
+    </div>
+  );
+}
+
+function ToolCard({
+  message,
+  defaultExpanded = false,
+  onOpenFile
+}: {
+  message: ChatMessage;
+  defaultExpanded?: boolean;
+  onOpenFile: (path: string) => void | Promise<void>;
+}) {
+  // File-change tools and failures stay expanded by default; read-ish noise folds to one line.
+  const isError = message.kind === "error" || message.status === "failed";
+  const isFileChange =
+    message.kind === "diff" || ["edit", "write", "multiedit", "create", "create_file"].includes(toolName(message).toLowerCase());
+  const [expanded, setExpanded] = useState(defaultExpanded || isError || isFileChange);
+  const filePath = extractToolFilePath(message.text);
+  const summary = toolHeaderSummary(message);
+  const className = ["chat-event-row", "transcript-event-card", `kind-${message.kind}`, isError ? "error" : ""]
     .filter(Boolean)
     .join(" ");
+
   return (
     <div className={className}>
-      <div className="event-card-header">
-        <span>{message.title || kindLabel(message.kind)}</span>
+      <button type="button" className="event-card-header tool-card-header" onClick={() => setExpanded((value) => !value)}>
+        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <span className="tool-card-name">{toolName(message)}</span>
+        {summary ? (
+          filePath ? (
+            <span
+              className="tool-card-summary tool-card-file"
+              role="link"
+              tabIndex={0}
+              title={filePath}
+              onClick={(event) => {
+                event.stopPropagation();
+                void onOpenFile(filePath);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.stopPropagation();
+                  void onOpenFile(filePath);
+                }
+              }}
+            >
+              {summary}
+            </span>
+          ) : (
+            <span className="tool-card-summary">{summary}</span>
+          )
+        ) : null}
         {message.status ? <small>{message.status}</small> : null}
-      </div>
-      {message.subtitle ? <small className="event-card-subtitle">{message.subtitle}</small> : null}
-      {message.text ? <pre>{message.text}</pre> : <p>暂无输出。</p>}
+      </button>
+      {expanded ? (
+        <div className="tool-card-body">
+          {message.subtitle ? <small className="event-card-subtitle">{message.subtitle}</small> : null}
+          {message.text ? <pre>{message.text}</pre> : <p>暂无输出。</p>}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ToolBatchCard({
+  messages,
+  onOpenFile
+}: {
+  messages: ChatMessage[];
+  onOpenFile: (path: string) => void | Promise<void>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const readCount = messages.filter((message) => toolName(message).toLowerCase() === "read").length;
+  const grepCount = messages.filter((message) => toolName(message).toLowerCase() === "grep").length;
+  const globCount = messages.filter((message) => toolName(message).toLowerCase() === "glob").length;
+  const callCount = messages.filter(isFoldableReadTool).length;
+  const parts = [
+    readCount > 0 ? `读取 ${readCount}` : null,
+    grepCount > 0 ? `搜索 ${grepCount}` : null,
+    globCount > 0 ? `匹配 ${globCount}` : null
+  ].filter(Boolean);
+  const summary = `${parts.length > 0 ? parts.join(" · ") : "工具"} · 共 ${callCount} 步`;
+
+  return (
+    <div className="chat-event-row transcript-event-card tool-batch-card">
+      <button type="button" className="event-card-header tool-card-header" onClick={() => setExpanded((value) => !value)}>
+        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <span className="tool-card-name">{summary}</span>
+      </button>
+      {expanded ? (
+        <div className="tool-batch-body">
+          {messages.map((message) => (
+            <ToolCard key={message.id} message={message} onOpenFile={onOpenFile} />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

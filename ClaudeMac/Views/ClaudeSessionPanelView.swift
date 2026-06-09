@@ -359,11 +359,17 @@ struct ChatPanelView: View {
     }
 
     func projectHistorySessionRow(_ session: CLIHistorySession) -> some View {
-        let activity = chatRuntimeStore.activity(for: session)
-        let isSelected = appState.selectedCLIHistoryID == session.id
+        let activity = session.isDraft ? nil : chatRuntimeStore.activity(for: session)
+        let isSelected = session.isDraft
+            ? (appState.selectedMode == .newSession && appState.selectedCLIHistoryID == nil)
+            : appState.selectedCLIHistoryID == session.id
         return HStack(spacing: 0) {
             Button {
-                appState.selectCLIHistory(session)
+                if session.isDraft {
+                    startNewChat()
+                } else {
+                    appState.selectCLIHistory(session)
+                }
                 showProjectHistoryPopover = false
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
@@ -371,7 +377,12 @@ struct ChatPanelView: View {
                         .font(.system(size: 11.5, weight: isSelected ? .semibold : .regular))
                         .foregroundStyle(isSelected ? .primary : .secondary)
                         .lineLimit(1)
-                    if !session.relativeUpdatedText.isEmpty {
+                    if session.isDraft {
+                        Text("尚未开始 · 草稿")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    } else if !session.relativeUpdatedText.isEmpty {
                         Text("\(session.sourceLabel) · \(session.relativeUpdatedText)")
                             .font(.system(size: 9.5))
                             .foregroundStyle(.tertiary)
@@ -391,17 +402,19 @@ struct ChatPanelView: View {
                     .padding(.trailing, 2)
             }
 
-            Button {
-                historyToRemoveFromHeader = session
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 9, weight: .medium))
-                    .frame(width: 24, height: 24)
-                    .contentShape(Circle())
+            if !session.isDraft {
+                Button {
+                    historyToRemoveFromHeader = session
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 9, weight: .medium))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .help("删除历史会话")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.tertiary)
-            .help("删除历史会话")
         }
         .padding(.trailing, 4)
         .background(isSelected ? AppTheme.selectedSurface : Color.clear)
@@ -463,24 +476,6 @@ struct ChatPanelView: View {
 
     var terminalFallbackActions: some View {
         HStack(spacing: 4) {
-            Button(action: copyEntireTranscript) {
-                Image(systemName: "text.quote")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(CircularIconButtonStyle(size: 30, background: Color.primary.opacity(0.055)))
-            .foregroundStyle(.secondary)
-            .disabled(chatState.messages.isEmpty)
-            .help("复制整段对话")
-
-            Button(action: copyCommandToClipboard) {
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(CircularIconButtonStyle(size: 30, background: Color.primary.opacity(0.055)))
-            .foregroundStyle(.secondary)
-            .disabled(appState.selectedProject == nil && appState.selectedHistoryProjectPath == nil)
-            .help("复制当前 CLI 命令")
-
             Button(action: openCommandInTerminal) {
                 Image(systemName: "terminal")
                     .font(.system(size: 11, weight: .medium))
@@ -1292,58 +1287,6 @@ struct ChatPanelView: View {
         appState.openFile(path: reference.path, line: reference.line, column: reference.column)
     }
 
-    func copyEntireTranscript() {
-        var blocks: [String] = []
-        for item in buildTranscriptItems() {
-            switch item {
-            case .message(let message):
-                blocks.append(transcriptCopyText(for: message))
-            case .toolGroup(let group):
-                let title = group.primary.toolPrimaryTitle
-                let detail = group.detailText
-                blocks.append(detail.isEmpty ? "### \(title)" : "### \(title)\n\(detail)")
-            case .toolBatch(let batch):
-                for group in batch.groups {
-                    let title = group.primary.toolPrimaryTitle
-                    let detail = group.detailText
-                    blocks.append(detail.isEmpty ? "### \(title)" : "### \(title)\n\(detail)")
-                }
-            case .loading:
-                break
-            }
-        }
-        let text = blocks
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
-        guard !text.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
-    private func transcriptCopyText(for message: ChatMessage) -> String {
-        let body: String
-        if message.isStreaming, let live = chatState.streamingTextStore.text(for: message.id), !live.isEmpty {
-            body = live
-        } else {
-            body = message.text
-        }
-        switch message.kind {
-        case .user:
-            return "## 用户\n\(body)"
-        case .assistant:
-            return "## 助手\n\(body)"
-        case .reasoning:
-            return "## 思考\n\(body)"
-        case .error:
-            return "## 错误\n\(body)"
-        default:
-            let title = message.toolPrimaryTitle
-            let detail = message.isTerminalTool ? message.terminalDetailText : message.toolDetailText
-            return detail.isEmpty ? "### \(title)" : "### \(title)\n\(detail)"
-        }
-    }
-
     var loadingMessageRow: some View {
         HStack(spacing: 8) {
             ProgressView()
@@ -1481,7 +1424,7 @@ struct ChatPanelView: View {
         feedbackCount: Int = 0,
         @ViewBuilder detail: () -> Detail
     ) -> some View {
-        let hidesHeader = (isTodoTool(message) || isTodoTool(statusMessage)) && isDetailVisible
+        let hidesHeader = (isTodoTool(message) || isTodoTool(statusMessage) || isFileChangeTool(message)) && isDetailVisible
         return VStack(alignment: .leading, spacing: 0) {
             if !hidesHeader {
                 toolInvocationHeader(
@@ -1833,6 +1776,10 @@ struct ChatPanelView: View {
             toolCodePreviewCard(streaming)
         } else if message.kind == .diff || primary.kind == .diff {
             toolDiffPreviewCard(message.kind == .diff ? message : primary)
+        } else if message.isStreaming || primary.isStreaming {
+            // Still waiting on the first tool-input chunk: show a running placeholder rather than
+            // the "已完成文件修改" summary, which falsely reads as finished mid-stream.
+            toolRunningPlaceholder()
         } else {
             fileChangeSummaryCard(payload, primary: primary)
         }
@@ -2486,6 +2433,8 @@ struct ChatPanelView: View {
             .subagentTaskID
     }
 
+    static let codePreviewMaxHeight: CGFloat = 200
+
     func toolCodePreviewCard(_ preview: ToolCodePreview) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -2496,7 +2445,7 @@ struct ChatPanelView: View {
                         Image(systemName: "doc.text")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.secondary)
-                        Text(relativeToolPath(preview.path))
+                        Text((preview.path as NSString).lastPathComponent)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.primary.opacity(0.82))
                             .lineLimit(1)
@@ -2504,6 +2453,7 @@ struct ChatPanelView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .help(preview.path)
 
                 Spacer(minLength: 0)
 
@@ -2523,12 +2473,15 @@ struct ChatPanelView: View {
             Divider().opacity(0.18)
 
             ScrollView(.horizontal, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(preview.lines.enumerated()), id: \.offset) { index, line in
-                        toolCodeChangeLine(line, lineNumber: index + 1)
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(preview.lines.enumerated()), id: \.offset) { index, line in
+                            toolCodeChangeLine(line, lineNumber: index + 1)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxHeight: Self.codePreviewMaxHeight)
             }
         }
         .background(AppTheme.codePreviewSurface)
@@ -2788,9 +2741,8 @@ struct ChatPanelView: View {
 
     @ViewBuilder
     func planConfirmationRow(_ message: ChatMessage) -> some View {
-        let plan = message.exitPlanModePlan
         let canAct = canActOnExitPlanMode(for: message)
-        VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "list.bullet.clipboard")
                     .font(.system(size: 11, weight: .semibold))
@@ -2807,45 +2759,13 @@ struct ChatPanelView: View {
                     Text("待执行方案")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.primary)
-                    Text(canAct ? "确认后会继续执行下方内容。" : "该方案已处理。")
+                    Text(canAct ? "确认后会继续执行已规划的操作。" : "该方案已处理。")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer(minLength: 0)
                 ToolStatusBadge(kind: canAct ? .running : .success, label: canAct ? "等待确认" : "已处理")
-            }
-
-            if !plan.isEmpty {
-                FileReferenceText(
-                    text: plan,
-                    font: .system(size: 12),
-                    baseColor: .primary.opacity(0.92),
-                    lineSpacing: 3,
-                    parseMarkdown: true,
-                    cacheID: "plan:\(message.id.uuidString):\(plan.renderCacheFingerprint)",
-                    onOpenFile: openFileReference
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(AppTheme.toolMutedSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(AppTheme.hairline, lineWidth: 1)
-                )
-            } else {
-                Text("确认后继续执行上面的方案。")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AppTheme.toolMutedSurface)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(AppTheme.weakHairline, lineWidth: 1)
-                    )
             }
 
             if canAct {

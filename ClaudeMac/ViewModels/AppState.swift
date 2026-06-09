@@ -1819,6 +1819,13 @@ final class AppState: ObservableObject {
     }
 
     func selectCLIHistory(_ session: CLIHistorySession) {
+        // The synthetic "新对话" draft row has no on-disk session, so resuming it would run
+        // `claude --resume __draft__` against a session that doesn't exist. Treat selecting it
+        // as staying in (or returning to) a fresh new-session state instead.
+        if session.isDraft {
+            startNewChat(for: project(matching: session.projectPath))
+            return
+        }
         let matchingProject = project(matching: session.projectPath)
         if selectedProjectID != matchingProject?.id {
             guard confirmDiscardUnsavedChangesIfNeeded() else { return }

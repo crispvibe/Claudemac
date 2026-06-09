@@ -405,12 +405,44 @@ enum ChatCLIEnvironment {
         let existingPath = environment["PATH"] ?? ""
         sanitizeInheritedAgentEnvironment(&environment)
         mergePersistedClaudeEnvironment(into: &environment)
+        // App-owned relay config is the source of truth: overlay it LAST so it wins over both the
+        // inherited shell env and a ~/.claude/settings.json that a third-party switcher may have
+        // overwritten. Anthropic precedence puts process env above the settings.json env block,
+        // so this makes our configured base URL / key / model authoritative and un-preemptable.
+        mergeActiveClaudeProfileEnvironment(into: &environment)
         normalizeProxyValues(&environment)
         mirrorProxyValues(&environment)
         environment["HOME"] = realHomeDirectory
         environment.removeValue(forKey: "CLAUDE_CONFIG_DIR")
         environment["PATH"] = mergePath(existingPath)
         return environment
+    }
+
+    private static func mergeActiveClaudeProfileEnvironment(into environment: inout [String: String]) {
+        let profiles = ProjectStore.loadConfigProfiles()
+        guard let id = profiles.activeClaudeRelayProfileID,
+              let profile = profiles.claudeRelayProfiles.first(where: { $0.id == id }) else {
+            return
+        }
+        let mapped: [(String, String)] = [
+            ("ANTHROPIC_BASE_URL", profile.baseURL),
+            ("ANTHROPIC_API_KEY", profile.authToken),
+            ("ANTHROPIC_MODEL", profile.model),
+            ("ANTHROPIC_DEFAULT_HAIKU_MODEL", profile.haikuModel),
+            ("ANTHROPIC_DEFAULT_SONNET_MODEL", profile.sonnetModel),
+            ("ANTHROPIC_DEFAULT_OPUS_MODEL", profile.opusModel),
+            ("HTTP_PROXY", profile.httpProxy),
+            ("HTTPS_PROXY", profile.httpsProxy),
+        ]
+        for (key, value) in mapped {
+            guard let trimmed = value.nonEmptyTrimmed else { continue }
+            environment[key] = trimmed
+        }
+        // The relay key is delivered via ANTHROPIC_API_KEY; clear the legacy token so a stale
+        // ANTHROPIC_AUTH_TOKEN from the shell/settings.json can't shadow the active profile.
+        if environment["ANTHROPIC_API_KEY"]?.nonEmptyTrimmed != nil {
+            environment.removeValue(forKey: "ANTHROPIC_AUTH_TOKEN")
+        }
     }
 
     private static func sanitizeInheritedAgentEnvironment(_ environment: inout [String: String]) {

@@ -49,6 +49,34 @@ final class CodexAppServerBackend: ChatProcessBackend {
         return body()
     }
 
+    /// Pins the active app-owned Codex relay profile via the highest-priority `-c` overrides so
+    /// our provider/base_url/model win over any residual `model_provider` or `[model_providers.*]`
+    /// left in the user's `~/.codex/config.toml` by another tool. The API key still flows through
+    /// `~/.codex/auth.json`, so it is intentionally not surfaced here.
+    private static func activeCodexConfigOverrides() -> [String] {
+        let profiles = ProjectStore.loadConfigProfiles()
+        guard let id = profiles.activeCodexProfileID,
+              let profile = profiles.codexProfiles.first(where: { $0.id == id }) else {
+            return []
+        }
+        let providerID = "acode_custom"
+        func quoted(_ value: String) -> String { "\"\(value.replacingOccurrences(of: "\"", with: "\\\""))\"" }
+        var overrides: [String] = []
+        if let model = profile.model.nonEmptyTrimmed {
+            overrides.append("model=\(quoted(model))")
+        }
+        if let baseURL = profile.baseURL.nonEmptyTrimmed {
+            overrides.append("model_provider=\(quoted(providerID))")
+            overrides.append("model_providers.\(providerID).name=\(quoted(providerID))")
+            overrides.append("model_providers.\(providerID).base_url=\(quoted(baseURL))")
+            if let wireApi = profile.wireApi.nonEmptyTrimmed {
+                overrides.append("model_providers.\(providerID).wire_api=\(quoted(wireApi))")
+            }
+            overrides.append("model_providers.\(providerID).requires_openai_auth=true")
+        }
+        return overrides
+    }
+
     func start(prompt: String, options: ChatRunOptions, session: ChatSessionRecord?, attachments: [ChatMessageAttachment]) -> AsyncThrowingStream<ChatBackendEvent, Error> {
         // TODO(B-P0-1 Codex): Codex `turn/start` JSON-RPC currently only
         // accepts a plain `input` array of `{type:text}` blocks. The Codex
@@ -76,7 +104,13 @@ final class CodexAppServerBackend: ChatProcessBackend {
                 let stdin = Pipe()
                 let configOverride = "model_reasoning_effort=\"\(options.reasoningEffort.codexConfigValue)\""
                 process.executableURL = URL(fileURLWithPath: options.executablePath)
-                process.arguments = ["app-server", "-c", configOverride, "--listen", "stdio://"]
+                var codexArguments = ["app-server", "-c", configOverride]
+                for override in Self.activeCodexConfigOverrides() {
+                    codexArguments.append("-c")
+                    codexArguments.append(override)
+                }
+                codexArguments.append(contentsOf: ["--listen", "stdio://"])
+                process.arguments = codexArguments
                 process.currentDirectoryURL = URL(fileURLWithPath: options.projectPath, isDirectory: true)
                 process.environment = ChatCLIEnvironment.processEnvironment
                 process.standardOutput = stdout

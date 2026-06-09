@@ -464,11 +464,36 @@ extension ChatPanelView {
         guard let projectPath = appState.selectedProject?.path ?? appState.selectedHistoryProjectPath?.nonEmptyTrimmed else { return [] }
         let projectKey = projectHistoryKey(for: projectPath)
         let selectedCLI = appState.selectedCLI.visibleValue
-        return appState.cliHistory.filter { session in
+        let diskSessions = appState.cliHistory.filter { session in
             guard session.cli.visibleValue == selectedCLI,
                   let sessionProjectPath = session.projectPath else { return false }
             return projectHistoryKey(for: sessionProjectPath) == projectKey
         }
+        if let draft = draftHistorySession {
+            return [draft] + diskSessions
+        }
+        return diskSessions
+    }
+
+    // A brand-new, not-yet-sent conversation has no on-disk session file, so it would be invisible
+    // in the history list until the first message lands. Surface a synthetic "新对话" row for it so
+    // the conversation appears in the left list the moment it is created.
+    var draftHistorySession: CLIHistorySession? {
+        guard let project = appState.selectedProject else { return nil }
+        guard appState.selectedMode == .newSession,
+              appState.selectedCLIHistoryID == nil,
+              chatState.messages.isEmpty,
+              !chatState.hasLiveRun else { return nil }
+        return CLIHistorySession(
+            cli: appState.selectedCLI.visibleValue,
+            sessionId: CLIHistorySession.draftSessionId,
+            title: "新对话",
+            projectPath: project.path,
+            storageKey: nil,
+            storagePath: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
     }
 
     func normalizedPath(_ value: String) -> String {
@@ -518,11 +543,6 @@ extension ChatPanelView {
             previousState.discardQueuedRequestsForNewChat()
         }
         appState.startNewChat(for: appState.selectedProject)
-    }
-
-    func copyCommandToClipboard() {
-        appState.copyCommand()
-        showCopyToast()
     }
 
     func openCommandInTerminal() {

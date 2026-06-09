@@ -157,7 +157,7 @@ function Workbench({
   setMode
 }: WorkbenchProps) {
   const openFile = useEditorStore((state) => state.openFile);
-  const resetChat = useChatStore((state) => state.reset);
+  const newConversation = useChatStore((state) => state.newConversation);
   const account = useAccountRemoteStore((state) => state.account);
   const storedProjects = useProjectStore((state) => state.projects);
   const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
@@ -338,7 +338,7 @@ function Workbench({
                   type="button"
                   disabled={!selectedProject}
                   onClick={() => {
-                  resetChat();
+                  newConversation(selectedProject);
                   setHistoryOpen(false);
                 }}
               >

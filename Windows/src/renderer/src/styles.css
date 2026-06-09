@@ -2122,6 +2122,171 @@ button:disabled,
   background: rgba(242, 247, 255, 0.86);
 }
 
+.tool-card-header {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.tool-card-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #3a3b42;
+  white-space: nowrap;
+}
+
+.tool-card-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #7a7b82;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-card-file {
+  color: #4176dc;
+  cursor: pointer;
+}
+
+.tool-card-file:hover {
+  text-decoration: underline;
+}
+
+.tool-card-header small {
+  margin-left: auto;
+}
+
+.tool-card-body {
+  margin-top: 8px;
+}
+
+.tool-batch-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tool-batch-body .transcript-event-card {
+  background: rgba(250, 250, 251, 0.7);
+}
+
+.file-change-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.file-change-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(242, 247, 255, 0.9);
+  border-bottom: 1px solid rgba(65, 118, 220, 0.13);
+}
+
+.file-change-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #3a3b42;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.file-change-name:hover:not(:disabled) {
+  color: #4176dc;
+  text-decoration: underline;
+}
+
+.file-change-name:disabled {
+  cursor: default;
+}
+
+.file-change-stats {
+  display: inline-flex;
+  gap: 8px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  font-style: normal;
+}
+
+.file-change-stats .add {
+  color: #1a7f37;
+  font-style: normal;
+}
+
+.file-change-stats .del {
+  color: #cf222e;
+  font-style: normal;
+}
+
+.file-change-body {
+  max-height: 200px;
+  overflow: auto;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.diff-line {
+  display: flex;
+  gap: 8px;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.diff-line.add {
+  background: rgba(26, 127, 55, 0.12);
+}
+
+.diff-line.del {
+  background: rgba(207, 34, 46, 0.12);
+}
+
+.diff-ln {
+  flex: 0 0 auto;
+  width: 38px;
+  text-align: right;
+  color: #9a9ba2;
+  user-select: none;
+}
+
+.diff-mk {
+  flex: 0 0 auto;
+  width: 12px;
+  text-align: center;
+  color: #7a7b82;
+}
+
+.diff-tx {
+  flex: 1 1 auto;
+  color: #3a3b42;
+  white-space: pre;
+}
+
+.file-change-empty {
+  margin: 0;
+  padding: 10px;
+  color: #7a7b82;
+  font-size: 12px;
+}
+
 .diagnostic-card {
   opacity: 0.82;
 }

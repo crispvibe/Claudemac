@@ -85,6 +85,7 @@ export interface ChatPanelStoreActions {
   stop: () => void;
   respondToPermission: (requestID: string, decision: PermissionDecision) => boolean;
   respondToInteractiveRequest: (response: InteractiveResponse) => boolean;
+  newConversation: (project: ProjectSnapshot | null) => void;
   reset: () => void;
 }
 
@@ -246,6 +247,8 @@ function ensureSession(request: QueuedChatRequest, existing: ChatSessionRecord |
     return {
       ...existing,
       cli: request.cli,
+      // A freshly-created draft (no external session yet) adopts the first prompt as its title.
+      title: existing.externalSessionID ? existing.title : request.displayText.slice(0, 60) || existing.title,
       modelID: effectiveModelID,
       permissionMode: request.permissionMode,
       reasoningEffort: request.reasoningEffort,
@@ -469,6 +472,14 @@ export const useChatPanelStore = create<ChatPanelStore>((set, get) => {
       return;
     }
 
+    // A freshly-created draft has no Claude session yet, so "继续上次" (--continue) would resume
+    // an unrelated prior conversation in the same directory (or fail when none exists). Start the
+    // first message fresh; follow-ups carry context once externalSessionID is captured.
+    const effectiveSessionMode: SessionMode =
+      request.sessionMode === "continueLast" && !session.externalSessionID
+        ? "newSession"
+        : request.sessionMode;
+
     const options: ChatRunOptions = {
       cli: request.cli,
       executablePath: executableForRequest(request),
@@ -476,7 +487,7 @@ export const useChatPanelStore = create<ChatPanelStore>((set, get) => {
       modelID: request.modelID,
       permissionMode: request.permissionMode,
       reasoningEffort: request.reasoningEffort,
-      sessionMode: request.sessionMode,
+      sessionMode: effectiveSessionMode,
       resumeSessionID: request.resumeSessionID,
       supportsStreamJSONInput: true,
       environment: environmentForRequest(request),
@@ -1087,6 +1098,62 @@ export const useChatPanelStore = create<ChatPanelStore>((set, get) => {
         tokensTotal: 200_000,
         isAwaitingFirstModelOutput: false,
         structureRevision: 0,
+        activity: null,
+        runtime: { ...defaultRuntime(), backend }
+      });
+    },
+
+    newConversation(project) {
+      const state = get();
+      // Can't swap the active conversation out from under a live run.
+      if (isChatRunStatusRunning(state.status) || state.runtime.activeRunRequest) {
+        return;
+      }
+      // Reuse the current empty draft instead of stacking up blank "新对话" entries.
+      const current = state.currentSession;
+      const isEmptyDraft = Boolean(current) && state.messages.length === 0 && !current?.externalSessionID;
+      if (isEmptyDraft && (!project?.path || current?.projectPath === project.path)) {
+        return;
+      }
+      if (!project?.path) {
+        get().reset();
+        return;
+      }
+      const settings = useSettingsStore.getState().settings;
+      const cli = settings?.defaultCLI ?? "claude";
+      const profile = selectDefaultProfile(settings, cli);
+      const createdAt = nowISO();
+      const draft: ChatSessionRecord = {
+        id: createID("session"),
+        cli,
+        projectName: project.name,
+        projectPath: project.path,
+        title: "新对话",
+        modelID: normalizeOptional(profile?.model) ?? normalizeOptional(settings?.model) ?? "default",
+        permissionMode: "ask",
+        reasoningEffort: "medium",
+        externalSessionID: null,
+        createdAt,
+        updatedAt: createdAt,
+        runStatus: "idle",
+        statusText: "就绪",
+        queuedRequests: [],
+        lastCompletedAt: null,
+        activeRunStartedAt: null,
+        activeRunRequest: null
+      };
+      const backend = state.runtime.backend;
+      // Snapshot the outgoing conversation's messages before switching so they aren't lost.
+      bump({
+        messages: [],
+        queuedRequests: [],
+        sessionMessages: snapshotCurrentSessionMessages(state),
+        currentSession: draft,
+        status: "idle",
+        statusText: "就绪",
+        tokensUsed: 0,
+        tokensTotal: 200_000,
+        isAwaitingFirstModelOutput: false,
         activity: null,
         runtime: { ...defaultRuntime(), backend }
       });

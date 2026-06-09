@@ -1440,6 +1440,15 @@ final class ChatPanelController: ObservableObject {
                 setAwaitingFirstModelOutput(false)
                 return true
             }
+            // Flush the FIRST tool-input chunk immediately rather than batching it, so the tool
+            // card fills with content in the same beat its header appears — removing the visible
+            // "tool name first, body a moment later" two-stage stutter.
+            if kind == .toolCall,
+               pendingDeltaBuffers[activeMessageID] == nil,
+               (streamingTextStore.entry(for: activeMessageID)?.text.isEmpty ?? true) {
+                appendDeltaImmediately(text, status: status, requestID: normalizedRequestID, to: activeMessageID)
+                return false
+            }
             pendingDeltaBuffers[activeMessageID, default: ""] += text
             pendingDeltaStatuses[activeMessageID] = status
             if let normalizedRequestID {
