@@ -139,6 +139,10 @@ final class ChatPanelController: ObservableObject {
     private static let compactThreshold: Double = 0.90
     private static let compactRearmThreshold: Double = 0.70
     private static let firstVisibleOutputTimeoutNanoseconds: UInt64 = 45_000_000_000
+    // After the process is alive (emitted backend activity) we switch to this longer backstop:
+    // if it never produces any VISIBLE output (only protocol noise), fail instead of spinning
+    // the loading indicator forever.
+    private static let silentOutputBackstopNanoseconds: UInt64 = 180_000_000_000
     nonisolated static let historyInitialMessageLimit = 240
     private var didAutoCompact = false
     private var didReceiveBackendActivityAfterStart = false
@@ -1755,8 +1759,13 @@ final class ChatPanelController: ObservableObject {
 
     private func scheduleFirstVisibleOutputTimeoutIfNeeded() {
         guard firstVisibleOutputTimeoutTask == nil else { return }
+        scheduleFirstVisibleOutputTimeout(after: Self.firstVisibleOutputTimeoutNanoseconds)
+    }
+
+    private func scheduleFirstVisibleOutputTimeout(after nanoseconds: UInt64) {
+        firstVisibleOutputTimeoutTask?.cancel()
         firstVisibleOutputTimeoutTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.firstVisibleOutputTimeoutNanoseconds)
+            try? await Task.sleep(nanoseconds: nanoseconds)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.failRunForFirstVisibleOutputTimeoutIfNeeded()
@@ -1775,10 +1784,6 @@ final class ChatPanelController: ObservableObject {
               status.isRunning,
               !isUserStopping,
               !isMirroringRemoteSession else { return }
-        guard !didReceiveBackendActivityAfterStart else {
-            logRunTiming(label: "first-output-timeout-backend-active")
-            return
-        }
         let backend = activeBackend
         activeBackend = nil
         currentTask?.cancel()
@@ -1786,7 +1791,7 @@ final class ChatPanelController: ObservableObject {
         backend?.interrupt()
         flushPendingDeltas()
         finishStreamingMessages(status: "failed")
-        appendError("Claude Code 启动后超过 45 秒没有任何进程活动，已停止当前任务。请检查认证、模型或网络配置。")
+        appendError("Claude Code 启动后长时间没有产生任何可见输出，已停止当前任务。请检查认证、模型或网络配置。")
         currentSession?.updatedAt = Date()
         activeRunRequest = nil
         logRunTiming(label: "first-output-timeout")
@@ -1803,7 +1808,10 @@ final class ChatPanelController: ObservableObject {
         guard isAwaitingFirstModelOutput else { return }
         guard case .backendActivity = event else { return }
         didReceiveBackendActivityAfterStart = true
-        cancelFirstVisibleOutputTimeout()
+        // The process is alive but hasn't produced visible output yet. Replace the short
+        // "won't start" timeout with a longer backstop so a CLI that only emits protocol
+        // noise (no visible reply) can't leave the loading indicator spinning forever.
+        scheduleFirstVisibleOutputTimeout(after: Self.silentOutputBackstopNanoseconds)
     }
 
     private func shouldReplaceStatusText(for kind: ChatMessageKind) -> Bool {
@@ -2169,21 +2177,14 @@ final class ChatPanelController: ObservableObject {
     }
 
     private func checkAutoCompact() {
+        // Context compaction is left to the CLI's NATIVE auto-compaction. The CLI summarizes the
+        // conversation far more intelligently (and at the right moment) than the app forcing a
+        // blunt `/compact` at a fixed threshold — which degraded quality and could double-compact.
+        // We only surface a hint near the limit; we no longer send `/compact` ourselves.
         guard tokensTotal > 0 else { return }
         let usage = Double(tokensUsed) / Double(tokensTotal)
-        // Re-arm once a previous compaction (or a fresh turn) has brought usage back down,
-        // so a long session can auto-compact more than once instead of latching forever.
-        if usage < Self.compactRearmThreshold {
-            didAutoCompact = false
-        }
-        guard !didAutoCompact else { return }
         if usage >= Self.compactThreshold {
-            if activeBackend?.sendCompact() == true {
-                didAutoCompact = true
-                statusText = "自动压缩上下文"
-            } else {
-                statusText = "上下文接近上限"
-            }
+            statusText = "上下文接近上限（CLI 将自动压缩）"
         }
     }
 

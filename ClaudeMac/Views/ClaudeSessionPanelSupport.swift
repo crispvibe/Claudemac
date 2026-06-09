@@ -67,7 +67,6 @@ struct EquatableTranscriptItemRow: View, Equatable {
     let item: ChatTranscriptItem
     let expandedMessageIDs: Set<UUID>
     let collapsedInlineToolIDs: Set<UUID>
-    let streamingRevision: Int
     let isRunning: Bool
     let lastVisibleMessageID: UUID?
     let loadingText: String
@@ -79,11 +78,15 @@ struct EquatableTranscriptItemRow: View, Equatable {
     }
 
     static func == (lhs: EquatableTranscriptItemRow, rhs: EquatableTranscriptItemRow) -> Bool {
+        // NOTE: deliberately NOT keyed on a global streaming counter. The streaming row updates
+        // itself via its store-observing StreamingAssistantTextView, and a streaming tool/diff
+        // row changes its own fingerprint (textLength). Keying on a global revision forced EVERY
+        // visible row to re-render on EVERY delta — O(N) per token — which was the main streaming
+        // stutter. Per-item fingerprints below capture the changes that actually matter.
         let lhsFingerprint = transcriptItemFingerprint(lhs.item)
         let rhsFingerprint = transcriptItemFingerprint(rhs.item)
         return lhs.lastVisibleMessageID == rhs.lastVisibleMessageID
             && lhs.isRunning == rhs.isRunning
-            && lhs.streamingRevision == rhs.streamingRevision
             && (lhsFingerprint.kind != .loading || lhs.loadingText == rhs.loadingText)
             && lhs.expandedMessageIDs == rhs.expandedMessageIDs
             && lhs.collapsedInlineToolIDs == rhs.collapsedInlineToolIDs

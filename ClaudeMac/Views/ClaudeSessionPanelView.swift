@@ -638,7 +638,6 @@ struct ChatPanelView: View {
             item: item,
             expandedMessageIDs: expandedTranscriptMessageIDs,
             collapsedInlineToolIDs: collapsedInlineToolIDs,
-            streamingRevision: chatState.streamingTextStore.revision,
             isRunning: chatState.status.isRunning,
             lastVisibleMessageID: lastVisibleMessageID,
             loadingText: loadingThinkingText,
