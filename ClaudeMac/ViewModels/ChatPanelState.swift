@@ -138,6 +138,9 @@ final class ChatPanelController: ObservableObject {
 
     private static let compactThreshold: Double = 0.90
     private static let compactRearmThreshold: Double = 0.70
+    /// Claude Code has native auto-compaction, so the app only steps in late (e.g. 1M-window
+    /// models where the CLI's own threshold never fires before the relay rejects the request).
+    private static let claudeCompactFallbackThreshold: Double = 0.95
     private static let firstVisibleOutputTimeoutNanoseconds: UInt64 = 45_000_000_000
     // After the process is alive (emitted backend activity) we switch to this longer backstop:
     // if it never produces any VISIBLE output (only protocol noise), fail instead of spinning
@@ -2304,14 +2307,33 @@ final class ChatPanelController: ObservableObject {
     }
 
     private func checkAutoCompact() {
-        // Context compaction is left to the CLI's NATIVE auto-compaction. The CLI summarizes the
-        // conversation far more intelligently (and at the right moment) than the app forcing a
-        // blunt `/compact` at a fixed threshold — which degraded quality and could double-compact.
-        // We only surface a hint near the limit; we no longer send `/compact` ourselves.
+        // Claude Code compacts natively (better summaries, right timing), so for Claude the app
+        // only bridges a late `/compact` fallback at 95% — covering 1M-window models where the
+        // CLI's own auto-compaction never fires. Codex (GPT) has NO native auto-compaction in
+        // app-server mode: its ~275K window just fills up and the turn dies, so the app must
+        // bridge compaction itself by sending the `compact` request at the normal threshold.
         guard tokensTotal > 0 else { return }
         let usage = Double(tokensUsed) / Double(tokensTotal)
-        if usage >= Self.compactThreshold {
-            statusText = "上下文接近上限（CLI 将自动压缩）"
+        // Re-arm once a previous compaction (or a fresh turn) has brought usage back down,
+        // so a long session can auto-compact more than once instead of latching forever.
+        if usage < Self.compactRearmThreshold {
+            didAutoCompact = false
+        }
+        guard usage >= Self.compactThreshold else { return }
+
+        let cli = (currentSession?.cli ?? activeRunRequest?.cli ?? .claude).visibleValue
+        let triggerThreshold = cli == .codex ? Self.compactThreshold : Self.claudeCompactFallbackThreshold
+        guard usage >= triggerThreshold, !didAutoCompact else {
+            if !didAutoCompact {
+                statusText = "上下文接近上限（CLI 将自动压缩）"
+            }
+            return
+        }
+        if activeBackend?.sendCompact() == true {
+            didAutoCompact = true
+            statusText = "上下文接近上限，自动压缩中…"
+        } else {
+            statusText = "上下文接近上限"
         }
     }
 

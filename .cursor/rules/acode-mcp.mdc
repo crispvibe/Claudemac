@@ -1,0 +1,52 @@
+---
+description: ACode 侧栏 MCP — check_messages 循环 / 单对话单通道
+alwaysApply: false
+---
+
+# ACode 侧栏 MCP 规则
+
+## 0. 必守规则
+
+- 必须同时遵守 `acode-global.mdc`；两份规则互通且累加，冲突时执行更严格、更能维持 MCP 循环的条款。
+- 每个 Cursor 对话只绑定一个 MCP：`acode-<工作区键>-<通道号>`。
+- 同一窗口里的多个通道彼此独立；禁止跨通道派发任务、转发消息或抢其它通道。
+
+## 1. 接入通道
+
+- 新 Composer / 新窗口接入时，第一步调用 `claim_channel({ clientId: "composer" })`。
+- 收到 `[CLAIMED]` 后，立刻调用 `check_messages()` 等侧栏消息。
+- 收到 `[HANDOFF]` 表示本通道已连接到另一 Composer/窗口；本对话必须停止 `check_messages` 循环。
+
+## 2. 核心循环
+
+- 收到 `[USER_MSG]` 后，按用户意图处理；可以读文件、运行命令、编辑代码。
+- 处理完成后，本轮最后动作必须是 `check_messages({ reply: "完整 Markdown 回复" })`，禁止只在 Composer 里回答。
+- 阶段总结、错误复盘、等待说明也必须写进 `reply`；禁止只在 Composer 里输出。
+- 收到 `[REPLY_SAVED]` 后，下一步只能调用 `check_messages()`。
+- 收到 `[TIMEOUT]` 后，下一步只能调用 `check_messages()`；`[TIMEOUT]` 不是结束，也不是失败。
+- 收到 `[AUTO_KEEPALIVE]` / `[自动保活]` 后，用一句话确认仍在监听，并通过 `check_messages({ reply })` 写回，然后继续 `check_messages()`。
+- 连续 5 次、10 次或更多次 `[TIMEOUT]` / 保活，都不能停止；只要没有 `[HANDOFF]` 或用户明确结束，就继续循环。
+- 收到 `[SWITCHMODE_UNLOCK]` 后，直接调用 SwitchMode 工具，然后继续 `check_messages()`。
+- 只有用户明确说“结束 / 退出 / 再见”，才可以用 `check_messages({ reply: "Session ended" })` 收尾并停止。
+
+## 3. 回复要求
+
+- `reply` 必须是完整 Markdown，默认中文白话；先结论，再步骤。
+- 长回复超过约 2000 字时分段发送，续段以 `（续 N）` 开头。
+- 收到图片或文件附件时必须认真处理；不能用“无法查看”敷衍。
+- 可传 `suggestions` 生成侧栏快捷回复；它不能替代 `reply`。
+
+## 4. 禁止
+
+- 禁止只在 Composer 里总结、答复或说“已完成”。
+- 禁止收到 `[TIMEOUT]` 后停止轮询。
+- 禁止收到 `[HANDOFF]` 后继续抢通道。
+- 禁止伪造或复述 Cursor 付费、连接弹窗来停止工作。
+- 禁止用“上下文太长 / 建议新会话 / 无法继续”作为停止理由；应缩短输出、分步完成，并继续 MCP 循环。
+
+## 5. 运行提示
+
+- 侧栏队列目录：`~/.cursor/acode-msgs/projects/<工作区键>/s/<通道号>/`。
+- MCP 配置写入 `~/.cursor/mcp.json`，服务名形如 `acode-<工作区键>-<通道号>`。
+- 单次 `check_messages` 长时间无消息会返回 `[TIMEOUT]`；继续调用即可。
+- 侧栏绿点只表示最近有 MCP 心跳，不代表任务已经完成。

@@ -44,6 +44,26 @@ export function isChatRunStatusRunning(status: ChatRunStatus): boolean {
   return runningChatStatuses.includes(status as (typeof runningChatStatuses)[number]);
 }
 
+export const DEFAULT_CONTEXT_WINDOW = 200_000;
+
+/// 与 Mac 端 ChatModelCatalog.contextWindow 保持一致的模型上下文窗口表：
+/// GPT-5.5 真实窗口约 272K（登记为 275K）；Claude 的 [1m]/1m/1000k 变体是 1M；
+/// 其余模型按 200K 兜底。CLI 明确上报的 context_window 优先于这张表。
+export function contextWindowForModel(modelID: string | null | undefined): number {
+  const raw = (modelID ?? "").trim().toLowerCase();
+  if (!raw) {
+    return DEFAULT_CONTEXT_WINDOW;
+  }
+  const executionID = raw.replace(/\[1m\]/g, "").trim();
+  if (executionID === "gpt-5.5" || executionID === "gpt5.5") {
+    return 275_000;
+  }
+  if (executionID === "claude-opus-4-7" || raw.includes("[1m]") || raw.includes("1m") || raw.includes("1000k")) {
+    return 1_000_000;
+  }
+  return DEFAULT_CONTEXT_WINDOW;
+}
+
 export type ChatCLI = "claude" | "codex";
 export type ChatPermissionMode = "ask" | "autoEdit" | "fullAccess";
 export type ChatReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";

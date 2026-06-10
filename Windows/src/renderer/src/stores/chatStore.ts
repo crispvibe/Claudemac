@@ -21,7 +21,7 @@ import type {
   SessionActivity,
   SessionMode
 } from "@shared/chat";
-import { isChatRunStatusRunning } from "@shared/chat";
+import { contextWindowForModel, isChatRunStatusRunning } from "@shared/chat";
 import type { AppSettings, CLIProfile, PermissionMode, ReasoningEffort } from "@shared/settings";
 import { useSettingsStore } from "./settingsStore";
 
@@ -51,6 +51,7 @@ interface ChatStoreRuntime {
   shouldStartQueuedRequestAfterBackendEnds: boolean;
   isUserStopping: boolean;
   runGeneration: number;
+  didAutoCompact: boolean;
 }
 
 export interface ChatPanelStoreState {
@@ -201,9 +202,18 @@ function defaultRuntime(): ChatStoreRuntime {
     activeStreamingMessageIDs: {},
     shouldStartQueuedRequestAfterBackendEnds: false,
     isUserStopping: false,
-    runGeneration: 0
+    runGeneration: 0,
+    didAutoCompact: false
   };
 }
+
+// 与 Mac ChatPanelState 保持一致的压缩阈值：Codex（GPT）在 app-server 模式下没有
+// 原生自动压缩，90% 就由 App 主动发 compact；Claude Code 自带自动压缩，App 只在
+// 95% 还没见到 CLI 压缩时兜底（覆盖 1M 窗口模型）。降回 70% 以下后重新武装，
+// 长会话可以多次压缩。
+const COMPACT_THRESHOLD = 0.9;
+const COMPACT_REARM_THRESHOLD = 0.7;
+const CLAUDE_COMPACT_FALLBACK_THRESHOLD = 0.95;
 
 function buildActivity(state: Pick<ChatPanelStoreState, "currentSession" | "queuedRequests" | "status" | "statusText" | "runtime">): SessionActivity | null {
   if (!state.currentSession) {
@@ -553,6 +563,7 @@ export const useChatPanelStore = create<ChatPanelStore>((set, get) => {
       },
       status: "starting",
       statusText: `启动 ${request.cli}`,
+      tokensTotal: contextWindowForModel(normalizeOptional(request.contextModelID) ?? request.modelID),
       isAwaitingFirstModelOutput: true,
       runtime: {
         ...current.runtime,
@@ -563,7 +574,8 @@ export const useChatPanelStore = create<ChatPanelStore>((set, get) => {
         activeStreamingMessageIDs: {},
         shouldStartQueuedRequestAfterBackendEnds: false,
         isUserStopping: false,
-        runGeneration: generation
+        runGeneration: generation,
+        didAutoCompact: false
       }
     });
 
@@ -638,7 +650,7 @@ export const useChatPanelStore = create<ChatPanelStore>((set, get) => {
         status: currentSession ? currentSession.runStatus : "idle",
         statusText: currentSession ? currentSession.statusText : "就绪",
         tokensUsed: state.tokensUsed,
-        tokensTotal: state.tokensTotal,
+        tokensTotal: currentSession ? contextWindowForModel(currentSession.modelID) : state.tokensTotal,
         isAwaitingFirstModelOutput: false,
         structureRevision: state.structureRevision + 1,
         activity: null,
@@ -676,8 +688,8 @@ export const useChatPanelStore = create<ChatPanelStore>((set, get) => {
         currentSession: restoredSession,
         status: restoredSession.runStatus,
         statusText: restoredSession.statusText || "已加载历史",
-        tokensUsed: state.tokensUsed,
-        tokensTotal: state.tokensTotal,
+        tokensUsed: 0,
+        tokensTotal: contextWindowForModel(restoredSession.modelID),
         isAwaitingFirstModelOutput: false,
         structureRevision: state.structureRevision + 1,
         activity: null,
@@ -882,10 +894,39 @@ export const useChatPanelStore = create<ChatPanelStore>((set, get) => {
             statusText: "等待输入"
           });
           break;
-        case "tokenUsage":
+        case "tokenUsage": {
+          // CLI 上报的 total 和模型目录窗口取大者，避免 1M Claude / 275K GPT 被
+          // 旧的 200K 假设压扁。
+          const modelID = state.currentSession?.modelID
+            ?? state.runtime.activeRunRequest?.contextModelID
+            ?? state.runtime.activeRunRequest?.modelID
+            ?? "";
+          const expectedTotal = contextWindowForModel(modelID);
+          const tokensTotal = Math.max(event.total > 0 ? event.total : 0, expectedTotal);
+          const usage = tokensTotal > 0 ? event.used / tokensTotal : 0;
+          const cli = state.currentSession?.cli ?? state.runtime.activeRunRequest?.cli ?? "claude";
+
+          let runtime = state.runtime;
+          let statusText = state.statusText;
+          if (usage < COMPACT_REARM_THRESHOLD) {
+            if (runtime.didAutoCompact) {
+              runtime = { ...runtime, didAutoCompact: false };
+            }
+          } else if (usage >= COMPACT_THRESHOLD) {
+            const triggerThreshold = cli === "codex" ? COMPACT_THRESHOLD : CLAUDE_COMPACT_FALLBACK_THRESHOLD;
+            if (usage >= triggerThreshold && !runtime.didAutoCompact && runtime.backend?.sendCompact()) {
+              runtime = { ...runtime, didAutoCompact: true };
+              statusText = "上下文接近上限，自动压缩中…";
+            } else if (!runtime.didAutoCompact) {
+              statusText = cli === "codex" ? "上下文接近上限" : "上下文接近上限（CLI 将自动压缩）";
+            }
+          }
+
           bump({
             tokensUsed: event.used,
-            tokensTotal: event.total > 0 ? event.total : state.tokensTotal,
+            tokensTotal,
+            statusText,
+            runtime,
             messages:
               event.output && state.runtime.activeAssistantMessageID
                 ? state.messages.map((message) =>
@@ -894,6 +935,7 @@ export const useChatPanelStore = create<ChatPanelStore>((set, get) => {
                 : state.messages
           });
           break;
+        }
         case "finished":
           finishStreamingMessages(state.runtime.isUserStopping ? "stopped" : "done");
           bump({
@@ -1152,7 +1194,7 @@ export const useChatPanelStore = create<ChatPanelStore>((set, get) => {
         status: "idle",
         statusText: "就绪",
         tokensUsed: 0,
-        tokensTotal: 200_000,
+        tokensTotal: contextWindowForModel(draft.modelID),
         isAwaitingFirstModelOutput: false,
         activity: null,
         runtime: { ...defaultRuntime(), backend }

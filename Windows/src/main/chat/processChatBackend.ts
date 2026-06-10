@@ -43,6 +43,7 @@ export class ChatProcessRun {
   private pendingInteractiveRequests = new Map<string, PendingInteractive>();
   private activeThreadID: string | null = null;
   private activeTurnID: string | null = null;
+  private waitingForCompactResult = false;
 
   constructor(
     private readonly request: ChatStartRequest,
@@ -144,12 +145,22 @@ export class ChatProcessRun {
   }
 
   sendCompact(): boolean {
-    if (this.request.options.cli !== "codex") {
+    if (this.request.options.cli === "codex") {
+      const id = this.sendCodexRequest("compact", {});
+      this.pendingCodexRequests.set(String(id), "compact");
+      return true;
+    }
+    // Claude：以 stream-json 用户消息写入 /compact 斜杠命令。当前 turn 的 result 行
+    // 到达时不能关 stdin（claude 是长驻进程，关了就把排队中的压缩干掉了），要等
+    // 压缩自己的 result 再关——见 startClaude 的 result 处理。
+    if (!this.request.options.supportsStreamJSONInput) {
       return false;
     }
-    const id = this.sendCodexRequest("compact", {});
-    this.pendingCodexRequests.set(String(id), "compact");
-    return true;
+    const didWrite = this.writeClaudeUserMessage("/compact", null, null);
+    if (didWrite) {
+      this.waitingForCompactResult = true;
+    }
+    return didWrite;
   }
 
   private async startClaude(): Promise<void> {
@@ -170,7 +181,13 @@ export class ChatProcessRun {
         this.emitAndMark(event);
       }
       if (line.includes("\"type\":\"result\"")) {
-        this.closeStdin();
+        if (this.waitingForCompactResult) {
+          // 刚写入了 /compact：这条 result 属于被打断的上一轮，吞掉关闭动作，
+          // 等压缩完成后的下一条 result 再关 stdin。
+          this.waitingForCompactResult = false;
+        } else {
+          this.closeStdin();
+        }
       }
     }, "Claude Code");
   }
@@ -927,10 +944,18 @@ function tokenUsageEvent(object: JSONRecord): ChatBackendEvent | null {
   if (!usage) {
     return null;
   }
+  // Anthropic usage 字段语义：input/cache_creation/cache_read 三者互不相交，真实占用
+  // 上下文窗口的 prompt token = input + cache_creation + cache_read。只数 input+output
+  // 会把命中缓存的长会话低估 90% 以上，自动压缩永远不会触发。
   const input = intValue(usage.input_tokens) ?? intValue(usage.input) ?? 0;
   const output = intValue(usage.output_tokens) ?? intValue(usage.output) ?? 0;
-  const total = input + output;
-  return total > 0 ? { type: "tokenUsage", used: total, total: 200_000, output } : null;
+  const cacheRead = intValue(usage.cache_read_input_tokens) ?? 0;
+  const cacheCreation = intValue(usage.cache_creation_input_tokens) ?? 0;
+  const used = input + output + cacheRead + cacheCreation;
+  // total 只信任 CLI 明确给出的 context_window；硬编码 200K 会把 1M Claude 模型和
+  // 275K GPT 模型的占用比例全部算错。total=0 时由 renderer 按模型目录兜底。
+  const total = intValue(usage.context_window) ?? 0;
+  return used > 0 || total > 0 ? { type: "tokenUsage", used, total, output } : null;
 }
 
 function isPermissionRequestType(type: string): boolean {
