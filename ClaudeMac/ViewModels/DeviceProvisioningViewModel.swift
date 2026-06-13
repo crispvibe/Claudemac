@@ -10,6 +10,7 @@ final class DeviceProvisioningViewModel: ObservableObject {
     @Published private(set) var isResettingDeviceCode = false
     @Published private(set) var isSavingDevice = false
     @Published private(set) var signalingStatus: String?
+    @Published private(set) var lanPublishStatus: String?
     @Published private(set) var remoteChatDiagnostics = RemoteChatServerDiagnostics()
     @Published var pendingApproval: RemoteConnectionAttempt?
     @Published var deviceNameDraft = ""
@@ -20,6 +21,7 @@ final class DeviceProvisioningViewModel: ObservableObject {
     private let client: DeviceRegistrationClient
     private let identityStore: DeviceIdentityStore
     private let signalingClient: SignalingClient
+    private let lanTokenPublisher: LanTokenPublisher
     private lazy var tunnelClient = RemoteTunnelClient(signalingClient: signalingClient)
     private var currentSession: RemoteAuthSession?
     private var diagnosticsObserver: NSObjectProtocol?
@@ -30,11 +32,19 @@ final class DeviceProvisioningViewModel: ObservableObject {
     init(
         client: DeviceRegistrationClient = DeviceRegistrationClient(),
         identityStore: DeviceIdentityStore = .shared,
-        signalingClient: SignalingClient? = nil
+        signalingClient: SignalingClient? = nil,
+        lanTokenPublisher: LanTokenPublisher? = nil
     ) {
         self.client = client
         self.identityStore = identityStore
         self.signalingClient = signalingClient ?? SignalingClient()
+        self.lanTokenPublisher = lanTokenPublisher ?? LanTokenPublisher()
+        self.lanTokenPublisher.onSessionRefreshed = { [weak self] session in
+            Task { @MainActor in self?.currentSession = session }
+        }
+        self.lanTokenPublisher.onPublishStatus = { [weak self] status in
+            Task { @MainActor in self?.lanPublishStatus = status }
+        }
         self.rememberedApprovalKeys = Self.loadRememberedApprovalKeys()
         self.signalingClient.onEvent = { [weak self] event in
             self?.handleSignalingEvent(event)
@@ -74,6 +84,7 @@ final class DeviceProvisioningViewModel: ObservableObject {
             if let deviceID = device?.id {
                 signalingClient.start(accessToken: session.accessToken, deviceId: deviceID)
                 signalingStatus = "信令通道连接中。"
+                lanTokenPublisher.start(session: session, deviceId: deviceID)
             }
         } catch {
             messageSeverity = .error
@@ -142,7 +153,14 @@ final class DeviceProvisioningViewModel: ObservableObject {
         }
     }
 
+    func restartLanTokenPublisher() {
+        guard let session = currentSession, let deviceID = device?.id else { return }
+        lanTokenPublisher.start(session: session, deviceId: deviceID)
+        Task { await lanTokenPublisher.publishNow(session: session, deviceId: deviceID) }
+    }
+
     func clearForLogout(resetProvisionedDevice: Bool = false) async {
+        lanTokenPublisher.stop()
         tunnelClient.closeAll(reason: "logout")
         signalingClient.stop()
         for connectionId in webRTCBridges.keys {
@@ -158,6 +176,7 @@ final class DeviceProvisioningViewModel: ObservableObject {
         deviceCode = nil
         deviceCodeHint = nil
         signalingStatus = nil
+        lanPublishStatus = nil
         pendingApproval = nil
         remoteChatDiagnostics = RemoteChatServerController.shared.currentDiagnostics()
         deviceNameDraft = ""
@@ -220,8 +239,8 @@ final class DeviceProvisioningViewModel: ObservableObject {
     }
 
     private func handleRelayEvent(_ event: SignalingClient.Event) {
-        guard event.status == "accepted",
-              let session = currentSession,
+        if let status = event.status, status != "accepted" { return }
+        guard let session = currentSession,
               let payload = event.payload,
               let connectionId = event.connectionId,
               let fromDeviceId = event.fromDeviceId else { return }

@@ -29,12 +29,18 @@ import com.acode.android.data.RemoteSession
 import com.acode.android.data.RemoteSessionStore
 import com.acode.android.data.RemoteSignalingClient
 import com.acode.android.data.RemoteStreamingText
+import com.acode.android.data.LanNetworkSelector
+import com.acode.android.data.LanSignalingResolver
+import com.acode.android.data.LanSubnetProbe
+import com.acode.android.data.RemoteTunnelTransport
 import com.acode.android.data.RemoteWebRtcTransport
 import com.acode.android.data.applyPatch
 import com.acode.android.data.toJson
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import org.json.JSONObject
 import java.util.UUID
 
@@ -79,6 +85,9 @@ data class DeviceUiState(
     val deviceCode: String = "",
     val resolvedDevice: RemoteDeviceResolveResponse? = null,
     val message: String? = null,
+    val connectedDeviceId: Int? = null,
+    val connectedDeviceName: String? = null,
+    val connectedTransport: String? = null,
 )
 
 data class ChatUiState(
@@ -130,6 +139,14 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var chat by mutableStateOf(ChatUiState())
         private set
+    val transportLabel: String
+        get() = when (chat.config.transport) {
+            "lan" -> "局域网"
+            "public" -> "公网直连"
+            "p2p" -> "跨网 P2P"
+            "tunnel" -> "跨网通道"
+            else -> ""
+        }
 
     private val api = RemoteApiClient()
     private val sessionStore = RemoteSessionStore(application)
@@ -137,6 +154,7 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
     private val remoteChatClient = RemoteChatClient()
     private val signalingClient = RemoteSignalingClient()
     private var remoteWebRtcTransport: RemoteWebRtcTransport? = null
+    private var remoteTunnelTransport: RemoteTunnelTransport? = null
     private var snapshot: RemotePanelSnapshot? = null
     private val bufferedDecisions = mutableMapOf<Int, RemoteConnectionAttempt>()
     private val pendingCommands = mutableListOf<PendingRemoteCommand>()
@@ -355,6 +373,8 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
         remoteChatClient.disconnect()
         remoteWebRtcTransport?.disconnect()
         remoteWebRtcTransport = null
+        remoteTunnelTransport?.disconnect()
+        remoteTunnelTransport = null
         signalingClient.stop()
         sessionStore.clear()
         auth = AuthUiState(gateState = AuthGateState.Unauthenticated)
@@ -458,11 +478,26 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
         val session = sessionStore.load() ?: return
         viewModelScope.launch {
             devices = devices.copy(loading = true, message = null)
-            runCatching { api.devices(session.accessToken).filter { it.deviceType == "desktop" || it.platform == "macos" } }
+            runCatching {
+                val listed = api.devices(session.accessToken).filter { it.deviceType == "desktop" || it.platform == "macos" }
+                enrichDesktopDevices(listed, session.accessToken)
+            }
                 .onSuccess { devices = devices.copy(devices = it, loading = false) }
                 .onFailure { devices = devices.copy(loading = false, message = userMessage(it, "设备列表加载失败。")) }
         }
     }
+
+    private suspend fun enrichDesktopDevices(
+        devices: List<RemoteDeviceInfo>,
+        accessToken: String,
+    ): List<RemoteDeviceInfo> =
+        devices.map { device ->
+            if (device.hasDirectEndpoint() || !device.canRequestConnection()) {
+                device
+            } else {
+                runCatching { api.device(device.id, accessToken) }.getOrDefault(device)
+            }
+        }
 
     fun updateDeviceCode(value: String) {
         devices = devices.copy(deviceCode = value, message = null)
@@ -499,9 +534,35 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             devices = devices.copy(connecting = true, message = null)
+            snapshot = null
+            chat = ChatUiState(connectionStatus = "连接中")
             runCatching {
+                remoteChatClient.disconnect()
+                remoteWebRtcTransport?.disconnect()
+                remoteWebRtcTransport = null
+                remoteTunnelTransport?.disconnect()
+                remoteTunnelTransport = null
+                signalingClient.onRelay = null
+
                 val identity = ensureRegisteredLocalDevice(session.accessToken, startSignaling = true)
-                val latestDevice = runCatching { api.device(device.id, session.accessToken) }.getOrDefault(device)
+                var latestDevice = runCatching { api.device(device.id, session.accessToken) }.getOrDefault(device)
+                if (LanNetworkSelector.isOnWifi(getApplication())) {
+                    directChatConfigFromDevice(latestDevice, transport = "lan")
+                        ?.takeIf { it.isPrivateLanConfig() }
+                        ?.let { config ->
+                            devices = devices.copy(message = "正在建立局域网直连。")
+                            if (tryEstablishDirectConnection(config) == null && isRemoteChatReady()) {
+                                devices = devices.copy(
+                                    connecting = false,
+                                    connectedDeviceId = latestDevice.id,
+                                    connectedDeviceName = latestDevice.deviceName,
+                                    connectedTransport = "lan",
+                                )
+                                onConnected()
+                                return@launch
+                            }
+                        }
+                }
                 val initial = api.connect(latestDevice.id, identity, session.accessToken)
                 val attempt =
                     if (initial.status == "pending") waitForConnectionDecision(initial.connectionId ?: initial.id, session.accessToken) else initial
@@ -517,37 +578,120 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     return@runCatching
                 }
-                if (attempt.requiresRelayTransport()) {
-                    connectRemoteRelay(attempt, latestDevice, session.accessToken)
-                    devices = devices.copy(connecting = false)
-                    onConnected()
-                    return@runCatching
-                }
-                val endpoint = attempt.endpoint
-                val token = attempt.transientToken
-                if (endpoint != null && !token.isNullOrBlank()) {
-                    val config = RemoteChatConfig(
-                        macHost = endpoint.ip,
-                        port = endpoint.port,
-                        token = token,
-                        connectionId = attempt.connectionId ?: attempt.id,
-                        transport = attempt.transport ?: "lan",
-                        reason = attempt.reason,
-                        remoteAccessToken = session.accessToken,
-                    )
-                    chat = chat.copy(config = config)
-                    try {
-                        connectRemoteChat(config)
-                        waitForDirectRemoteChatReady()
-                    } catch (directError: Throwable) {
-                        connectRemoteRelay(attempt.copy(transport = "p2p", reason = "remote_transport_required"), latestDevice, session.accessToken)
+
+                latestDevice = runCatching { api.device(device.id, session.accessToken) }.getOrDefault(latestDevice)
+
+                val connectionId = attempt.connectionId ?: attempt.id
+                latestDevice = runCatching { api.device(latestDevice.id, session.accessToken) }.getOrDefault(latestDevice)
+                var lanFailure: Throwable? = null
+                val triedDirectConfigs = mutableListOf<RemoteChatConfig>()
+
+                suspend fun tryDirectCandidate(config: RemoteChatConfig): Boolean {
+                    if (triedDirectConfigs.any { config.matchesEndpoint(it) }) return isRemoteChatReady()
+                    triedDirectConfigs += config
+                    val failure = tryEstablishDirectConnection(config)
+                    if (failure != null && config.transport == "lan" && lanFailure == null) {
+                        lanFailure = failure
                     }
-                    devices = devices.copy(connecting = false)
+                    return failure == null && isRemoteChatReady()
+                }
+
+                if (!isRemoteChatReady() && LanNetworkSelector.isOnWifi(getApplication())) {
+                    val targetDeviceId = attempt.toDeviceId ?: latestDevice.id
+                    val signalingLan = runCatching {
+                        waitForSignalingReady()
+                        LanSignalingResolver.resolve(
+                            connectionId = connectionId,
+                            targetDeviceId = targetDeviceId,
+                            signalingClient = signalingClient,
+                        )
+                    }.getOrNull()?.copy(
+                        connectionId = connectionId,
+                        remoteAccessToken = session.accessToken,
+                        reason = attempt.reason,
+                    )
+                    signalingLan
+                        ?.takeIf { it.isPrivateLanConfig() }
+                        ?.let { config ->
+                            devices = devices.copy(message = "正在建立局域网直连。")
+                            tryDirectCandidate(config)
+                        }
+                }
+
+                if (!isRemoteChatReady()) {
+                    directChatConfigFromAttempt(attempt, session.accessToken, transport = "lan")
+                        ?.takeIf { it.isPrivateLanConfig() }
+                        ?.let { config ->
+                            devices = devices.copy(message = "正在建立局域网直连。")
+                            tryDirectCandidate(config)
+                        }
+                }
+
+                if (!isRemoteChatReady()) {
+                    directChatConfigFromDevice(latestDevice, attempt, session.accessToken, transport = "lan")
+                        ?.takeIf { it.isPrivateLanConfig() }
+                        ?.let { config ->
+                            devices = devices.copy(message = "正在建立局域网直连。")
+                            tryDirectCandidate(config)
+                        }
+                }
+
+                var crossNetworkFailure: Throwable? = null
+                if (!isRemoteChatReady()) {
+                    runCatching {
+                        connectRemoteTunnel(attempt, session.accessToken)
+                    }.onFailure { tunnelError ->
+                        crossNetworkFailure = tunnelError
+                        runCatching {
+                            connectRemoteRelay(attempt, latestDevice, session.accessToken)
+                        }.onFailure { relayError ->
+                            crossNetworkFailure = relayError
+                        }
+                    }
+                }
+
+                if (!isRemoteChatReady()) {
+                    val publicCandidates = listOfNotNull(
+                        directChatConfigFromAttempt(attempt, session.accessToken, transport = "public"),
+                        directChatConfigFromDevice(latestDevice, attempt, session.accessToken, transport = "public"),
+                    ).filter { it.isPublicDirectConfig() }
+                    for (config in publicCandidates) {
+                        devices = devices.copy(message = "正在尝试公网端口直连。")
+                        if (tryDirectCandidate(config)) break
+                    }
+                    if (!isRemoteChatReady() && crossNetworkFailure != null && publicCandidates.isEmpty()) {
+                        throw crossNetworkFailure!!
+                    }
+                }
+
+                if (isRemoteChatReady()) {
+                    val fallbackNote = lanFallbackNote(
+                        transport = chat.config.transport,
+                        lanFailure = lanFailure,
+                    )
+                    devices = devices.copy(
+                        connecting = false,
+                        connectedDeviceId = latestDevice.id,
+                        connectedDeviceName = latestDevice.deviceName,
+                        connectedTransport = chat.config.transport,
+                        message = fallbackNote,
+                    )
                     onConnected()
                 } else {
-                    devices = devices.copy(message = "连接已允许，但暂时拿不到电脑的连接地址，请稍后重试。", connecting = false)
+                    devices = devices.copy(
+                        connecting = false,
+                        message = "连接已允许，但暂时拿不到电脑的连接地址。请确认手机与电脑在同一 WiFi 后刷新设备列表重试。",
+                    )
                 }
-            }.onFailure { devices = devices.copy(connecting = false, message = userMessage(it, "连接请求失败。")) }
+            }.onFailure {
+                devices = devices.copy(
+                    connecting = false,
+                    message = connectionFailureMessage(it, latestDevice = runCatching {
+                        val session = sessionStore.load() ?: return@runCatching null
+                        api.device(device.id, session.accessToken)
+                    }.getOrNull()),
+                )
+            }
         }
     }
 
@@ -582,7 +726,7 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             chat = chat.copy(isRefreshing = true, lastError = null)
             if (config.supportsDirectHttp) {
-                val healthOk = runCatching { RemoteLanClient(config).health() }.getOrDefault(false)
+                val healthOk = runCatching { RemoteLanClient(config, lanBoundClient()).health() }.getOrDefault(false)
                 if (!healthOk || chat.connectionStatus != "已连接") connectRemoteChat(config)
                 sendRemoteCommand("requestSnapshot", sessionId = chat.selectedSessionId)
             } else {
@@ -838,14 +982,24 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { reloadFiles(parent) }
     }
 
-    private fun connectRemoteChat(config: RemoteChatConfig) {
+    private fun connectRemoteChat(config: RemoteChatConfig, client: OkHttpClient? = null) {
         remoteWebRtcTransport?.disconnect()
         remoteWebRtcTransport = null
         signalingClient.onRelay = null
         currentConnectStartedAtMs = System.currentTimeMillis()
         didReportFirstPanelStateLatency = false
         chat = chat.copy(config = config, connectionStatus = "连接中", lastError = null)
-        remoteChatClient.connect(config, focusedSessionId = chat.selectedSessionId, lastRevision = snapshot?.revision)
+        val lanClient = if (config.isPrivateLanConfig()) {
+            LanNetworkSelector.wifiBoundClient(getApplication()) ?: client
+        } else {
+            client
+        }
+        remoteChatClient.connect(
+            config = config,
+            focusedSessionId = chat.selectedSessionId,
+            lastRevision = snapshot?.revision,
+            client = lanClient,
+        )
     }
 
     private suspend fun connectRemoteRelay(
@@ -869,6 +1023,8 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
         remoteChatClient.disconnect()
         remoteWebRtcTransport?.disconnect()
         remoteWebRtcTransport = transport
+        remoteTunnelTransport?.disconnect()
+        remoteTunnelTransport = null
         signalingClient.onRelay = { relayConnectionId, payload ->
             if (relayConnectionId == connectionId) transport.receiveRelayPayload(payload)
         }
@@ -897,6 +1053,77 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private suspend fun connectRemoteTunnel(
+        attempt: RemoteConnectionAttempt,
+        accessToken: String,
+    ) {
+        val connectionId = attempt.connectionId ?: attempt.id
+        waitForSignalingReady()
+        val targetDeviceId = attempt.toDeviceId
+            ?: throw IllegalStateException("连接信息不完整，请重新发起连接。")
+        val transport = RemoteTunnelTransport(
+            connectionId = connectionId,
+            targetDeviceId = targetDeviceId,
+            signalingClient = signalingClient,
+        )
+        bindTunnelTransport(transport)
+        remoteChatClient.disconnect()
+        remoteWebRtcTransport?.disconnect()
+        remoteWebRtcTransport = null
+        remoteTunnelTransport?.disconnect()
+        remoteTunnelTransport = transport
+        val config = RemoteChatConfig(
+            macHost = "",
+            port = 0,
+            token = accessToken,
+            connectionId = connectionId,
+            transport = "tunnel",
+            reason = attempt.reason,
+            remoteAccessToken = accessToken,
+            remoteRelayReady = signalingClient.isConnected,
+        )
+        currentConnectStartedAtMs = System.currentTimeMillis()
+        didReportFirstPanelStateLatency = false
+        chat = chat.copy(config = config, connectionStatus = "连接中", lastError = null)
+        devices = devices.copy(message = "正在建立远程通道。")
+        transport.connect(focusedSessionId = chat.selectedSessionId, lastRevision = snapshot?.revision)
+        try {
+            waitForTunnelReady(transport)
+        } catch (error: Throwable) {
+            if (remoteTunnelTransport === transport) remoteTunnelTransport = null
+            chat = chat.copy(connectionStatus = "未连接", lastError = error.localizedMessage)
+            throw error
+        }
+    }
+
+    private fun bindTunnelTransport(transport: RemoteTunnelTransport) {
+        transport.onStatus = { status ->
+            viewModelScope.launch {
+                chat = chat.copy(connectionStatus = status)
+                if (status == "已连接") replayPendingCommands()
+            }
+        }
+        transport.onError = { error -> viewModelScope.launch { chat = chat.copy(lastError = error) } }
+        transport.onSnapshot = { next -> viewModelScope.launch { adoptSnapshot(next) } }
+        transport.onPatch = { patch -> viewModelScope.launch { applyRemotePatch(patch) } }
+        transport.onAck = { commandId, status, message, sessionId ->
+            viewModelScope.launch {
+                removePendingCommand(commandId)
+                if (!sessionId.isNullOrBlank()) chat = chat.copy(selectedSessionId = sessionId)
+                if (status == "error" || status == "rejected") chat = chat.copy(lastError = message)
+            }
+        }
+    }
+
+    private suspend fun waitForTunnelReady(transport: RemoteTunnelTransport) {
+        repeat(240) {
+            if (transport.isReady || transport.awaitReady(100)) return
+            if (!signalingClient.isConnected) throw IllegalStateException("信令通道已断开，请确认网络后重试。")
+        }
+        transport.disconnect()
+        throw IllegalStateException("远程通道建立超时，请确认电脑端在线后重试。")
+    }
+
     private fun bindWebRtcTransport(transport: RemoteWebRtcTransport) {
         transport.onStatus = { status ->
             viewModelScope.launch {
@@ -923,8 +1150,11 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun sendRemoteCommandInternal(commandId: String, op: String, sessionId: String? = null, args: JSONObject = JSONObject()): String {
+        val tunnel = remoteTunnelTransport
         val relay = remoteWebRtcTransport
-        return if (relay != null && !chat.config.supportsDirectHttp) {
+        return if (tunnel != null && tunnel.isReady && !chat.config.supportsDirectHttp) {
+            tunnel.sendCommand(op, sessionId, args, commandId)
+        } else if (relay != null && !chat.config.supportsDirectHttp) {
             relay.sendCommand(op, sessionId, args, commandId)
         } else {
             remoteChatClient.sendCommand(op, sessionId, args, commandId)
@@ -1060,7 +1290,12 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
         didReportFirstPanelStateLatency = true
         val latency = (System.currentTimeMillis() - startedAt).coerceAtLeast(0).toInt()
         val transport = chat.config.transport ?: if (chat.config.supportsDirectHttp) "lan" else "p2p"
-        val path = if (chat.config.supportsDirectHttp) "lan" else "relay"
+        val path = when (transport) {
+            "lan" -> "lan"
+            "public", "port_forward" -> "public"
+            "tunnel" -> "tunnel"
+            else -> "relay"
+        }
         viewModelScope.launch {
             runCatching {
                 api.reportConnectionMetrics(
@@ -1227,14 +1462,6 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun RemoteConnectionAttempt.requiresRelayTransport(): Boolean {
-        val normalizedTransport = transport.orEmpty().lowercase()
-        val normalizedReason = reason.orEmpty().lowercase()
-        return normalizedTransport == "p2p" ||
-            normalizedTransport == "turn" ||
-            normalizedReason == "remote_transport_required"
-    }
-
     private fun bindSignalingClient() {
         signalingClient.onPresenceUpdate = { deviceId, online ->
             viewModelScope.launch {
@@ -1253,4 +1480,185 @@ class AcodeViewModel(application: Application) : AndroidViewModel(application) {
     private fun userMessage(error: Throwable, fallback: String = "请求失败。"): String {
         return error.localizedMessage?.takeIf { it.isNotBlank() } ?: fallback
     }
+
+    private fun connectionFailureMessage(error: Throwable, latestDevice: RemoteDeviceInfo?): String {
+        val base = userMessage(error, "连接请求失败。")
+        val lacksLanEndpoint = latestDevice?.lanEndpoint == null || latestDevice.transientToken.isNullOrBlank()
+        return if (lacksLanEndpoint && base.contains("远程连接没有建立成功")) {
+            "局域网直连失败，请确认手机与电脑在同一 WiFi，且 Mac 端已开启「允许局域网直连」。若仍走跨网，请重启 Mac 端 App 后重试。"
+        } else {
+            base
+        }
+    }
+
+    private fun lanFallbackNote(transport: String?, lanFailure: Throwable?): String? {
+        if (transport != "tunnel" || lanFailure == null) return null
+        val onWifi = LanNetworkSelector.wifiNetwork(getApplication()) != null
+        val detail = userMessage(lanFailure, "无法直连电脑")
+        return if (onWifi) {
+            "已改用跨网通道（局域网不可用：$detail）。若在同一 WiFi 仍失败，请检查路由器是否开启「AP 隔离」，或改用 Mac 热点。"
+        } else {
+            "已改用跨网通道（当前未连 WiFi，无法局域网直连：$detail）。"
+        }
+    }
+
+    private fun isRemoteChatReady(): Boolean =
+        chat.connectionStatus == "已连接" || remoteChatClient.isReady || remoteWebRtcTransport?.isReady == true || remoteTunnelTransport?.isReady == true
+
+    private fun directChatConfigFromAttempt(
+        attempt: RemoteConnectionAttempt,
+        accessToken: String,
+        transport: String,
+    ): RemoteChatConfig? {
+        val endpoint = attempt.endpoint ?: return null
+        val token = attempt.transientToken?.trim().orEmpty()
+        if (token.isBlank()) return null
+        return RemoteChatConfig(
+            macHost = endpoint.ip,
+            port = endpoint.port,
+            token = token,
+            connectionId = attempt.connectionId ?: attempt.id,
+            transport = transport,
+            reason = attempt.reason,
+            remoteAccessToken = accessToken,
+        )
+    }
+
+    private fun directChatConfigFromDevice(
+        device: RemoteDeviceInfo,
+        transport: String,
+    ): RemoteChatConfig? {
+        val endpoint = device.lanEndpoint ?: return null
+        val token = device.transientToken?.trim().orEmpty()
+        if (token.isBlank()) return null
+        return RemoteChatConfig(
+            macHost = endpoint.ip,
+            port = endpoint.port,
+            token = token,
+            connectionId = null,
+            transport = transport,
+        )
+    }
+
+    private fun directChatConfigFromDevice(
+        device: RemoteDeviceInfo,
+        attempt: RemoteConnectionAttempt,
+        accessToken: String,
+        transport: String,
+    ): RemoteChatConfig? {
+        val endpoint = device.lanEndpoint ?: return null
+        val token = device.transientToken?.trim().orEmpty()
+        if (token.isBlank()) return null
+        return RemoteChatConfig(
+            macHost = endpoint.ip,
+            port = endpoint.port,
+            token = token,
+            connectionId = attempt.connectionId ?: attempt.id,
+            transport = transport,
+            reason = attempt.reason,
+            remoteAccessToken = accessToken,
+        )
+    }
+
+    private fun RemoteChatConfig.matchesEndpoint(other: RemoteChatConfig?): Boolean {
+        if (other == null) return false
+        return macHost == other.macHost && port == other.port && token == other.token
+    }
+
+    private fun RemoteChatConfig.isPrivateLanConfig(): Boolean =
+        supportsDirectHttp && isPrivateIPv4Host(macHost)
+
+    private fun RemoteChatConfig.isPublicDirectConfig(): Boolean =
+        supportsDirectHttp && !isPrivateLanConfig()
+
+    private fun isPrivateIPv4Host(host: String): Boolean {
+        val octets = host.trim().split(".").mapNotNull { it.toIntOrNull() }
+        if (octets.size != 4 || octets.any { it !in 0..255 }) return false
+        return when (octets[0]) {
+            10 -> true
+            172 -> octets[1] in 16..31
+            192 -> octets[1] == 168
+            else -> false
+        }
+    }
+
+    private suspend fun tryEstablishDirectConnection(config: RemoteChatConfig): Throwable? {
+        val app = getApplication<Application>()
+        var directConfig = config.copy(
+            transport = "lan",
+            connectionId = null,
+        )
+        val clients = LanNetworkSelector.lanClientsForAttempt(app)
+        val wifiSubnet = LanNetworkSelector.wifiSubnetPrefix(app)
+        val offeredSubnet = directConfig.macHost.split(".").take(3).joinToString(".")
+        if (
+            wifiSubnet != null &&
+            directConfig.isPrivateLanConfig() &&
+            offeredSubnet != wifiSubnet
+        ) {
+            LanSubnetProbe.discoverHealthHost(
+                context = app,
+                port = directConfig.port,
+                preferredHost = LanNetworkSelector.localWifiIPv4(app),
+            )?.let { discoveredHost ->
+                directConfig = directConfig.copy(macHost = discoveredHost)
+            }
+        }
+
+        var healthClient: OkHttpClient? = null
+        for (client in clients) {
+            if (runCatching { RemoteLanClient(directConfig, client).health() }.getOrDefault(false)) {
+                healthClient = client
+                break
+            }
+        }
+        if (healthClient == null && directConfig.isPrivateLanConfig()) {
+            val discoveredHost = LanSubnetProbe.discoverHealthHost(
+                context = app,
+                port = directConfig.port,
+                preferredHost = directConfig.macHost,
+            )
+            if (discoveredHost != null) {
+                directConfig = directConfig.copy(macHost = discoveredHost)
+                for (client in clients) {
+                    if (runCatching { RemoteLanClient(directConfig, client).health() }.getOrDefault(false)) {
+                        healthClient = client
+                        break
+                    }
+                }
+            }
+        }
+        if (healthClient == null) {
+            val failure = IllegalStateException(
+                "无法访问电脑地址 ${directConfig.macHost}:${directConfig.port}，请确认手机与电脑在同一 WiFi。",
+            )
+            chat = chat.copy(connectionStatus = "未连接", lastError = failure.localizedMessage)
+            return failure
+        }
+
+        val wsClients = buildList {
+            add(healthClient)
+            addAll(clients.filter { it !== healthClient })
+        }
+        var lastError: Throwable? = null
+        for (wsClient in wsClients) {
+            remoteChatClient.disconnect()
+            chat = chat.copy(config = directConfig, connectionStatus = "连接中", lastError = null)
+            connectRemoteChat(directConfig, client = wsClient)
+            try {
+                waitForDirectRemoteChatReady()
+                return null
+            } catch (error: Throwable) {
+                lastError = error
+                remoteChatClient.disconnect()
+            }
+        }
+        val failure = lastError ?: IllegalStateException("局域网连接失败。")
+        chat = chat.copy(connectionStatus = "未连接", lastError = userMessage(failure, "局域网连接失败。"))
+        return failure
+    }
+
+    private fun lanBoundClient(): OkHttpClient =
+        LanNetworkSelector.wifiBoundClient(getApplication())
+            ?: LanNetworkSelector.defaultLanClient()
 }

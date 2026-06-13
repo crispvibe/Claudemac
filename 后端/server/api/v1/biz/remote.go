@@ -300,7 +300,7 @@ func (a *RemoteApi) PublishLanToken(c *gin.Context) {
 	}
 	data, err := remoteService.PublishLanToken(utils.GetRemoteUserID(c), deviceID, c.ClientIP(), req)
 	if err != nil {
-		remoteError(c, err, "局域网直连已停用，请使用远程连接。")
+		remoteError(c, err, "局域网地址发布失败，请稍后重试。")
 		return
 	}
 	response.SuccessPayload(data, "发布成功", c)

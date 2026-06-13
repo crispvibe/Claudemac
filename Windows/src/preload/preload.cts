@@ -7,6 +7,7 @@ import type {
   AccountSessionSummary,
   DeviceCodeSummary,
   DeviceSummary,
+  RemoteConnectResult,
   RemoteDevice,
   RemoteLegalDocument,
   RemoteLegalDocumentType
@@ -97,6 +98,7 @@ const ipcChannels = {
   accountRemoteLegalConsent: "account-remote:legal-consent",
   accountRemoteStartSignaling: "account-remote:start-signaling",
   accountRemoteStopSignaling: "account-remote:stop-signaling",
+  accountRemoteConnectDevice: "account-remote:connect-device",
   accountRemoteState: "account-remote:state",
   chatStart: "chat:start",
   chatInterrupt: "chat:interrupt",
@@ -180,6 +182,17 @@ function toVerificationCodeResponse(value: unknown): AccountVerificationCodeResp
     throw new Error("Invalid verification code response");
   }
   return value as AccountVerificationCodeResponse;
+}
+
+function toRemoteConnectResult(value: unknown): RemoteConnectResult {
+  if (!value || typeof value !== "object") {
+    throw new Error("Invalid remote connect result");
+  }
+  const result = value as Record<string, unknown>;
+  if (typeof result.transport !== "string" || typeof result.token !== "string") {
+    throw new Error("Invalid remote connect result");
+  }
+  return value as RemoteConnectResult;
 }
 
 function toRemoteLegalDocument(value: unknown): RemoteLegalDocument {
@@ -365,6 +378,9 @@ const api = {
     },
     async stopSignaling(): Promise<AccountRemoteState> {
       return toAccountRemoteState(await ipcRenderer.invoke(ipcChannels.accountRemoteStopSignaling));
+    },
+    async connectDevice(deviceId: number): Promise<RemoteConnectResult> {
+      return toRemoteConnectResult(await ipcRenderer.invoke(ipcChannels.accountRemoteConnectDevice, { deviceId }));
     },
     onState(listener: (state: AccountRemoteState) => void): () => void {
       accountRemoteStateListeners.add(listener);

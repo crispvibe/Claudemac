@@ -1049,8 +1049,13 @@ button {
   padding: 8px 10px 8px 0;
 }
 
+.chat-pane-narrow .brand-title,
+.chat-pane-narrow .brand-divider {
+  display: none;
+}
+
 .chat-pane-narrow .project-switch-title {
-  max-width: 52px;
+  max-width: 72px;
 }
 
 .chat-pane-narrow .account-pill span,
@@ -1118,7 +1123,7 @@ button {
 }
 
 .account-dialog.wide {
-  width: min(900px, calc(100vw - 44px));
+  width: min(860px, calc(100vw - 44px));
 }
 
 .account-dialog-header {
@@ -1508,19 +1513,40 @@ button {
 .account-device-row,
 .account-remote-device-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: 8px 28px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  min-height: 48px;
-  padding: 8px 10px;
+  min-height: 52px;
+  padding: 10px 12px;
   border: 1px solid var(--weak-hairline);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.56);
 }
 
+.account-device-row-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: rgba(74, 132, 255, 0.10);
+  color: #4a84ff;
+}
+
+.account-device-row-body {
+  min-width: 0;
+}
+
+.account-device-row-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 88px;
+}
+
 .account-device-row svg,
 .account-remote-device-row svg {
-  color: #4a84ff;
+  color: currentColor;
 }
 
 .account-device-row b,
@@ -1551,7 +1577,11 @@ button {
 
 .account-device-row small,
 .account-remote-device-row small {
-  padding: 5px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
   border-radius: 99px;
   background: rgba(20, 20, 25, 0.055);
   color: #74747b;
@@ -1576,6 +1606,428 @@ button {
 .account-remote-device-row small.unavailable {
   background: rgba(245, 158, 11, 0.14);
   color: #9a6200;
+}
+
+.account-device-row small.lan-ready,
+.account-remote-device-row small.lan-ready {
+  background: rgba(39, 202, 64, 0.12);
+  color: #22893b;
+}
+
+.account-device-row small.available,
+.account-remote-device-row small.available {
+  background: rgba(74, 132, 255, 0.12);
+  color: #386fcb;
+}
+
+.account-remote-connect-button,
+.account-secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #2f3036;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.account-remote-connect-button {
+  min-height: 34px;
+  border-color: rgba(20, 20, 25, 0.08);
+  background: #17181d;
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(20, 20, 25, 0.14);
+}
+
+.account-remote-connect-button:disabled,
+.account-secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.account-status-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 247, 249, 0.82)),
+    rgba(255, 255, 255, 0.88);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.86),
+    0 18px 44px rgba(20, 20, 25, 0.08);
+}
+
+.account-status-card.embedded {
+  border-radius: 18px;
+  box-shadow: none;
+}
+
+.account-status-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-status-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.account-status-avatar {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: rgba(74, 132, 255, 0.10);
+  color: #4a84ff;
+}
+
+.account-status-identity strong,
+.account-status-identity span {
+  display: block;
+}
+
+.account-status-identity strong {
+  color: #24252b;
+  font-size: 14px;
+}
+
+.account-status-identity span {
+  margin-top: 4px;
+  color: #77777d;
+  font-size: 12px;
+}
+
+.account-status-block {
+  display: grid;
+  gap: 8px;
+}
+
+.account-status-block-title {
+  color: #2f3036;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.account-status-device-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(140px, 0.8fr) auto auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.account-status-save-button {
+  align-self: end;
+  min-height: 34px;
+}
+
+.account-status-field {
+  display: grid;
+  gap: 6px;
+}
+
+.account-status-field > span,
+.account-status-inline-label,
+.account-status-hint {
+  color: #77777d;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.settings-input.compact {
+  min-height: 34px;
+}
+
+.settings-primary-button.compact {
+  min-height: 34px;
+  padding: 0 14px;
+}
+
+.account-status-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  color: #5d5d65;
+  font-size: 12px;
+}
+
+.account-status-code-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.account-status-service-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.account-status-service-leading {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.account-status-service-status {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.account-status-service-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.remote-connection-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid rgba(39, 202, 64, 0.18);
+  border-radius: 14px;
+  background: rgba(39, 202, 64, 0.08);
+}
+
+.remote-connection-banner.compact {
+  margin-top: 10px;
+}
+
+.remote-connection-banner strong,
+.remote-connection-banner span {
+  display: block;
+}
+
+.remote-connection-banner strong {
+  color: #1f6d34;
+  font-size: 12px;
+}
+
+.remote-connection-banner span {
+  margin-top: 3px;
+  color: #5d7d66;
+  font-size: 11px;
+}
+
+.remote-transport-badge {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.remote-transport-badge.lan {
+  background: rgba(39, 202, 64, 0.16);
+  color: #22893b;
+}
+
+.remote-transport-badge.tunnel {
+  background: rgba(74, 132, 255, 0.14);
+  color: #386fcb;
+}
+
+.remote-transport-badge.public {
+  background: rgba(245, 158, 11, 0.14);
+  color: #9a6200;
+}
+
+.account-remote-control.embedded {
+  gap: 16px;
+}
+
+.account-device-count {
+  color: #77777d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.device-online-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(20, 20, 25, 0.16);
+}
+
+.device-online-dot.online {
+  background: #27ca40;
+}
+
+.account-remote-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--weak-hairline);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.account-remote-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-remote-header > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #2f3036;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.account-remote-header button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.account-remote-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.account-remote-summary-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--weak-hairline);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.account-remote-summary-item svg {
+  color: #4a84ff;
+}
+
+.account-remote-summary-item span {
+  color: #7c7c84;
+  font-size: 11px;
+}
+
+.account-remote-summary-item strong {
+  color: #303139;
+  font-size: 12px;
+}
+
+.account-remote-device-list {
+  display: grid;
+  gap: 8px;
+}
+
+.account-remote-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #2f3036;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.account-remote-list-header button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.account-remote-empty,
+.account-remote-error {
+  margin: 0;
+  color: #77777d;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.account-remote-error {
+  color: #b64343;
+}
+
+.remote-chat-card {
+  display: grid;
+  gap: 18px;
+}
+
+.remote-overview-panel {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--weak-hairline);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.remote-service-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.remote-account-divider {
+  height: 1px;
+  background: rgba(20, 20, 25, 0.08);
+}
+
+.remote-metric-chips {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.remote-metric-chip {
+  display: grid;
+  gap: 4px;
+  min-height: 50px;
+  padding: 10px 12px;
+  border: 1px solid var(--weak-hairline);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.remote-metric-chip span {
+  color: #7c7c84;
+  font-size: 11px;
+}
+
+.remote-metric-chip b {
+  color: #303139;
+  font-size: 12px;
+  font-weight: 750;
 }
 
 .account-action-status,
@@ -1663,19 +2115,33 @@ button:disabled,
 }
 
 .brand-lockup {
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   color: #17181d;
   font-size: 14px;
   font-weight: 740;
 }
 
+.brand-title {
+  flex: 0 0 auto;
+  color: #17181d;
+}
+
+.brand-divider {
+  width: 1px;
+  height: 16px;
+  flex: 0 0 auto;
+  background: rgba(20, 20, 25, 0.10);
+}
+
 .app-logo {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
   overflow: hidden;
+  padding: 4px;
   border: 1px solid rgba(20, 20, 25, 0.05);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
@@ -1686,7 +2152,7 @@ button:disabled,
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   pointer-events: none;
   user-select: none;
 }
@@ -2962,8 +3428,13 @@ button:disabled,
 .settings-primary-button,
 .settings-danger-button,
 .settings-actions button,
+.settings-inline-button,
 .profile-row button,
 .account-summary-row button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-height: 34px;
   padding: 0 14px;
   border: 1px solid var(--hairline);
@@ -2973,6 +3444,14 @@ button:disabled,
   cursor: pointer;
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
+}
+
+.settings-inline-button svg,
+.settings-primary-button svg,
+.settings-danger-button svg,
+.account-secondary-button svg {
+  flex: 0 0 auto;
 }
 
 .settings-primary-button {
@@ -3196,6 +3675,13 @@ button:disabled,
   border: 1px solid var(--weak-hairline);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.56);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.device-node.active {
+  border-color: rgba(74, 132, 255, 0.22);
+  background: rgba(74, 132, 255, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .device-node > span {
@@ -3223,9 +3709,13 @@ button:disabled,
 }
 
 .device-rail {
-  height: 2px;
+  height: 5px;
   border-radius: 99px;
-  background: rgba(65, 118, 220, 0.18);
+  background: rgba(65, 118, 220, 0.10);
+}
+
+.device-rail.active {
+  background: rgba(65, 118, 220, 0.24);
 }
 
 .settings-row {
@@ -3240,9 +3730,16 @@ button:disabled,
 
 .settings-actions {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 10px;
   margin-top: 12px;
+}
+
+.settings-actions .settings-input {
+  flex: 1 1 220px;
+  min-width: 180px;
 }
 
 .rule-path {
@@ -3467,8 +3964,32 @@ button:disabled,
   }
 
   .account-control-summary,
-  .account-dialog-grid {
+  .account-dialog-grid,
+  .account-remote-summary,
+  .remote-metric-chips {
     grid-template-columns: 1fr;
+  }
+
+  .account-status-device-row {
+    grid-template-columns: 1fr;
+  }
+
+  .account-status-code-row {
+    grid-template-columns: 1fr;
+  }
+
+  .account-status-service-row {
+    flex-direction: column;
+  }
+
+  .device-flow {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .device-rail {
+    width: 100%;
+    height: 2px;
   }
 
   .account-summary-row {

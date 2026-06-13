@@ -44,6 +44,7 @@ export const ipcChannels = {
   accountRemoteLegalConsent: "account-remote:legal-consent",
   accountRemoteStartSignaling: "account-remote:start-signaling",
   accountRemoteStopSignaling: "account-remote:stop-signaling",
+  accountRemoteConnectDevice: "account-remote:connect-device",
   accountRemoteState: "account-remote:state",
   chatStart: "chat:start",
   chatInterrupt: "chat:interrupt",
@@ -168,6 +169,10 @@ export const accountRemoteLegalConsentRequestSchema = z.object({
 });
 
 export const accountRemoteDeviceUpdateRequestSchema = accountRemoteDeviceUpdateInputSchema;
+
+export const accountRemoteConnectDeviceRequestSchema = z.object({
+  deviceId: z.number().int().positive()
+});
 
 export type SettingsProfileUpdateRequest = z.infer<typeof settingsProfileUpdateRequestSchema>;
 export type SettingsProfileIdRequest = z.infer<typeof settingsProfileIdRequestSchema>;

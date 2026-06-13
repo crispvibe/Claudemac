@@ -1,6 +1,7 @@
 package com.acode.android.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,6 +71,8 @@ fun DeviceListScreen(
     connecting: Boolean,
     resolvedDevice: RemoteDeviceResolveResponse?,
     message: String?,
+    connectedDeviceId: Int?,
+    connectedTransport: String?,
     goBack: () -> Unit,
     refresh: () -> Unit,
     connect: (RemoteDeviceInfo) -> Unit,
@@ -103,6 +106,8 @@ fun DeviceListScreen(
                     devices = devices,
                     loading = loading,
                     message = message,
+                    connectedDeviceId = connectedDeviceId,
+                    connectedTransport = connectedTransport,
                     refresh = refresh,
                     connect = connect,
                 )
@@ -238,6 +243,8 @@ private fun DeviceSection(
     devices: List<RemoteDeviceInfo>,
     loading: Boolean,
     message: String?,
+    connectedDeviceId: Int?,
+    connectedTransport: String?,
     refresh: () -> Unit,
     connect: (RemoteDeviceInfo) -> Unit,
 ) {
@@ -252,7 +259,12 @@ private fun DeviceSection(
                 devices.isEmpty() -> EmptyOrMessageState(message = message, refresh = refresh)
                 else -> {
                     devices.forEach { device ->
-                        DeviceRow(device = device, connect = { connect(device) })
+                        DeviceRow(
+                            device = device,
+                            isConnected = device.id == connectedDeviceId,
+                            connectedTransport = if (device.id == connectedDeviceId) connectedTransport else null,
+                            connect = { connect(device) },
+                        )
                     }
                     if (!message.isNullOrBlank()) {
                         Text(message, color = AcodeColor.Muted, fontSize = 12.sp, lineHeight = 17.sp)
@@ -264,14 +276,15 @@ private fun DeviceSection(
 }
 
 @Composable
-private fun DeviceRow(device: RemoteDeviceInfo, connect: () -> Unit) {
+private fun DeviceRow(device: RemoteDeviceInfo, isConnected: Boolean, connectedTransport: String?, connect: () -> Unit) {
     val canConnect = device.canRequestConnection()
-    val contentAlpha = if (canConnect) 1f else 0.42f
+    val contentAlpha = if (canConnect || isConnected) 1f else 0.42f
     Row(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(22.dp))
-            .background(Color.White.copy(alpha = if (canConnect) 0.54f else 0.32f))
+            .background(Color.White.copy(alpha = if (isConnected) 0.72f else if (canConnect) 0.54f else 0.32f))
+            .then(if (isConnected) Modifier.border(1.5.dp, AcodeColor.Ink.copy(alpha = 0.18f), RoundedCornerShape(22.dp)) else Modifier)
             .padding(horizontal = 14.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -280,7 +293,7 @@ private fun DeviceRow(device: RemoteDeviceInfo, connect: () -> Unit) {
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(Color.White.copy(alpha = if (canConnect) 0.72f else 0.46f)),
+                .background(Color.White.copy(alpha = if (canConnect || isConnected) 0.72f else 0.46f)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -300,14 +313,21 @@ private fun DeviceRow(device: RemoteDeviceInfo, connect: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                deviceSubtitle(device),
-                color = AcodeColor.Muted.copy(alpha = if (canConnect) 1f else 0.72f),
+                deviceSubtitle(device, isConnected, connectedTransport),
+                color = AcodeColor.Muted.copy(alpha = if (canConnect || isConnected) 1f else 0.72f),
                 fontSize = 13.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (canConnect) {
+        if (isConnected) {
+            Text(
+                connectedTransportLabel(connectedTransport),
+                color = Color(0xFF2E7D32),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        } else if (canConnect) {
             BlackCapsuleButton(text = device.connectButtonText(), modifier = Modifier.height(44.dp), onClick = connect)
         }
     }
@@ -582,8 +602,11 @@ private fun SecondaryActionButton(
     }
 }
 
-private fun deviceSubtitle(device: RemoteDeviceInfo): String {
+private fun deviceSubtitle(device: RemoteDeviceInfo, isConnected: Boolean = false, connectedTransport: String? = null): String {
     val platform = device.platform?.takeIf { it.isNotBlank() } ?: "macOS"
+    if (isConnected) {
+        return listOfNotNull(platform, connectedTransportLabel(connectedTransport)).joinToString(" · ")
+    }
     val status = when {
         !device.remoteEnabled -> "远程关闭"
         !device.status.equals("active", ignoreCase = true) -> device.status.ifBlank { "不可连接" }
@@ -599,11 +622,13 @@ private fun deviceSubtitle(device: RemoteDeviceInfo): String {
     return listOfNotNull(platform, status, transport).joinToString(" · ")
 }
 
-private fun RemoteDeviceInfo.canRequestConnection(): Boolean =
-    remoteEnabled && online && status.equals("active", ignoreCase = true)
-
-private fun RemoteDeviceInfo.hasDirectEndpoint(): Boolean =
-    lanEndpoint != null && !transientToken.isNullOrBlank()
+private fun connectedTransportLabel(transport: String?): String = when (transport) {
+    "lan" -> "局域网入网"
+    "public" -> "公网入网"
+    "p2p" -> "跨网入网"
+    "tunnel" -> "跨网入网"
+    else -> "已连接"
+}
 
 private fun RemoteDeviceInfo.connectButtonText(): String =
     if (hasDirectEndpoint()) "连接" else "请求连接"

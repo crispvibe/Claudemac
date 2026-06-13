@@ -95,7 +95,7 @@ func TestConnectRequiresFromDeviceID(t *testing.T) {
 	require.Equal(t, int64(0), count)
 }
 
-func TestDecideConnectionAcceptedSameNetworkStillUsesRemoteTransport(t *testing.T) {
+func TestDecideConnectionAcceptedSameNetworkUsesLanTransport(t *testing.T) {
 	setupRemoteServiceTest(t)
 	svc := &RemoteService{}
 	now := time.Now()
@@ -113,10 +113,60 @@ func TestDecideConnectionAcceptedSameNetworkStillUsesRemoteTransport(t *testing.
 	res, err := svc.DecideConnection(2, conn.ID, true, bizReq.RemoteConnectionDecisionRequest{}, "192.168.1.2")
 	require.NoError(t, err)
 	require.Equal(t, remoteConnectionAccepted, res.Status)
-	require.Equal(t, remoteTunnelTransport, res.Transport)
-	require.Equal(t, remoteReasonRemoteRequired, res.Reason)
-	require.Nil(t, res.Endpoint)
-	require.Empty(t, res.TransientToken)
+	require.Equal(t, remoteLanTransport, res.Transport)
+	require.Equal(t, "approved", res.Reason)
+	require.NotNil(t, res.Endpoint)
+	require.Equal(t, "192.168.1.20", res.Endpoint.IP)
+	require.Equal(t, 18765, res.Endpoint.Port)
+	require.Equal(t, "token-1", res.TransientToken)
+}
+
+func TestPublishLanTokenStoresEndpoint(t *testing.T) {
+	setupRemoteServiceTest(t)
+	svc := &RemoteService{}
+	device := modelBiz.RemoteDevice{UserID: 1, DeviceUID: "mac-1", DeviceType: remoteDeviceTypeDesktop, Platform: "macos", DeviceName: "Mac", DevicePublicKey: "pk", RemoteEnabled: true, Status: remoteStatusActive}
+	require.NoError(t, global.AppDB.Create(&device).Error)
+
+	expiresAt := time.Now().Add(2 * time.Minute).UnixMilli()
+	res, err := svc.PublishLanToken(1, device.ID, "203.0.113.10", bizReq.RemoteLanTokenRequest{
+		IP:             "192.168.1.20",
+		Port:           18765,
+		TransientToken: "lan-token-1",
+		ExpiresAt:      expiresAt,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.LanEndpoint)
+	require.Equal(t, "192.168.1.20", res.LanEndpoint.IP)
+	require.Equal(t, 18765, res.LanEndpoint.Port)
+	require.Equal(t, "lan-token-1", res.TransientToken)
+
+	var stored modelBiz.RemoteDevice
+	require.NoError(t, global.AppDB.First(&stored, device.ID).Error)
+	require.Equal(t, "192.168.1.20", stored.LanIP)
+	require.Equal(t, 18765, stored.LanPort)
+	require.Equal(t, "lan-token-1", stored.LanToken)
+	require.Equal(t, hashString("203.0.113.10"), stored.LanPublisherIPHash)
+}
+
+func TestConnectSameAccountSameNetworkAutoAcceptReturnsLan(t *testing.T) {
+	setupRemoteServiceTest(t)
+	svc := &RemoteService{}
+	now := time.Now()
+	expires := now.Add(10 * time.Minute)
+	fromDevice := modelBiz.RemoteDevice{UserID: 1, DeviceUID: "ios-1", DeviceType: "ios", Platform: "ios", DeviceName: "iPhone", DevicePublicKey: "pk", RemoteEnabled: true, Status: remoteStatusActive}
+	target := modelBiz.RemoteDevice{UserID: 1, DeviceUID: "mac-1", DeviceType: remoteDeviceTypeDesktop, Platform: "macos", DeviceName: "Mac", DevicePublicKey: "pk", ApprovalPolicy: remoteApprovalAlwaysAsk, RemoteEnabled: true, Status: remoteStatusActive, LanIP: "192.168.1.20", LanPort: 18765, LanToken: "token-1", LanTokenExpiresAt: &expires, LanEndpointLastSeenAt: &now, LanPublisherIPHash: hashString("198.51.100.10")}
+	require.NoError(t, global.AppDB.Create(&fromDevice).Error)
+	require.NoError(t, global.AppDB.Create(&target).Error)
+	SharedRemoteSignalingService.connections.Store(target.ID, &remoteSignalingConn{userID: target.UserID, deviceID: target.ID, closed: make(chan struct{})})
+	t.Cleanup(func() { SharedRemoteSignalingService.connections.Delete(target.ID) })
+
+	res, err := svc.Connect(1, target.ID, bizReq.RemoteConnectRequest{FromDeviceID: fromDevice.ID}, "198.51.100.10")
+	require.NoError(t, err)
+	require.Equal(t, remoteConnectionAccepted, res.Status)
+	require.Equal(t, remoteLanTransport, res.Transport)
+	require.Equal(t, "auto_accepted", res.Reason)
+	require.NotNil(t, res.Endpoint)
+	require.Equal(t, "token-1", res.TransientToken)
 }
 
 func TestDecideConnectionAcrossDifferentClientIPUsesTunnelWithoutEntitlement(t *testing.T) {

@@ -67,7 +67,13 @@ data class RemoteDeviceInfo(
     val lastSeenAt: String?,
     val lanEndpoint: RemoteLanEndpoint?,
     val transientToken: String?,
-)
+) {
+    fun canRequestConnection(): Boolean =
+        remoteEnabled && online && status.equals("active", ignoreCase = true)
+
+    fun hasDirectEndpoint(): Boolean =
+        lanEndpoint != null && !transientToken.isNullOrBlank()
+}
 
 data class RemoteConnectionAttempt(
     val id: Int,
@@ -419,12 +425,14 @@ fun JSONObject.toAppUpdateInfo(): RemoteAppUpdateInfo = RemoteAppUpdateInfo(
 )
 
 fun JSONObject.toDeviceInfo(): RemoteDeviceInfo {
-    val endpointJson = optJSONObject("lanEndpoint") ?: optJSONObject("lan_endpoint")
+    val endpointJson = optJSONObject("lanEndpoint")
+        ?: optJSONObject("lan_endpoint")
+        ?: optJSONObject("endpoint")
     return RemoteDeviceInfo(
         id = optInt("id"),
         userId = intOrNull("userId", "user_id"),
         deviceUid = stringOrNull("deviceUid", "deviceUID", "device_uid"),
-        deviceName = optString("deviceName", "我的电脑"),
+        deviceName = stringOrNull("deviceName", "device_name") ?: "我的电脑",
         deviceType = stringOrNull("deviceType", "device_type"),
         platform = stringOrNull("platform"),
         approvalPolicy = optString("approvalPolicy", optString("approval_policy", "always_ask")),

@@ -2,11 +2,13 @@ import { z } from "zod";
 import {
   accountVerificationCodeResponseSchema,
   deviceCodeSummarySchema,
+  remoteConnectionAttemptSchema,
   remoteDeviceSchema,
   remoteLegalDocumentSchema,
   type AccountRemoteDeviceUpdateInput,
   type AccountVerificationCodeResponse,
   type DeviceCodeSummary,
+  type RemoteConnectionAttempt,
   type RemoteDevice,
   type RemoteLegalDocument,
   type RemoteLegalDocumentType
@@ -129,6 +131,22 @@ export class AccountClient {
 
   devices(accessToken: string): Promise<RemoteDevice[]> {
     return this.get("remote/devices", z.array(remoteDeviceSchema), accessToken);
+  }
+
+  device(deviceId: number, accessToken: string): Promise<RemoteDevice> {
+    return this.get(`remote/devices/${deviceId}`, remoteDeviceSchema, accessToken);
+  }
+
+  connect(deviceId: number, fromDeviceId: number, fromDeviceUid: string, fromDevicePublicKey: string, accessToken: string): Promise<RemoteConnectionAttempt> {
+    return this.post(`remote/devices/${deviceId}/connect`, remoteConnectionAttemptSchema, {
+      fromDeviceId,
+      fromDeviceUid,
+      fromDevicePublicKey
+    }, accessToken);
+  }
+
+  connection(connectionId: number, accessToken: string): Promise<RemoteConnectionAttempt> {
+    return this.get(`remote/connections/${connectionId}`, remoteConnectionAttemptSchema, accessToken);
   }
 
   registerDevice(input: {

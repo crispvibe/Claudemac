@@ -10,6 +10,7 @@ struct RemoteChatServerDiagnostics: Equatable {
 
 extension Notification.Name {
     static let remoteChatServerDiagnosticsDidChange = Notification.Name("remoteChatServerDiagnosticsDidChange")
+    static let remoteChatServerDidStart = Notification.Name("remoteChatServerDidStart")
 }
 
 final class RemoteChatAppDelegate: NSObject, NSApplicationDelegate {
@@ -32,8 +33,8 @@ final class RemoteChatServerController {
 
     private var server: RemoteChatServer?
     private let transientTokenLock = NSLock()
-    private var transientToken: String?
-    private var transientTokenExpiresAt: Date?
+    /// Multiple short-lived LAN tokens may be valid at once (cloud publish rotates every ~15s).
+    private var transientTokens: [String: Date] = [:]
 
     deinit {
         server?.stop()
@@ -57,9 +58,12 @@ final class RemoteChatServerController {
         Self.sweepStaleAttachments()
 
         let port = UInt16(clamping: settings.remoteChatServerPort)
+        let bindLAN = settings.remoteChatServerBindLAN || !settings.remoteChatPublicHost
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
         let configuration = RemoteChatServerConfiguration(
             port: port == 0 ? Self.defaultPort : port,
-            bindLAN: false,
+            bindLAN: bindLAN,
             token: settings.remoteChatServerToken
         )
         let server = RemoteChatServer(configuration: configuration)
@@ -73,6 +77,7 @@ final class RemoteChatServerController {
             isRunning = true
             lastError = nil
             print("RemoteChatServer listening on \(configuration.bindLAN ? "LAN" : "127.0.0.1"):\(configuration.port)")
+            NotificationCenter.default.post(name: .remoteChatServerDidStart, object: self)
         } catch {
             self.server = nil
             isRunning = false
@@ -149,24 +154,28 @@ final class RemoteChatServerController {
 
     func setTransientToken(_ token: String, expiresAt: Date) {
         transientTokenLock.lock()
-        transientToken = token
-        transientTokenExpiresAt = expiresAt
+        pruneExpiredTransientTokensLocked(now: Date())
+        transientTokens[token] = expiresAt
         transientTokenLock.unlock()
     }
 
     func clearTransientToken() {
         transientTokenLock.lock()
-        transientToken = nil
-        transientTokenExpiresAt = nil
+        transientTokens.removeAll()
         transientTokenLock.unlock()
     }
 
     func acceptsTransientToken(_ token: String) -> Bool {
         transientTokenLock.lock()
         defer { transientTokenLock.unlock() }
-        guard let transientToken, let transientTokenExpiresAt else { return false }
-        guard transientTokenExpiresAt > Date() else { return false }
-        return constantTimeEquals(token, transientToken)
+        let now = Date()
+        pruneExpiredTransientTokensLocked(now: now)
+        guard let expiresAt = transientTokens[token] else { return false }
+        return expiresAt > now
+    }
+
+    private func pruneExpiredTransientTokensLocked(now: Date) {
+        transientTokens = transientTokens.filter { $0.value > now }
     }
 
     private static func generateToken() -> String {

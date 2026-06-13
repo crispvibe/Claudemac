@@ -53,6 +53,8 @@
 			AC1000000000000000000037 /* DeviceIdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000037 /* DeviceIdentityStore.swift */; };
 			AC1000000000000000000038 /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000038 /* SignalingClient.swift */; };
 			AC1000000000000000000039 /* RemoteUserFacingText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000039 /* RemoteUserFacingText.swift */; };
+			AC1000000000000000000048 /* LanNetworkSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000048 /* LanNetworkSelector.swift */; };
+			AC1000000000000000000049 /* LanSubnetProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000049 /* LanSubnetProbe.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -103,6 +105,8 @@
 			AC2000000000000000000039 /* RemoteUserFacingText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteUserFacingText.swift; sourceTree = "<group>"; };
 			AC2000000000000000000040 /* RemoteWebRTCTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteWebRTCTransport.swift; sourceTree = "<group>"; };
 			AC2000000000000000000047 /* RemoteTunnelTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteTunnelTransport.swift; sourceTree = "<group>"; };
+			AC2000000000000000000048 /* LanNetworkSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanNetworkSelector.swift; sourceTree = "<group>"; };
+			AC2000000000000000000049 /* LanSubnetProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanSubnetProbe.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -192,6 +196,8 @@
 					AC2000000000000000000030 /* RemoteDeviceClient.swift */,
 					AC2000000000000000000040 /* RemoteWebRTCTransport.swift */,
 					AC2000000000000000000047 /* RemoteTunnelTransport.swift */,
+					AC2000000000000000000048 /* LanNetworkSelector.swift */,
+					AC2000000000000000000049 /* LanSubnetProbe.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -406,6 +412,8 @@
 				AC1000000000000000000034 /* DeviceCodeEntryView.swift in Sources */,
 				AC1000000000000000000039 /* RemoteUserFacingText.swift in Sources */,
 				AC1000000000000000000042 /* AcodeLocalization.swift in Sources */,
+				AC1000000000000000000048 /* LanNetworkSelector.swift in Sources */,
+				AC1000000000000000000049 /* LanSubnetProbe.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

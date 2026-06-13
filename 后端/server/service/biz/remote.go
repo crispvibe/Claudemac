@@ -325,7 +325,7 @@ func (s *RemoteService) ListDeviceResponses(userID uint) ([]bizRes.RemoteDeviceR
 	}
 	responses := make([]bizRes.RemoteDeviceResponse, 0, len(devices))
 	for _, device := range devices {
-		response := bizRes.RemoteDeviceFromModel(device, true, false)
+		response := bizRes.RemoteDeviceFromModel(device, true, true)
 		response.Online = SharedRemoteSignalingService.IsDeviceOnline(device.ID)
 		responses = append(responses, response)
 	}
@@ -450,7 +450,49 @@ func (s *RemoteService) ResolveDeviceCode(userID uint, req bizReq.RemoteDeviceCo
 }
 
 func (s *RemoteService) PublishLanToken(userID, deviceID uint, clientIP string, req bizReq.RemoteLanTokenRequest) (bizRes.RemoteDeviceResponse, error) {
-	return bizRes.RemoteDeviceResponse{}, errors.New("局域网直连已停用，请使用远程连接")
+	device, err := s.GetDevice(userID, deviceID)
+	if err != nil {
+		return bizRes.RemoteDeviceResponse{}, err
+	}
+	if device.DeviceType != remoteDeviceTypeDesktop {
+		return bizRes.RemoteDeviceResponse{}, errors.New("只有桌面设备可以发布局域网地址")
+	}
+	ip := strings.TrimSpace(req.IP)
+	token := strings.TrimSpace(req.TransientToken)
+	if ip == "" || req.Port < 1 || req.Port > 65535 || token == "" {
+		return bizRes.RemoteDeviceResponse{}, errors.New("局域网地址参数不完整")
+	}
+	if net.ParseIP(ip) == nil {
+		return bizRes.RemoteDeviceResponse{}, errors.New("局域网地址无效")
+	}
+	expiresAt := remoteLanTokenExpiry(req.ExpiresAt)
+	now := time.Now()
+	if !expiresAt.After(now) {
+		return bizRes.RemoteDeviceResponse{}, errors.New("令牌已过期")
+	}
+	maxExpiry := now.Add(remoteLanTokenMaxValidity)
+	if expiresAt.After(maxExpiry) {
+		expiresAt = maxExpiry
+	}
+	updates := map[string]any{
+		"lan_ip":                    ip,
+		"lan_port":                  req.Port,
+		"lan_token":                 token,
+		"lan_token_expires_at":      expiresAt,
+		"lan_endpoint_last_seen_at": now,
+		"lan_publisher_ip_hash":     hashString(normalizeClientIPForLanMatch(clientIP)),
+		"updated_at":                now,
+	}
+	if err := global.AppDB.Model(&device).Updates(updates).Error; err != nil {
+		return bizRes.RemoteDeviceResponse{}, err
+	}
+	device, err = s.GetDevice(userID, deviceID)
+	if err != nil {
+		return bizRes.RemoteDeviceResponse{}, err
+	}
+	response := bizRes.RemoteDeviceFromModel(device, true, true)
+	response.Online = SharedRemoteSignalingService.IsDeviceOnline(device.ID)
+	return response, nil
 }
 
 func (s *RemoteService) Connect(userID, targetDeviceID uint, req bizReq.RemoteConnectRequest, clientIP string) (bizRes.RemoteConnectionResponse, error) {
@@ -648,6 +690,21 @@ func (s *RemoteService) finalizeAcceptedConnection(conn modelBiz.RemoteConnectio
 		}
 		return conn, bizRes.RemoteConnectionFromModel(conn), nil
 	}
+	if canOfferLanTransport(target, clientIP) {
+		reason := strings.TrimSpace(conn.Reason)
+		if reason == "" || reason == "waiting_for_approval" {
+			reason = "approved"
+		}
+		conn.Status = remoteConnectionAccepted
+		conn.Reason = reason
+		conn.Transport = remoteLanTransport
+		updates["reason"] = reason
+		updates["transport"] = remoteLanTransport
+		if err := global.AppDB.Model(&conn).Updates(updates).Error; err != nil {
+			return modelBiz.RemoteConnectionAttempt{}, bizRes.RemoteConnectionResponse{}, err
+		}
+		return conn, remoteConnectionResponseWithLan(conn, target), nil
+	}
 	conn.Status = remoteConnectionAccepted
 	conn.Reason = remoteReasonRemoteRequired
 	conn.Transport = remoteTunnelTransport
@@ -657,6 +714,64 @@ func (s *RemoteService) finalizeAcceptedConnection(conn modelBiz.RemoteConnectio
 		return modelBiz.RemoteConnectionAttempt{}, bizRes.RemoteConnectionResponse{}, err
 	}
 	return conn, bizRes.RemoteConnectionFromModel(conn), nil
+}
+
+func canOfferLanTransport(target modelBiz.RemoteDevice, clientIP string) bool {
+	if target.LanIP == "" || target.LanPort < 1 || target.LanPort > 65535 || strings.TrimSpace(target.LanToken) == "" {
+		return false
+	}
+	if target.LanTokenExpiresAt == nil || !target.LanTokenExpiresAt.After(time.Now()) {
+		return false
+	}
+	if !isPrivateIPv4Address(target.LanIP) {
+		return false
+	}
+	if strings.TrimSpace(target.LanPublisherIPHash) == "" {
+		return false
+	}
+	return target.LanPublisherIPHash == hashString(normalizeClientIPForLanMatch(clientIP))
+}
+
+func remoteConnectionResponseWithLan(conn modelBiz.RemoteConnectionAttempt, target modelBiz.RemoteDevice) bizRes.RemoteConnectionResponse {
+	result := bizRes.RemoteConnectionFromModel(conn)
+	result.Endpoint = &bizRes.RemoteLanEndpointResponse{
+		IP:         target.LanIP,
+		Port:       target.LanPort,
+		LastSeenAt: target.LanEndpointLastSeenAt,
+	}
+	result.TransientToken = target.LanToken
+	return result
+}
+
+func remoteLanTokenExpiry(raw int64) time.Time {
+	if raw <= 0 {
+		return time.Time{}
+	}
+	if raw >= 1_000_000_000_000 {
+		return time.UnixMilli(raw)
+	}
+	return time.Unix(raw, 0)
+}
+
+func isPrivateIPv4Address(ip string) bool {
+	parsed := net.ParseIP(strings.TrimSpace(ip))
+	if parsed == nil {
+		return false
+	}
+	ipv4 := parsed.To4()
+	if ipv4 == nil {
+		return false
+	}
+	switch {
+	case ipv4[0] == 10:
+		return true
+	case ipv4[0] == 172 && ipv4[1] >= 16 && ipv4[1] <= 31:
+		return true
+	case ipv4[0] == 192 && ipv4[1] == 168:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *RemoteService) validFromDeviceID(userID, deviceID uint) (*uint, error) {
@@ -1257,6 +1372,19 @@ func randomNumericCode(size int) (string, error) {
 func hashString(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+// normalizeClientIPForLanMatch collapses IPv4-mapped / IPv6 forms so Mac and phone
+// behind the same NAT hash to the same publisher fingerprint.
+func normalizeClientIPForLanMatch(clientIP string) string {
+	ip := strings.TrimSpace(clientIP)
+	if parsed := net.ParseIP(ip); parsed != nil {
+		if v4 := parsed.To4(); v4 != nil {
+			return v4.String()
+		}
+		return parsed.String()
+	}
+	return ip
 }
 
 func truncateRemoteMetricValue(value string) string {

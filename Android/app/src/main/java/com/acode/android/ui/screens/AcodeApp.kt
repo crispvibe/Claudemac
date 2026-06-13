@@ -76,6 +76,12 @@ fun AcodeApp() {
         }
     }
 
+    LaunchedEffect(screen, vm.auth.gateState) {
+        if (screen == AcodeScreen.Devices && vm.auth.gateState == AuthGateState.Authenticated) {
+            vm.loadRemoteDevices()
+        }
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_START) vm.resumeFromForeground()
@@ -155,6 +161,7 @@ fun AcodeApp() {
         AcodeScreen.Chat -> ChatScreen(
             connectionStatus = vm.chat.connectionStatus,
             runtimeStatus = vm.chat.runtimeStatus,
+            transportLabel = vm.transportLabel,
             topTitle = vm.chat.selectedProject?.name ?: "Acode",
             messages = vm.chat.messages,
             streamingTexts = vm.chat.streamingTexts,
@@ -210,6 +217,8 @@ fun AcodeApp() {
             connecting = vm.devices.connecting,
             resolvedDevice = vm.devices.resolvedDevice,
             message = vm.devices.message,
+            connectedDeviceId = vm.devices.connectedDeviceId,
+            connectedTransport = vm.devices.connectedTransport,
             goBack = { navigateBack(AcodeScreen.Chat) },
             refresh = vm::loadRemoteDevices,
             connect = { device -> vm.connectRemoteDevice(device) { replaceScreen(AcodeScreen.Chat) } },

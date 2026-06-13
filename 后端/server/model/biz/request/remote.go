@@ -72,8 +72,8 @@ type RemoteConnectRequest struct {
 type RemoteLanTokenRequest struct {
 	IP             string `json:"ip"`
 	Port           int    `json:"port"`
-	TransientToken string `json:"transientToken"`
-	ExpiresAt      int64  `json:"expiresAt"`
+	TransientToken string `json:"transient_token"`
+	ExpiresAt      int64  `json:"expires_at"`
 }
 
 type RemoteConnectionDecisionRequest struct {

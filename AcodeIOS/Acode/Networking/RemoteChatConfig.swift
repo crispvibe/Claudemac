@@ -22,15 +22,20 @@ struct RemoteChatConfig: Equatable {
     }
 
     var supportsDirectHTTP: Bool {
-        false
+        let host = macHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty, host.lowercased() != "tunnel", port > 0 else { return false }
+        let authToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !authToken.isEmpty
     }
 
     var baseURL: URL? {
-        nil
+        guard supportsDirectHTTP else { return nil }
+        return URL(string: "http://\(macHost):\(port)")
     }
 
     var webSocketURL: URL? {
-        nil
+        guard supportsDirectHTTP else { return nil }
+        return URL(string: "ws://\(macHost):\(port)/chat")
     }
 }
 
@@ -228,8 +233,8 @@ enum RemoteChatError: LocalizedError {
         case .emptyResponse: L10n.string("服务器返回为空。")
         case .webSocketMessageUnsupported: L10n.string("收到不支持的 WebSocket 消息。")
         case .signalingUnavailable: L10n.string("信令通道不可用，请确认网络连接后重试。")
-        case .remoteConnectionFailed: L10n.string("远程连接没有建立成功，请确认电脑端在线，并检查 TURN 中继配置或两端网络后重试。")
-        case .remoteTransportUnavailable: L10n.string("远程连接没有建立成功，请确认电脑端在线，并检查 TURN 中继配置或两端网络后重试。")
+        case .remoteConnectionFailed: L10n.string("远程直连没有建立成功，请确认电脑端在线，并检查是否在同一 Wi‑Fi、已配置端口映射，或稍后重试。")
+        case .remoteTransportUnavailable: L10n.string("远程直连没有建立成功，请确认电脑端在线，并检查是否在同一 Wi‑Fi、已配置端口映射，或稍后重试。")
         }
     }
 }

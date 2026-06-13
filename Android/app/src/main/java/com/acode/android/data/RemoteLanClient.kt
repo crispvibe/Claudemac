@@ -13,11 +13,15 @@ import java.util.concurrent.TimeUnit
 
 class RemoteLanClient(
     private val config: RemoteChatConfig,
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .build(),
+    private val client: OkHttpClient = defaultClient,
 ) {
+    companion object {
+        private val defaultClient = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .build()
+    }
+
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     suspend fun health(): Boolean = withContext(Dispatchers.IO) {

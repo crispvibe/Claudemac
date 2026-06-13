@@ -25,11 +25,12 @@ const baseState: AccountRemoteViewState = {
   devices: [],
   connectionStatus: "connected",
   lastConnectedAt: null,
-  lastError: null
+  lastError: null,
+  activeConnection: null
 };
 
 describe("AccountRemotePanel", () => {
-  it("shows online remote devices as unavailable until the connect bridge exists", () => {
+  it("shows connect action for active remote devices", () => {
     render(
       <AccountRemotePanel
         state={{
@@ -40,8 +41,8 @@ describe("AccountRemotePanel", () => {
               userId: 1,
               deviceUid: "22222222-2222-4222-8222-222222222222",
               deviceType: "desktop",
-              platform: "windows",
-              deviceName: "Office PC",
+              platform: "macos",
+              deviceName: "Office Mac",
               devicePublicKey: "public-key",
               deviceCodeHint: null,
               approvalPolicy: "always_ask",
@@ -50,16 +51,16 @@ describe("AccountRemotePanel", () => {
               appVersion: "0.1.0",
               online: true,
               lastSeenAt: "2026-05-28T00:00:00.000Z",
-              lanEndpoint: null,
-              transientToken: null
+              lanEndpoint: { ip: "192.168.2.196", port: 18765, lastSeenAt: "2026-05-28T00:00:00.000Z" },
+              transientToken: "lan-token"
             }
           ]
         }}
       />
     );
 
-    expect(screen.getByText("Office PC")).toBeInTheDocument();
-    expect(screen.getByText("连接未接入")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Office PC/u })).not.toBeInTheDocument();
+    expect(screen.getByText("Office Mac")).toBeInTheDocument();
+    expect(screen.getByText(/局域网可连接/u)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "连接" })).toBeInTheDocument();
   });
 });

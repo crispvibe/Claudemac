@@ -1,5 +1,12 @@
 import { create } from "zustand";
-import type { AccountRemoteState, AccountSessionSummary, DeviceCodeSummary, DeviceSummary, RemoteDevice } from "@shared/account";
+import type {
+  AccountRemoteState,
+  AccountSessionSummary,
+  DeviceCodeSummary,
+  DeviceSummary,
+  RemoteConnectResult,
+  RemoteDevice
+} from "@shared/account";
 
 export type AccountRemoteConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting" | "closed" | "error";
 
@@ -11,12 +18,14 @@ export interface AccountRemoteViewState {
   connectionStatus: AccountRemoteConnectionStatus;
   lastConnectedAt: string | null;
   lastError: string | null;
+  activeConnection: RemoteConnectResult | null;
 }
 
 interface AccountRemoteStore extends AccountRemoteViewState {
   hydrate(summary: Partial<AccountRemoteViewState>): void;
   hydrateRemoteState(state: AccountRemoteState): void;
   setConnectionStatus(status: AccountRemoteConnectionStatus, error?: string | null): void;
+  setActiveConnection(connection: RemoteConnectResult | null): void;
   clearSensitiveViewState(): void;
 }
 
@@ -38,6 +47,7 @@ export const useAccountRemoteStore = create<AccountRemoteStore>((set) => ({
   connectionStatus: "idle",
   lastConnectedAt: null,
   lastError: null,
+  activeConnection: null,
 
   hydrate(summary) {
     set((state) => ({
@@ -51,15 +61,16 @@ export const useAccountRemoteStore = create<AccountRemoteStore>((set) => ({
   },
 
   hydrateRemoteState(state) {
-    set({
+    set((current) => ({
       account: state.account,
       device: state.device,
       deviceCode: state.deviceCode,
       devices: state.devices,
       connectionStatus: state.signaling.status,
       lastConnectedAt: state.signaling.lastConnectedAt,
-      lastError: state.signaling.lastError
-    });
+      lastError: state.signaling.lastError,
+      activeConnection: state.account.status === "authenticated" ? current.activeConnection : null
+    }));
   },
 
   setConnectionStatus(status, error = null) {
@@ -70,6 +81,10 @@ export const useAccountRemoteStore = create<AccountRemoteStore>((set) => ({
     });
   },
 
+  setActiveConnection(connection) {
+    set({ activeConnection: connection });
+  },
+
   clearSensitiveViewState() {
     set({
       account: anonymousAccount,
@@ -78,7 +93,8 @@ export const useAccountRemoteStore = create<AccountRemoteStore>((set) => ({
       devices: [],
       connectionStatus: "idle",
       lastConnectedAt: null,
-      lastError: null
+      lastError: null,
+      activeConnection: null
     });
   }
 }));

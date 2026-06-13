@@ -42,6 +42,7 @@ private struct RemoteRecoveryRequestError: LocalizedError {
 }
 
 private enum RemoteTransportPath: String {
+    case lan
     case p2p
     case tunnel
 }
@@ -124,10 +125,11 @@ final class ChatViewModel: ObservableObject {
     private let maxAttachmentBytes = 10 * 1024 * 1024
     private let maxTotalAttachmentBytes = 20 * 1024 * 1024
     private var usesRemoteDataChannel: Bool {
-        activeTransportPath == .p2p || activeTransportPath == .tunnel || config.remoteTransport != nil
+        activeTransportPath == .p2p || activeTransportPath == .tunnel
     }
     private var supportsActiveDirectHTTP: Bool {
-        false
+        guard config.supportsDirectHTTP else { return false }
+        return activeTransportPath != .p2p && activeTransportPath != .tunnel
     }
     private var hasP2PTransportMetadata: Bool {
         config.connectionId != nil && config.targetDeviceId != nil && config.remoteAccessToken != nil
@@ -1389,8 +1391,14 @@ final class ChatViewModel: ObservableObject {
         connectionStatus = "连接中"
         let generation = webSocketGeneration
         if let client = config.remoteTransport {
-            didStartP2PForConnection = true
+            if client is RemoteWebRTCTransport {
+                didStartP2PForConnection = true
+            }
             return startTransport(client, path: configuredTransportPath(for: client), generation: generation, reason: reason)
+        }
+        if config.supportsDirectHTTP {
+            let client = RemoteWebSocketClient(config: config)
+            return startTransport(client, path: .lan, generation: generation, reason: reason)
         }
         if p2pStartInProgress, hasP2PTransportMetadata {
             appendDebug("P2P connect skipped: setup in progress reason=\(reason)")
@@ -1413,10 +1421,12 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func configuredTransportPath(for client: RemoteTransport?) -> RemoteTransportPath {
+        if client is RemoteWebSocketClient { return .lan }
         if client is RemoteTunnelTransport { return .tunnel }
         if (config.transport ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "tunnel" {
             return .tunnel
         }
+        if config.supportsDirectHTTP { return .lan }
         return .p2p
     }
 
@@ -1484,7 +1494,7 @@ final class ChatViewModel: ObservableObject {
                     }
                 }
                 self.replayPendingCommands()
-                if path == .p2p || path == .tunnel {
+                if path == .lan || path == .p2p || path == .tunnel {
                     self.sendRefreshSnapshotRequest(reason: "remote transport open")
                 }
                 if self.refreshRequestSnapshotAfterConnect {

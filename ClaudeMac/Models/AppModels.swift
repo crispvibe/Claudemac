@@ -232,6 +232,8 @@ struct AppSettings: Codable, Equatable {
     var remoteChatServerEnabled: Bool
     var remoteChatServerPort: Int
     var remoteChatServerBindLAN: Bool
+    var remoteChatPublicHost: String
+    var remoteChatPublicPort: Int
     var remoteChatServerToken: String
     // Custom model IDs (previously stored in UserDefaults).
     var customClaudeModelIDs: [String]
@@ -264,7 +266,9 @@ struct AppSettings: Codable, Equatable {
         lastSelectedCLIHistoryID: nil,
         remoteChatServerEnabled: true,
         remoteChatServerPort: 18765,
-        remoteChatServerBindLAN: false,
+        remoteChatServerBindLAN: true,
+        remoteChatPublicHost: "",
+        remoteChatPublicPort: 0,
         remoteChatServerToken: "",
         customClaudeModelIDs: [],
         customCodexModelIDs: [],
@@ -294,7 +298,9 @@ struct AppSettings: Codable, Equatable {
         lastSelectedCLIHistoryID: String?,
         remoteChatServerEnabled: Bool = true,
         remoteChatServerPort: Int = 18765,
-        remoteChatServerBindLAN: Bool = false,
+        remoteChatServerBindLAN: Bool = true,
+        remoteChatPublicHost: String = "",
+        remoteChatPublicPort: Int = 0,
         remoteChatServerToken: String = "",
         customClaudeModelIDs: [String] = [],
         customCodexModelIDs: [String] = [],
@@ -323,6 +329,8 @@ struct AppSettings: Codable, Equatable {
         self.remoteChatServerEnabled = remoteChatServerEnabled
         self.remoteChatServerPort = remoteChatServerPort
         self.remoteChatServerBindLAN = remoteChatServerBindLAN
+        self.remoteChatPublicHost = remoteChatPublicHost
+        self.remoteChatPublicPort = remoteChatPublicPort
         self.remoteChatServerToken = remoteChatServerToken
         self.customClaudeModelIDs = customClaudeModelIDs
         self.customCodexModelIDs = customCodexModelIDs
@@ -353,7 +361,9 @@ struct AppSettings: Codable, Equatable {
         lastSelectedCLIHistoryID = try values.decodeIfPresent(String.self, forKey: .lastSelectedCLIHistoryID)
         remoteChatServerEnabled = try values.decodeIfPresent(Bool.self, forKey: .remoteChatServerEnabled) ?? true
         remoteChatServerPort = try values.decodeIfPresent(Int.self, forKey: .remoteChatServerPort) ?? 18765
-        remoteChatServerBindLAN = try values.decodeIfPresent(Bool.self, forKey: .remoteChatServerBindLAN) ?? false
+        remoteChatServerBindLAN = try values.decodeIfPresent(Bool.self, forKey: .remoteChatServerBindLAN) ?? true
+        remoteChatPublicHost = try values.decodeIfPresent(String.self, forKey: .remoteChatPublicHost) ?? ""
+        remoteChatPublicPort = try values.decodeIfPresent(Int.self, forKey: .remoteChatPublicPort) ?? 0
         remoteChatServerToken = try values.decodeIfPresent(String.self, forKey: .remoteChatServerToken) ?? ""
         customClaudeModelIDs = try values.decodeIfPresent([String].self, forKey: .customClaudeModelIDs) ?? []
         customCodexModelIDs = try values.decodeIfPresent([String].self, forKey: .customCodexModelIDs) ?? []

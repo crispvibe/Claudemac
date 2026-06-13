@@ -162,7 +162,7 @@ function Workbench({
   const storedProjects = useProjectStore((state) => state.projects);
   const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
   const selectedProject = storedProjects.find((project) => project.id === selectedProjectId) ?? null;
-  const projectTitle = selectedProject?.name ?? "未选择项目";
+  const projectTitle = selectedProject?.name ?? "选择项目";
   const accountLabel = account.status === "anonymous" ? "未登录" : account.displayAccount ?? account.userId ?? "已登录";
   const workbenchCardRef = useRef<HTMLElement | null>(null);
   const chatPaneWidthRef = useRef(DEFAULT_CHAT_PANE_WIDTH);
@@ -319,11 +319,12 @@ function Workbench({
           <div className="chat-card">
             <header className="chat-topbar window-drag">
               <div className="brand-lockup">
-                <div className="app-logo">
+                <div className="app-logo" aria-hidden="true">
                   <AppLogo />
                 </div>
-                <span>Acode</span>
-                <button className="project-switch" type="button" onClick={() => setHistoryOpen(!historyOpen)}>
+                <span className="brand-title">Acode</span>
+                <span className="brand-divider" aria-hidden="true" />
+                <button className="project-switch window-no-drag" type="button" onClick={() => setHistoryOpen(!historyOpen)}>
                   <span className="project-switch-title">{projectTitle}</span>
                   <ChevronDown size={16} />
                 </button>

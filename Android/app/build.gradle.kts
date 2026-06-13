@@ -15,6 +15,10 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            // 真机调试包只保留 arm64，显著减小 APK 体积，降低微信传输损坏概率。
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {

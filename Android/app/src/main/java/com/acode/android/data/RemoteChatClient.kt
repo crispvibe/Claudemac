@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
 
 class RemoteChatClient(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-    private val client: OkHttpClient = OkHttpClient.Builder()
+    private val defaultClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS)
@@ -40,6 +40,7 @@ class RemoteChatClient(
 
     private var webSocket: WebSocket? = null
     private var config: RemoteChatConfig? = null
+    private var activeClient: OkHttpClient = defaultClient
     private var reconnectSessionId: String? = null
     private var reconnectLastRevision: Int? = null
     private var reconnectJob: Job? = null
@@ -49,10 +50,16 @@ class RemoteChatClient(
     @Volatile
     private var readySignal: CompletableDeferred<Boolean> = CompletableDeferred()
 
-    fun connect(config: RemoteChatConfig, focusedSessionId: String? = null, lastRevision: Int? = null) {
+    fun connect(
+        config: RemoteChatConfig,
+        focusedSessionId: String? = null,
+        lastRevision: Int? = null,
+        client: OkHttpClient? = null,
+    ) {
         disconnect()
         val generation = ++connectionGeneration
         this.config = config
+        activeClient = client ?: defaultClient
         reconnectSessionId = focusedSessionId
         reconnectLastRevision = lastRevision
         intentionallyClosed = false
@@ -63,7 +70,7 @@ class RemoteChatClient(
             .url(config.webSocketUrl)
             .header("Authorization", "Bearer ${config.token}")
             .build()
-        webSocket = client.newWebSocket(request, Listener(focusedSessionId, lastRevision, generation))
+        webSocket = activeClient.newWebSocket(request, Listener(focusedSessionId, lastRevision, generation))
     }
 
     fun disconnect() {

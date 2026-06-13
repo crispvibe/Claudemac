@@ -32,8 +32,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -122,6 +127,7 @@ import java.util.Locale
 fun ChatScreen(
     connectionStatus: String,
     runtimeStatus: String,
+    transportLabel: String,
     topTitle: String,
     messages: List<RemoteChatMessage>,
     streamingTexts: List<RemoteStreamingText>,
@@ -212,6 +218,7 @@ fun ChatScreen(
             ChatTopChrome(
                 title = topTitle,
                 status = connectionStatus,
+                transportLabel = transportLabel,
                 openSettings = openSettings,
                 refresh = refresh,
                 isRefreshing = isRefreshing,
@@ -337,7 +344,9 @@ fun ChatScreen(
             Modifier
                 .width(32.dp)
                 .fillMaxHeight()
-                .align(Alignment.CenterStart)
+                .statusBarsPadding()
+                .padding(top = 64.dp)
+                .align(Alignment.BottomStart)
                 .systemGestureExclusion()
                 .pointerInput(sidebarVisible) {
                     var openDragDistance = 0f
@@ -363,7 +372,7 @@ fun ChatScreen(
 }
 
 @Composable
-private fun ChatTopChrome(title: String, status: String, openSettings: () -> Unit, refresh: () -> Unit, isRefreshing: Boolean) {
+private fun ChatTopChrome(title: String, status: String, transportLabel: String, openSettings: () -> Unit, refresh: () -> Unit, isRefreshing: Boolean) {
     val chromeShape = RoundedCornerShape(bottomStart = AcodeRadius.Chrome, bottomEnd = AcodeRadius.Chrome)
     Box(
         Modifier
@@ -386,7 +395,8 @@ private fun ChatTopChrome(title: String, status: String, openSettings: () -> Uni
             Text(title, color = AcodeColor.Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
             Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
                 StatusDot(online = status == "已连接", modifier = Modifier.size(8.dp))
-                Text(status, color = AcodeColor.Muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                val statusText = if (status == "已连接" && transportLabel.isNotBlank()) "$status · $transportLabel" else status
+                Text(statusText, color = AcodeColor.Muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
             }
         }
         AcodeIconButton(
@@ -1266,8 +1276,7 @@ private fun InputChrome(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
-            .imePadding()
+            .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
             .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

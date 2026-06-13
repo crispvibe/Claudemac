@@ -36,6 +36,7 @@ func (r *RemoteRouter) InitRemoteRouter(publicGroup *gin.RouterGroup) {
 			privateRouter.GET("devices/:deviceId/device-code", remoteApi.GetDeviceCode)
 			privateRouter.POST("devices/:deviceId/device-code/reset", remoteApi.ResetDeviceCode)
 			privateRouter.POST("device-codes/resolve", remoteApi.ResolveDeviceCode)
+			privateRouter.POST("devices/:deviceId/lan-token", remoteApi.PublishLanToken)
 			privateRouter.POST("devices/:deviceId/connect", remoteApi.Connect)
 			privateRouter.GET("ice-config", remoteApi.GetICEServers)
 			privateRouter.GET("turn/ice-servers", remoteApi.GetICEServers)

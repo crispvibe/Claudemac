@@ -29,6 +29,13 @@ export type SignalingEvent = z.infer<typeof signalingEventSchema>;
 
 export type SignalingStatus = "idle" | "connecting" | "connected" | "reconnecting" | "closed" | "error";
 
+export type TunnelHandlerEvent = {
+  type: string;
+  connectionId: number;
+  frame?: string;
+  reason?: string;
+};
+
 type MinimalWebSocket = {
   readyState: number;
   send(data: string): void;
@@ -49,6 +56,7 @@ export class SignalingClient extends EventEmitter {
   private _status: SignalingStatus = "idle";
   private _lastConnectedAt: string | null = null;
   private _lastError: string | null = null;
+  private tunnelHandlers = new Map<number, (event: TunnelHandlerEvent) => void>();
 
   constructor(
     private readonly baseURL = "https://acode.anna.vin",
@@ -97,6 +105,26 @@ export class SignalingClient extends EventEmitter {
       toDeviceId,
       payload: signalingPayloadSchema.parse(payload)
     });
+  }
+
+  openTunnel(connectionId: number, toDeviceId: number): boolean {
+    return this.send({ type: "tunnel_open", connectionId, toDeviceId });
+  }
+
+  sendTunnelFrame(connectionId: number, seq: number, frame: string): boolean {
+    return this.send({ type: "tunnel_frame", connectionId, seq, frame });
+  }
+
+  sendTunnelClose(connectionId: number, reason: string): boolean {
+    return this.send({ type: "tunnel_close", connectionId, reason });
+  }
+
+  setTunnelHandler(connectionId: number, handler: (event: TunnelHandlerEvent) => void): void {
+    this.tunnelHandlers.set(connectionId, handler);
+  }
+
+  removeTunnelHandler(connectionId: number): void {
+    this.tunnelHandlers.delete(connectionId);
   }
 
   private connect(): void {
@@ -151,6 +179,23 @@ export class SignalingClient extends EventEmitter {
       this._lastConnectedAt = new Date().toISOString();
       this._lastError = null;
       this.setStatus("connected");
+    }
+    if (
+      parsed.type === "tunnel_open_ack"
+      || parsed.type === "tunnel_frame"
+      || parsed.type === "tunnel_close"
+      || parsed.type === "tunnel_error"
+    ) {
+      const connectionId = parsed.connectionId;
+      if (connectionId) {
+        const handler = this.tunnelHandlers.get(connectionId);
+        handler?.({
+          type: parsed.type,
+          connectionId,
+          frame: typeof parsed.frame === "string" ? parsed.frame : undefined,
+          reason: parsed.reason ?? parsed.message
+        });
+      }
     }
     this.emit("event", parsed);
   }

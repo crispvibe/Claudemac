@@ -80,10 +80,48 @@ export const remoteDeviceSchema = z.object({
   online: fallbackBooleanSchema(false),
   lastSeenAt: z.string().nullable().optional(),
   lanEndpoint: remoteLanEndpointSchema.nullable().optional(),
-  transientToken: z.string().nullable().optional()
-});
+  lan_endpoint: remoteLanEndpointSchema.nullable().optional(),
+  transientToken: z.string().nullable().optional(),
+  transient_token: z.string().nullable().optional()
+}).transform(({ lan_endpoint, transient_token, lanEndpoint, transientToken, ...rest }) => ({
+  ...rest,
+  lanEndpoint: lanEndpoint ?? lan_endpoint ?? null,
+  transientToken: transientToken ?? transient_token ?? null
+}));
 
 export type RemoteDevice = z.infer<typeof remoteDeviceSchema>;
+
+export const remoteConnectionAttemptSchema = z.object({
+  id: z.number().int().positive(),
+  connectionId: z.number().int().positive().nullable().optional(),
+  fromUserId: z.number().int().positive().nullable().optional(),
+  fromDeviceId: z.number().int().positive().nullable().optional(),
+  toUserId: z.number().int().positive().nullable().optional(),
+  toDeviceId: z.number().int().positive().nullable().optional(),
+  status: z.string(),
+  reason: z.string().nullable().optional(),
+  transport: z.string().nullable().optional(),
+  endpoint: remoteLanEndpointSchema.nullable().optional(),
+  transientToken: z.string().nullable().optional(),
+  transient_token: z.string().nullable().optional()
+}).transform(({ transient_token, transientToken, ...rest }) => ({
+  ...rest,
+  transientToken: transientToken ?? transient_token ?? null
+}));
+
+export type RemoteConnectionAttempt = z.infer<typeof remoteConnectionAttemptSchema>;
+
+export const remoteConnectResultSchema = z.object({
+  transport: z.enum(["lan", "tunnel", "public"]),
+  host: z.string().default(""),
+  port: z.number().int().default(0),
+  token: z.string(),
+  connectionId: z.number().int().positive().nullable().optional(),
+  targetDeviceId: z.number().int().positive().nullable().optional(),
+  message: z.string().nullable().optional()
+});
+
+export type RemoteConnectResult = z.infer<typeof remoteConnectResultSchema>;
 
 export const accountRemoteStateSchema = z.object({
   account: accountSessionSummarySchema,
@@ -149,6 +187,7 @@ export interface AccountRemoteBridge {
   consentLegal: (documentId: number) => Promise<boolean>;
   startSignaling: () => Promise<AccountRemoteState>;
   stopSignaling: () => Promise<AccountRemoteState>;
+  connectDevice: (deviceId: number) => Promise<RemoteConnectResult>;
   onState: (listener: (state: AccountRemoteState) => void) => () => void;
 }
 

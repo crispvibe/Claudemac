@@ -29,7 +29,8 @@ import type {
   WindowsShell,
   WindowsTerminal
 } from "@shared/settings";
-import type { RemoteLegalDocument, RemoteLegalDocumentType } from "@shared/account";
+import type { RemoteConnectResult, RemoteLegalDocument, RemoteLegalDocumentType } from "@shared/account";
+import { connectionStatusLabel as sharedConnectionStatusLabel } from "../accountRemote/accountRemoteShared";
 import { AccountRemoteControlPanel, LegalDocumentModal } from "../accountRemote";
 import { AppLogo } from "../AppLogo";
 import { useAccountRemoteStore } from "../../stores/accountStore";
@@ -467,7 +468,7 @@ function ProfileSettings({ kind, settings }: { kind: CLIKind; settings: AppSetti
           >
             新建
           </button>
-          <button type="button" onClick={() => void probeCLI(kind)}>
+          <button type="button" className="settings-inline-button" onClick={() => void probeCLI(kind)}>
             <RefreshCw size={14} /> 探测 CLI
           </button>
         </div>
@@ -652,35 +653,99 @@ function RemoteChatSettings({ onOpenAccountDialog }: { onOpenAccountDialog?: () 
   const device = useAccountRemoteStore((state) => state.device);
   const devices = useAccountRemoteStore((state) => state.devices);
   const connectionStatus = useAccountRemoteStore((state) => state.connectionStatus);
+  const activeConnection = useAccountRemoteStore((state) => state.activeConnection);
   const onlineDevices = devices.filter((item) => item.online);
+  const isAuthenticated = account.status === "authenticated";
   const isConnected = connectionStatus === "connected";
+  const hasActiveSession = Boolean(activeConnection);
 
   return (
     <div className="settings-stack">
-      <div className="settings-card">
-        <div className="device-overview">
-          <div>
-            <h3>手机、Windows、项目会话</h3>
-            <p>这里展示账号远程状态、本机设备身份和已知设备；状态来自 main 进程账号、设备和信令服务。</p>
+      <div className="settings-card remote-chat-card">
+        <section className="remote-overview-panel">
+          <div className="device-overview">
+            <div>
+              <h3>手机、Windows、项目会话</h3>
+              <p>管理同账号设备连接、信令通道和出站远程会话。优先局域网直连，不可用时自动降级到跨网通道。</p>
+            </div>
+            <span className={`status-badge ${isConnected ? "active" : ""}`}>
+              {isConnected ? "信令已连接" : "信令未连接"}
+            </span>
           </div>
-          <span className={`status-badge ${isConnected ? "active" : ""}`}>{connectionStatusLabel(connectionStatus)}</span>
-        </div>
-        <div className="device-flow">
-          <DeviceNode title="移动端" subtitle={onlineDevices.length > 0 ? `${onlineDevices.length} 个在线` : "无在线设备"} active={onlineDevices.length > 0} />
-          <span className="device-rail" />
-          <DeviceNode title={device?.deviceName ?? "本机设备"} subtitle={device?.deviceID ? `设备 #${device.deviceID}` : "未注册"} active={Boolean(device)} />
-          <span className="device-rail" />
-          <DeviceNode title="项目会话" subtitle={isConnected ? "信令已连接" : "等待连接"} active={isConnected} />
-        </div>
-        <div className="settings-actions device-settings-actions">
-          <button className="settings-primary-button" type="button" onClick={onOpenAccountDialog}>
-            {account.status === "authenticated" ? "打开账号设备弹窗" : "登录并注册设备"}
-          </button>
-        </div>
-        <AccountRemoteControlPanel />
+
+          <div className="device-flow">
+            <DeviceNode
+              title="移动端 / 其他桌面"
+              subtitle={isAuthenticated ? `${onlineDevices.length} 个在线` : "等待登录"}
+              active={isAuthenticated && onlineDevices.length > 0}
+            />
+            <span className={`device-rail ${isAuthenticated && isConnected ? "active" : ""}`} />
+            <DeviceNode
+              title={device?.deviceName ?? "本机设备"}
+              subtitle={device?.deviceID ? `设备 #${device.deviceID}` : "未注册"}
+              active={Boolean(device?.deviceID) && isConnected}
+            />
+            <span className={`device-rail ${hasActiveSession ? "active" : ""}`} />
+            <DeviceNode
+              title="远程会话"
+              subtitle={hasActiveSession ? transportSessionLabel(activeConnection) : "等待连接"}
+              active={hasActiveSession}
+            />
+          </div>
+
+          <div className="remote-metric-chips">
+            <MetricChip title="连接方式" value="局域网 / 跨网通道" />
+            <MetricChip title="信令状态" value={sharedConnectionStatusLabel(connectionStatus)} />
+            <MetricChip title="已知设备" value={`${devices.length} 台`} />
+          </div>
+        </section>
+
+        <section className="remote-service-panel">
+          <div className="account-section-header">
+            <div>
+              <h3>连接服务</h3>
+              <p>登录后会自动注册本机并连接信令；也可在下方账号卡片中手动启停。</p>
+            </div>
+          </div>
+          <div className="settings-actions device-settings-actions">
+            <button className="settings-primary-button" type="button" onClick={onOpenAccountDialog}>
+              {isAuthenticated ? "打开账号设备弹窗" : "登录并注册设备"}
+            </button>
+          </div>
+        </section>
+
+        <div className="remote-account-divider" />
+
+        {isAuthenticated ? (
+          <AccountRemoteControlPanel embedded />
+        ) : (
+          <p className="account-empty">登录后会把这台 Windows 注册为可连接设备，并展示同账号远程设备列表。</p>
+        )}
       </div>
     </div>
   );
+}
+
+function MetricChip({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="remote-metric-chip">
+      <span>{title}</span>
+      <b>{value}</b>
+    </div>
+  );
+}
+
+function transportSessionLabel(connection: RemoteConnectResult | null): string {
+  if (!connection) {
+    return "等待连接";
+  }
+  if (connection.transport === "lan") {
+    return `局域网 · ${connection.host}:${connection.port}`;
+  }
+  if (connection.transport === "tunnel") {
+    return `跨网通道 · #${connection.connectionId ?? "?"}`;
+  }
+  return "公网直连";
 }
 
 function DeviceNode({ active, subtitle, title }: { active?: boolean; subtitle: string; title: string }) {

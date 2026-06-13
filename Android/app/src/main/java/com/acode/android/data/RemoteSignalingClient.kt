@@ -20,6 +20,7 @@ class RemoteSignalingClient(
     var onPresenceUpdate: ((deviceId: Int, online: Boolean) -> Unit)? = null
     var onConnectDecision: ((RemoteConnectionAttempt) -> Unit)? = null
     var onRelay: ((connectionId: Int, payload: RemoteSignalingPayload) -> Unit)? = null
+    var onTunnelEvent: ((type: String, connectionId: Int, frame: String?, reason: String?) -> Unit)? = null
     var isConnected: Boolean = false
         private set
 
@@ -87,6 +88,33 @@ class RemoteSignalingClient(
         return webSocket?.send(frame.toString()) ?: false
     }
 
+    fun openTunnel(connectionId: Int, toDeviceId: Int): Boolean {
+        if (!isConnected) return false
+        val frame = JSONObject()
+            .put("type", "tunnel_open")
+            .put("connectionId", connectionId)
+            .put("toDeviceId", toDeviceId)
+        return webSocket?.send(frame.toString()) ?: false
+    }
+
+    fun sendTunnelFrame(connectionId: Int, seq: Long, frame: String): Boolean {
+        if (!isConnected) return false
+        val message = JSONObject()
+            .put("type", "tunnel_frame")
+            .put("connectionId", connectionId)
+            .put("seq", seq)
+            .put("frame", frame)
+        return webSocket?.send(message.toString()) ?: false
+    }
+
+    fun sendTunnelClose(connectionId: Int, reason: String): Boolean {
+        val message = JSONObject()
+            .put("type", "tunnel_close")
+            .put("connectionId", connectionId)
+            .put("reason", reason)
+        return webSocket?.send(message.toString()) ?: false
+    }
+
     private inner class Listener(
         private val localDeviceId: Int,
         private val generation: Int,
@@ -116,6 +144,12 @@ class RemoteSignalingClient(
                     val connectionId = event.intOrNull("connectionId", "connection_id") ?: return
                     val payload = event.optJSONObject("payload")?.toSignalingPayload() ?: return
                     onRelay?.invoke(connectionId, payload)
+                }
+                "tunnel_open_ack", "tunnel_frame", "tunnel_close", "tunnel_error" -> {
+                    val connectionId = event.intOrNull("connectionId", "connection_id") ?: return
+                    val frame = event.stringOrNull("frame")
+                    val reason = event.stringOrNull("reason") ?: event.stringOrNull("code")
+                    onTunnelEvent?.invoke(event.optString("type"), connectionId, frame, reason)
                 }
             }
         }

@@ -1,18 +1,23 @@
-import { Monitor, Radio, ShieldCheck, Smartphone, UserRound } from "lucide-react";
-import type { ReactNode } from "react";
-import type { RemoteDevice } from "@shared/account";
+import { Radio, ShieldCheck, Smartphone, UserRound } from "lucide-react";
+import type { RemoteConnectResult } from "@shared/account";
 import type { AccountRemoteViewState } from "../../stores/accountStore";
+import { connectionStatusLabel } from "./accountRemoteShared";
+import { RemoteDeviceList } from "./RemoteDeviceList";
 
 export interface AccountRemotePanelProps {
   state: AccountRemoteViewState;
   onLogin?: () => void;
   onRefreshDevices?: () => void;
+  onConnectDevice?: (deviceId: number) => Promise<RemoteConnectResult | void>;
+  connectingDeviceId?: number | null;
 }
 
 export function AccountRemotePanel({
   state,
   onLogin,
-  onRefreshDevices
+  onRefreshDevices,
+  onConnectDevice,
+  connectingDeviceId = null
 }: AccountRemotePanelProps) {
   const accountLabel = state.account.displayAccount ?? "未登录";
   const deviceLabel = state.device?.deviceName ?? "未注册本机";
@@ -30,9 +35,13 @@ export function AccountRemotePanel({
       </header>
 
       <div className="account-remote-summary">
-        <SummaryItem icon={<Monitor size={17} />} label="本机设备" value={deviceLabel} />
-        <SummaryItem icon={<ShieldCheck size={17} />} label="账号状态" value={state.account.status} />
-        <SummaryItem icon={<Radio size={17} />} label="信令状态" value={state.connectionStatus} />
+        <SummaryItem icon={<ShieldCheck size={17} />} label="本机设备" value={deviceLabel} />
+        <SummaryItem icon={<Radio size={17} />} label="信令状态" value={connectionStatusLabel(state.connectionStatus)} />
+        <SummaryItem
+          icon={<Smartphone size={17} />}
+          label="在线设备"
+          value={`${state.devices.filter((item) => item.online).length} 台`}
+        />
       </div>
 
       <div className="account-remote-device-list">
@@ -45,25 +54,37 @@ export function AccountRemotePanel({
         {state.devices.length === 0 ? (
           <p className="account-remote-empty">暂无可连接设备</p>
         ) : (
-          state.devices.map((device) => (
-            <div className="account-remote-device-row" key={device.id}>
-              <Smartphone size={16} />
-              <div>
-                <span>{device.deviceName}</span>
-                <em>{device.platform ?? "unknown"} · {device.online ? "在线" : "离线"}</em>
-              </div>
-              <small className={remoteDeviceConnectionClass(device, state.device?.deviceID)}>{remoteDeviceConnectionLabel(device, state.device?.deviceID)}</small>
-            </div>
-          ))
+          <RemoteDeviceList
+            devices={state.devices}
+            localDeviceID={state.device?.deviceID}
+            connectingDeviceId={connectingDeviceId}
+            disabled={!onConnectDevice}
+            onConnectDevice={onConnectDevice ? (deviceId) => void onConnectDevice(deviceId) : undefined}
+          />
         )}
       </div>
+
+      {state.activeConnection ? (
+        <div className="remote-connection-banner compact">
+          <span className={`remote-transport-badge ${state.activeConnection.transport}`}>
+            {state.activeConnection.transport === "lan" ? "局域网" : state.activeConnection.transport === "tunnel" ? "跨网" : "公网"}
+          </span>
+          <div>
+            <strong>
+              {state.activeConnection.transport === "lan"
+                ? `${state.activeConnection.host}:${state.activeConnection.port}`
+                : `连接 #${state.activeConnection.connectionId ?? "?"}`}
+            </strong>
+          </div>
+        </div>
+      ) : null}
 
       {state.lastError ? <p className="account-remote-error">{state.lastError}</p> : null}
     </section>
   );
 }
 
-function SummaryItem({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+function SummaryItem({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div className="account-remote-summary-item">
       {icon}
@@ -71,27 +92,4 @@ function SummaryItem({ icon, label, value }: { icon: ReactNode; label: string; v
       <strong>{value}</strong>
     </div>
   );
-}
-
-function remoteDeviceConnectionLabel(device: RemoteDevice, localDeviceID?: number | null): string {
-  if (localDeviceID === device.id) {
-    return "本机";
-  }
-  if (!device.remoteEnabled) {
-    return "远程关闭";
-  }
-  if (!device.online) {
-    return "离线";
-  }
-  return "连接未接入";
-}
-
-function remoteDeviceConnectionClass(device: RemoteDevice, localDeviceID?: number | null): string {
-  if (localDeviceID === device.id) {
-    return "local";
-  }
-  if (device.online && device.remoteEnabled) {
-    return "unavailable";
-  }
-  return "";
 }

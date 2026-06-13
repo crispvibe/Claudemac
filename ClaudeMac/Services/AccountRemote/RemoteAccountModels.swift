@@ -354,11 +354,18 @@ struct RemoteDeviceCodeResponse: Codable, Hashable {
     let hint: String
 }
 
-struct RemoteLanTokenRequest: Codable {
+struct RemoteLanTokenRequest: Encodable {
     let ip: String
     let port: Int
     let transientToken: String
     let expiresAt: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case ip
+        case port
+        case transientToken = "transient_token"
+        case expiresAt = "expires_at"
+    }
 }
 
 struct RemoteSignalingPayload: Codable, Hashable {

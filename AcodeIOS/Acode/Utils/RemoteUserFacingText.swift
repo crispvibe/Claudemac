@@ -21,7 +21,7 @@ enum RemoteUserFacingText {
         case "remote_disabled":
             return L10n.string("目标设备未开启远程连接。")
         case "lan_unavailable":
-            return L10n.string("目标设备暂时无法建立远程连接，请检查电脑端在线状态、TURN 中继配置或两端网络后重试。")
+            return L10n.string("目标设备暂时无法建立直连，请确认电脑端已开启局域网或公网端口映射。")
         case "token_expired":
             return L10n.string("连接凭证已过期，请刷新设备后重试。")
         default:
@@ -48,10 +48,14 @@ enum RemoteUserFacingText {
 
     static func transport(_ rawValue: String?) -> String {
         switch normalize(rawValue) {
+        case "lan":
+            return L10n.string("局域网直连")
         case "p2p":
-            return L10n.string("远程连接")
-        case "lan", "turn":
-            return L10n.string("不支持的连接方式")
+            return L10n.string("远程直连")
+        case "public", "port_forward":
+            return L10n.string("公网端口直连")
+        case "turn", "tunnel":
+            return L10n.string("跨网通道")
         case "":
             return L10n.string("未建立")
         default:

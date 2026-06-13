@@ -167,6 +167,9 @@ struct SettingsPageView: View {
     @State private var editingCodexProfile: CodexConfigProfile?
 
     @State private var remoteChatEnabled = true
+    @State private var remoteChatBindLAN = true
+    @State private var remoteChatPublicHost = ""
+    @State private var remoteChatPublicPort = ""
     @State private var remoteChatStatus = ""
 
     @State private var selectedGlobalRuleKind: GlobalRuleKind = .claude
@@ -676,7 +679,7 @@ struct SettingsPageView: View {
             }
 
             HStack(spacing: 10) {
-                metricChip(title: "连接方式", value: "账号信令 / WebRTC")
+                metricChip(title: "连接方式", value: "局域网 / P2P 直连")
                 metricChip(title: "本机端口", value: "\(RemoteChatServerController.defaultPort)")
                 metricChip(title: "WebSocket", value: diagnostics.activeWebSocketCount > 0 ? "\(diagnostics.activeWebSocketCount) 个在线" : "空闲")
             }
@@ -721,6 +724,30 @@ struct SettingsPageView: View {
                 subtitle: remoteChatEnabled ? "允许设备码和同账号设备连接这台 Mac" : "关闭后其他设备不能连接这台 Mac",
                 isOn: $remoteChatEnabled
             )
+            if remoteChatEnabled {
+                remoteSettingToggle(
+                    title: "允许局域网直连",
+                    subtitle: "手机与 Mac 在同一 Wi‑Fi 时，优先走局域网 TCP 直连",
+                    isOn: $remoteChatBindLAN
+                )
+                if let lanPublishStatus = deviceProvisioning.lanPublishStatus, !lanPublishStatus.isEmpty {
+                    Text(lanPublishStatus)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("公网地址（端口映射，可选）")
+                        .font(.system(size: 13, weight: .semibold))
+                    TextField("例如 203.0.113.10 或 home.example.com", text: $remoteChatPublicHost)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("公网端口（留空则使用 \(RemoteChatServerController.defaultPort)）", text: $remoteChatPublicPort)
+                        .textFieldStyle(.roundedBorder)
+                    Text("在路由器把公网端口映射到本机 \(RemoteChatServerController.defaultPort) 后填写。P2P 失败时手机会尝试该地址直连。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             HStack(alignment: .center, spacing: 12) {
                 if !remoteChatStatus.isEmpty {
@@ -1907,13 +1934,19 @@ struct SettingsPageView: View {
     private func loadRemoteChatSettings() {
         let s = appState.settings
         remoteChatEnabled = s.remoteChatServerEnabled
+        remoteChatBindLAN = s.remoteChatServerBindLAN
+        remoteChatPublicHost = s.remoteChatPublicHost
+        remoteChatPublicPort = s.remoteChatPublicPort > 0 ? String(s.remoteChatPublicPort) : ""
     }
 
     private func saveRemoteChatSettings() {
         var settings = appState.settings
         settings.remoteChatServerEnabled = remoteChatEnabled
         settings.remoteChatServerPort = Int(RemoteChatServerController.defaultPort)
-        settings.remoteChatServerBindLAN = false
+        settings.remoteChatServerBindLAN = remoteChatBindLAN
+        settings.remoteChatPublicHost = remoteChatPublicHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPublicPort = remoteChatPublicPort.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.remoteChatPublicPort = Int(trimmedPublicPort) ?? 0
         do {
             try ProjectStore.saveSettings(settings)
             appState.settings = settings
@@ -1922,6 +1955,7 @@ struct SettingsPageView: View {
             return
         }
         RemoteChatServerController.shared.restart()
+        deviceProvisioning.restartLanTokenPublisher()
         remoteChatStatus = remoteChatEnabled ? "已保存，设备连接服务已更新。" : "已保存，设备连接服务已关闭。"
     }
 

@@ -64,6 +64,8 @@
 			A10000000000000000000004 /* DeviceIdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* DeviceIdentityStore.swift */; };
 			A10000000000000000000022 /* RemoteCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000022 /* RemoteCredentialStore.swift */; };
 			A10000000000000000000005 /* DeviceRegistrationClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* DeviceRegistrationClient.swift */; };
+			A10000000000000000000024 /* LanNetworkAddress.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000024 /* LanNetworkAddress.swift */; };
+			A10000000000000000000025 /* LanTokenPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000025 /* LanTokenPublisher.swift */; };
 				A10000000000000000000010 /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* SignalingClient.swift */; };
 			A10000000000000000000006 /* RemoteAccountModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* RemoteAccountModels.swift */; };
 			A10000000000000000000007 /* AccountRemoteSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* AccountRemoteSupport.swift */; };
@@ -136,6 +138,8 @@
 			A20000000000000000000004 /* DeviceIdentityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentityStore.swift; sourceTree = "<group>"; };
 			A20000000000000000000022 /* RemoteCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCredentialStore.swift; sourceTree = "<group>"; };
 			A20000000000000000000005 /* DeviceRegistrationClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRegistrationClient.swift; sourceTree = "<group>"; };
+			A20000000000000000000024 /* LanNetworkAddress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanNetworkAddress.swift; sourceTree = "<group>"; };
+			A20000000000000000000025 /* LanTokenPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanTokenPublisher.swift; sourceTree = "<group>"; };
 				A20000000000000000000010 /* SignalingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalingClient.swift; sourceTree = "<group>"; };
 			A20000000000000000000006 /* RemoteAccountModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteAccountModels.swift; sourceTree = "<group>"; };
 			A20000000000000000000007 /* AccountRemoteSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountRemoteSupport.swift; sourceTree = "<group>"; };
@@ -328,6 +332,8 @@
 					A20000000000000000000004 /* DeviceIdentityStore.swift */,
 					A20000000000000000000022 /* RemoteCredentialStore.swift */,
 					A20000000000000000000005 /* DeviceRegistrationClient.swift */,
+					A20000000000000000000024 /* LanNetworkAddress.swift */,
+					A20000000000000000000025 /* LanTokenPublisher.swift */,
 					A20000000000000000000006 /* RemoteAccountModels.swift */,
 					A20000000000000000000007 /* AccountRemoteSupport.swift */,
 					A20000000000000000000010 /* SignalingClient.swift */,
@@ -521,6 +527,8 @@
 				A10000000000000000000004 /* DeviceIdentityStore.swift in Sources */,
 				A10000000000000000000022 /* RemoteCredentialStore.swift in Sources */,
 				A10000000000000000000005 /* DeviceRegistrationClient.swift in Sources */,
+				A10000000000000000000024 /* LanNetworkAddress.swift in Sources */,
+				A10000000000000000000025 /* LanTokenPublisher.swift in Sources */,
 				A10000000000000000000006 /* RemoteAccountModels.swift in Sources */,
 				A10000000000000000000007 /* AccountRemoteSupport.swift in Sources */,
 				A10000000000000000000010 /* SignalingClient.swift in Sources */,

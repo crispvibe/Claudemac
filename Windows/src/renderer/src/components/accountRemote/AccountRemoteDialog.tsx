@@ -1,31 +1,22 @@
 import {
-  Copy,
   Eye,
   EyeOff,
   Loader2,
   LockKeyhole,
   Mail,
-  Monitor,
-  Radio,
-  RefreshCw,
-  ShieldCheck,
-  Smartphone,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
-import type { AccountRemoteState, RemoteDevice, RemoteLegalDocument, RemoteLegalDocumentType } from "@shared/account";
+import { useEffect, useState } from "react";
+import type { AccountRemoteState, RemoteLegalDocument, RemoteLegalDocumentType } from "@shared/account";
 import { AppLogo } from "@renderer/src/components/AppLogo";
 import { useAccountRemoteStore } from "../../stores/accountStore";
+import { AccountStatusCard } from "./AccountStatusCard";
+import { formatConnectResult } from "./accountRemoteShared";
 import { LegalDocumentModal } from "./LegalDocumentModal";
+import { RemoteDeviceList } from "./RemoteDeviceList";
 
 type AuthMode = "login" | "register" | "forgot";
 type RemoteActionRunner = (label: string, action: () => Promise<unknown>, successMessage?: string) => Promise<boolean>;
-
-const deviceApprovalOptions = [
-  { value: "always_ask", label: "每次询问" },
-  { value: "allow_anyone", label: "允许任意连接" }
-] as const;
 
 const legalDocumentLinks = [
   { type: "user_agreement", label: "用户协议" },
@@ -94,32 +85,24 @@ export function AccountRemoteDialog({ dismissible = true, onClose, open }: Accou
   );
 }
 
-export function AccountRemoteControlPanel() {
+export interface AccountRemoteControlPanelProps {
+  embedded?: boolean;
+}
+
+export function AccountRemoteControlPanel({ embedded = false }: AccountRemoteControlPanelProps) {
   const account = useAccountRemoteStore((state) => state.account);
   const device = useAccountRemoteStore((state) => state.device);
-  const deviceCode = useAccountRemoteStore((state) => state.deviceCode);
   const devices = useAccountRemoteStore((state) => state.devices);
   const connectionStatus = useAccountRemoteStore((state) => state.connectionStatus);
-  const lastError = useAccountRemoteStore((state) => state.lastError);
+  const activeConnection = useAccountRemoteStore((state) => state.activeConnection);
   const hydrateRemoteState = useAccountRemoteStore((state) => state.hydrateRemoteState);
   const setConnectionStatus = useAccountRemoteStore((state) => state.setConnectionStatus);
-  const [deviceName, setDeviceName] = useState(device?.deviceName ?? "");
-  const [approvalPolicy, setApprovalPolicy] = useState<"always_ask" | "allow_anyone">("always_ask");
-  const [remoteEnabled, setRemoteEnabled] = useState(true);
+  const setActiveConnection = useAccountRemoteStore((state) => state.setActiveConnection);
   const [remoteAction, setRemoteAction] = useState<string | null>(null);
+  const [connectingDeviceId, setConnectingDeviceId] = useState<number | null>(null);
   const [message, setMessage] = useState<{ kind: "info" | "success" | "error"; text: string } | null>(null);
   const isAuthenticated = account.status === "authenticated";
   const isConnected = connectionStatus === "connected";
-  const accountLabel = account.displayAccount ?? account.userId?.toString() ?? "已登录";
-
-  useEffect(() => {
-    setDeviceName(device?.deviceName ?? "");
-    const currentRemoteDevice = device?.deviceID ? devices.find((item) => item.id === device.deviceID) : undefined;
-    setApprovalPolicy(currentRemoteDevice?.approvalPolicy === "allow_anyone" ? "allow_anyone" : "always_ask");
-    setRemoteEnabled(currentRemoteDevice?.remoteEnabled ?? true);
-  }, [device?.deviceID, device?.deviceName, devices]);
-
-  const onlineDevices = useMemo(() => devices.filter((item) => item.online), [devices]);
 
   const runRemoteAction: RemoteActionRunner = async (label, action, successMessage) => {
     setRemoteAction(label);
@@ -151,156 +134,56 @@ export function AccountRemoteControlPanel() {
     return bridge;
   }
 
-  async function copyDeviceCode() {
-    if (!deviceCode.deviceCode) {
-      return;
+  async function connectRemoteDevice(deviceId: number): Promise<void> {
+    setConnectingDeviceId(deviceId);
+    setMessage(null);
+    try {
+      const result = await requireBridge().connectDevice(deviceId);
+      setActiveConnection(result);
+      setMessage({ kind: "success", text: formatConnectResult(result) });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "连接失败";
+      setMessage({ kind: "error", text });
+      setConnectionStatus("error", text);
+    } finally {
+      setConnectingDeviceId(null);
     }
-    await navigator.clipboard.writeText(formatDeviceCode(deviceCode.deviceCode));
-    setMessage({ kind: "success", text: "设备码已复制。" });
+  }
+
+  if (!isAuthenticated) {
+    return <p className="account-empty">登录后可管理本机设备、设备码和远程连接。</p>;
   }
 
   return (
-    <div className="account-remote-control">
-      <div className="account-control-summary">
-        <SummaryTile icon={<ShieldCheck size={18} />} label="账号" value={accountLabel} detail={account.userStatus ?? account.status} />
-        <SummaryTile icon={<Monitor size={18} />} label="本机设备" value={device?.deviceName ?? "未注册"} detail={device?.deviceID ? `设备 #${device.deviceID}` : "等待注册"} />
-        <SummaryTile icon={<Radio size={18} />} label="信令" value={connectionStatusLabel(connectionStatus)} detail={onlineDevices.length > 0 ? `${onlineDevices.length} 个设备在线` : "无在线设备"} />
-      </div>
-
-      <div className="account-dialog-grid">
-        <section className="account-dialog-section">
-          <div className="account-section-header">
-            <div>
-              <h3>账号状态</h3>
-              <p>登录状态、本机凭证和远程设备状态来自 main 进程。</p>
-            </div>
-            <span className={`status-badge ${isConnected ? "active" : ""}`}>{connectionStatusLabel(connectionStatus)}</span>
-          </div>
-          <div className="account-key-value"><span>账号</span><b>{accountLabel}</b></div>
-          <div className="account-key-value"><span>状态</span><b>{account.status}</b></div>
-          <div className="account-key-value"><span>过期时间</span><b>{account.expiresAtISO ?? "无"}</b></div>
-          <div className="account-dialog-actions">
-            <button type="button" disabled={Boolean(remoteAction)} onClick={() => void runRemoteAction("刷新状态", () => requireBridge().getState())}>
-              <RefreshCw size={14} /> 刷新状态
-            </button>
-            <button type="button" disabled={Boolean(remoteAction)} onClick={() => void runRemoteAction("退出登录", () => requireBridge().logout(), "已退出登录。")}>
-              退出登录
-            </button>
-          </div>
-        </section>
-
-        <section className="account-dialog-section">
-          <div className="account-section-header">
-            <div>
-              <h3>本机设备</h3>
-              <p>设备名、连接策略、远程开关会同步到账号设备服务。</p>
-            </div>
-          </div>
-          <input className="settings-input" value={deviceName} placeholder="本机设备名" onChange={(event) => setDeviceName(event.currentTarget.value)} />
-          <div className="account-device-options">
-            <select className="settings-select" value={approvalPolicy} onChange={(event) => setApprovalPolicy(event.currentTarget.value as "always_ask" | "allow_anyone")}>
-              {deviceApprovalOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-            </select>
-            <label className="account-checkbox">
-              <input checked={remoteEnabled} type="checkbox" onChange={(event) => setRemoteEnabled(event.currentTarget.checked)} />
-              <span>允许远程连接</span>
-            </label>
-          </div>
-          <div className="account-dialog-actions">
-            <button type="button" disabled={Boolean(remoteAction) || !isAuthenticated} onClick={() => void runRemoteAction("注册本机", () => requireBridge().registerDevice(), "本机设备已注册。")}>
-              注册本机
-            </button>
-            <button
-              className="settings-primary-button"
-              type="button"
-              disabled={Boolean(remoteAction) || !isAuthenticated || !device?.deviceID || !deviceName.trim()}
-              onClick={() => void runRemoteAction("保存设备", () => requireBridge().updateDevice({
-                approvalPolicy,
-                deviceName: deviceName.trim(),
-                remoteEnabled
-              }), "设备设置已保存。")}
-            >
-              保存
-            </button>
-          </div>
-        </section>
-
-        <section className="account-dialog-section">
-          <div className="account-section-header">
-            <div>
-              <h3>设备码</h3>
-              <p>其他账号使用设备码连接，同账号设备可通过设备列表识别。</p>
-            </div>
-          </div>
-          <div className="device-code-box">{deviceCode.deviceCode ? formatDeviceCode(deviceCode.deviceCode) : deviceCodeFallback(deviceCode.hint, device?.hasDeviceCode)}</div>
-          <div className="account-dialog-actions">
-            <button type="button" disabled={Boolean(remoteAction) || !device?.deviceID} onClick={() => void runRemoteAction("读取设备码", () => requireBridge().refreshDeviceCode())}>
-              读取
-            </button>
-            <button type="button" disabled={!deviceCode.deviceCode} onClick={() => void copyDeviceCode()}>
-              <Copy size={14} /> 复制
-            </button>
-            <button type="button" disabled={Boolean(remoteAction) || !device?.deviceID} onClick={() => void runRemoteAction("重置设备码", () => requireBridge().resetDeviceCode(), "设备码已重置。")}>
-              重置
-            </button>
-          </div>
-        </section>
-
-        <section className="account-dialog-section">
-          <div className="account-section-header">
-            <div>
-              <h3>设备连接服务</h3>
-              <p>控制账号信令通道，用于接收远程连接请求。</p>
-            </div>
-          </div>
-          <div className="account-key-value"><span>连接状态</span><b>{connectionStatusLabel(connectionStatus)}</b></div>
-          <div className="account-key-value"><span>最后错误</span><b>{lastError ?? "无"}</b></div>
-          <div className="account-dialog-actions">
-            <button type="button" disabled={Boolean(remoteAction) || !isAuthenticated} onClick={() => void runRemoteAction("刷新设备", () => requireBridge().refreshDevices())}>
-              <RefreshCw size={14} /> 刷新设备
-            </button>
-            <button
-              className="settings-primary-button"
-              type="button"
-              disabled={Boolean(remoteAction) || !isAuthenticated}
-              onClick={() => void runRemoteAction(isConnected ? "停止信令" : "启动信令", () => (
-                isConnected ? requireBridge().stopSignaling() : requireBridge().startSignaling()
-              ))}
-            >
-              {isConnected ? "停止信令" : "启动信令"}
-            </button>
-          </div>
-        </section>
-      </div>
+    <div className={`account-remote-control ${embedded ? "embedded" : ""}`}>
+      <AccountStatusCard
+        activeConnection={activeConnection}
+        embedded={embedded}
+        message={message}
+        remoteAction={remoteAction}
+        runRemoteAction={runRemoteAction}
+        onToggleSignaling={() => void runRemoteAction(
+          isConnected ? "停止信令" : "启动信令",
+          () => (isConnected ? requireBridge().stopSignaling() : requireBridge().startSignaling())
+        )}
+      />
 
       <section className="account-dialog-section account-device-list-panel">
         <div className="account-section-header">
           <div>
             <h3>同账号设备</h3>
-            <p>展示账号下已知设备、在线状态、平台和最近在线时间；远程连接入口会在 main 进程链路接入后启用。</p>
+            <p>优先尝试局域网直连，不可用时自动降级到跨网通道。</p>
           </div>
-          <span>{devices.length} 台</span>
+          <span className="account-device-count">{devices.length} 台</span>
         </div>
-        {devices.length === 0 ? (
-          <p className="account-empty">暂无设备。登录后会自动注册本机，也可以手动刷新设备列表。</p>
-        ) : (
-          <div className="account-device-list">
-            {devices.map((remoteDevice) => (
-              <div className="account-device-row" key={remoteDevice.id}>
-                <Smartphone size={17} />
-                <div>
-                  <b>{remoteDevice.deviceName}</b>
-                  <span>{remoteDeviceDetail(remoteDevice, device?.deviceID)}</span>
-                </div>
-                <small className={remoteDeviceConnectionClass(remoteDevice, device?.deviceID)}>{remoteDeviceConnectionLabel(remoteDevice, device?.deviceID)}</small>
-              </div>
-            ))}
-          </div>
-        )}
+        <RemoteDeviceList
+          devices={devices}
+          localDeviceID={device?.deviceID}
+          connectingDeviceId={connectingDeviceId}
+          disabled={Boolean(remoteAction)}
+          onConnectDevice={(deviceId) => void connectRemoteDevice(deviceId)}
+        />
       </section>
-
-      {remoteAction ? <p className="account-action-status"><Loader2 size={14} /> 正在执行：{remoteAction}</p> : null}
-      {message ? <p className={`account-message ${message.kind}`}>{message.text}</p> : null}
     </div>
   );
 }
@@ -533,79 +416,6 @@ function AccountAuthPanel() {
   );
 }
 
-function SummaryTile({ detail, icon, label, value }: { detail: string; icon: ReactNode; label: string; value: string }) {
-  return (
-    <div className="account-summary-tile">
-      {icon}
-      <span>{label}</span>
-      <b>{value}</b>
-      <small>{detail}</small>
-    </div>
-  );
-}
-
 function isAccountRemoteState(value: unknown): value is AccountRemoteState {
   return Boolean(value && typeof value === "object" && "account" in value && "signaling" in value);
-}
-
-function remoteDeviceDetail(device: RemoteDevice, localDeviceID?: number | null): string {
-  return [
-    device.platform ?? "unknown",
-    device.online ? "在线" : "离线",
-    device.remoteEnabled ? "允许远程" : "已关闭远程",
-    localDeviceID === device.id ? "本机设备" : "连接未接入",
-    device.lastSeenAt ?? "未记录在线时间"
-  ].join(" · ");
-}
-
-function remoteDeviceConnectionLabel(device: RemoteDevice, localDeviceID?: number | null): string {
-  if (localDeviceID === device.id) {
-    return "本机";
-  }
-  if (!device.remoteEnabled) {
-    return "远程关闭";
-  }
-  if (!device.online) {
-    return "离线";
-  }
-  return "连接未接入";
-}
-
-function remoteDeviceConnectionClass(device: RemoteDevice, localDeviceID?: number | null): string {
-  if (localDeviceID === device.id) {
-    return "local";
-  }
-  if (device.online && device.remoteEnabled) {
-    return "unavailable";
-  }
-  return "";
-}
-
-function connectionStatusLabel(status: string): string {
-  switch (status) {
-    case "connecting":
-      return "连接中";
-    case "connected":
-      return "已连接";
-    case "reconnecting":
-      return "重连中";
-    case "closed":
-      return "已关闭";
-    case "error":
-      return "异常";
-    case "idle":
-    default:
-      return "空闲";
-  }
-}
-
-function formatDeviceCode(value: string): string {
-  return value.replace(/\s+/g, "").replace(/(.{4})/g, "$1-").replace(/-$/, "");
-}
-
-function deviceCodeFallback(hint: string | null, hasDeviceCode?: boolean): string {
-  if (hint) {
-    return `仅保存尾号 ****-${hint}`;
-  }
-  return hasDeviceCode ? "已保存，请读取或重置后显示完整设备码" : "未生成";
 }

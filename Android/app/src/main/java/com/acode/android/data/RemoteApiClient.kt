@@ -116,10 +116,11 @@ class RemoteApiClient(
 
     suspend fun resolveDeviceCode(deviceCode: String, identity: LocalDeviceIdentity, accessToken: String): RemoteDeviceResolveResponse {
         val fromDeviceId = identity.deviceId ?: throw RemoteApiException("本机设备尚未注册，请重新登录后再试。")
+        val normalizedCode = deviceCode.trim().replace("-", "").replace(" ", "").uppercase()
         return post(
             path = "remote/device-codes/resolve",
             body = JSONObject()
-                .put("deviceCode", deviceCode.trim())
+                .put("deviceCode", normalizedCode)
                 .put("fromDeviceId", fromDeviceId)
                 .put("fromDeviceUid", identity.deviceUid)
                 .put("fromDevicePublicKey", identity.devicePublicKey),

@@ -1,12 +1,14 @@
 import { ipcMain } from "electron";
 import {
   accountRemoteStateSchema,
+  remoteConnectResultSchema,
   type AccountRemoteState,
   type DeviceCodeSummary,
   type RemoteDevice
 } from "../../shared/account.js";
 import {
   accountRemoteChangePasswordRequestSchema,
+  accountRemoteConnectDeviceRequestSchema,
   accountRemoteDeleteAccountRequestSchema,
   accountRemoteDeviceUpdateRequestSchema,
   accountRemoteEmailRequestSchema,
@@ -21,6 +23,7 @@ import type { RemoteAuthSession } from "./accountSchemas.js";
 import { AccountClient } from "./AccountClient.js";
 import { AccountSessionStore } from "./AccountSessionStore.js";
 import { DeviceIdentityStore } from "../device/DeviceIdentityStore.js";
+import { DeviceConnectService } from "../remoteConnect/DeviceConnectService.js";
 import { SignalingClient } from "../signaling/SignalingClient.js";
 
 export interface AccountRemoteIpcDependencies {
@@ -77,18 +80,34 @@ export function registerAccountRemoteIpcHandlers({
     return cachedDeviceCode;
   }
 
+  async function ensureSignalingStarted(accessToken?: string): Promise<void> {
+    const token = accessToken ?? await accountSessionStore.requireAccessToken();
+    let device = await deviceIdentityStore.summary();
+    if (!device.deviceID) {
+      return;
+    }
+    if (signalingClient.status === "connected" || signalingClient.status === "connecting" || signalingClient.status === "reconnecting") {
+      return;
+    }
+    signalingClient.start(token, device.deviceID);
+  }
+
   async function bootstrapAfterAuth(): Promise<void> {
     const accessToken = await accountSessionStore.requireAccessToken();
     await refreshDevices().catch(() => []);
-    const identity = await deviceIdentityStore.loadOrCreateIdentity();
+    let identity = await deviceIdentityStore.syncDeviceNameWithHost();
     const remoteDevice = await accountClient.registerDevice({
       deviceUid: identity.deviceUID,
       deviceName: identity.deviceName,
       devicePublicKey: identity.devicePublicKey
     }, accessToken);
     await deviceIdentityStore.updateDeviceID(remoteDevice.id);
+    if (remoteDevice.deviceName !== identity.deviceName) {
+      await accountClient.updateDevice(remoteDevice.id, { deviceName: identity.deviceName }, accessToken).catch(() => undefined);
+    }
     await refreshDeviceCode(accessToken, remoteDevice.id).catch(() => cachedDeviceCode);
     await refreshDevices().catch(() => []);
+    await ensureSignalingStarted(accessToken).catch(() => undefined);
   }
 
   async function submitLegalConsents(session: RemoteAuthSession): Promise<void> {
@@ -100,7 +119,7 @@ export function registerAccountRemoteIpcHandlers({
 
   async function registerLocalDevice(): Promise<AccountRemoteState> {
     const accessToken = await accountSessionStore.requireAccessToken();
-    const identity = await deviceIdentityStore.loadOrCreateIdentity();
+    const identity = await deviceIdentityStore.syncDeviceNameWithHost();
     const remoteDevice = await accountClient.registerDevice({
       deviceUid: identity.deviceUID,
       deviceName: identity.deviceName,
@@ -278,5 +297,45 @@ export function registerAccountRemoteIpcHandlers({
   ipcMain.handle(ipcChannels.accountRemoteStopSignaling, async () => {
     signalingClient.stop("manual");
     return publishCurrentState();
+  });
+
+  const deviceConnectService = new DeviceConnectService(accountClient, deviceIdentityStore, signalingClient);
+
+  void (async () => {
+    try {
+      const account = await accountSessionStore.summary();
+      if (account.status !== "authenticated" || account.isExpired) {
+        return;
+      }
+      const identity = await deviceIdentityStore.syncDeviceNameWithHost();
+      const accessToken = await accountSessionStore.requireAccessToken();
+      const device = await deviceIdentityStore.summary();
+      if (device.deviceID && identity.deviceName !== device.deviceName) {
+        await accountClient.updateDevice(device.deviceID, { deviceName: identity.deviceName }, accessToken).catch(() => undefined);
+      }
+      await refreshDevices().catch(() => []);
+      await ensureSignalingStarted().catch(() => undefined);
+      await publishCurrentState();
+    } catch (error: unknown) {
+      console.warn("[account-remote] failed to restore session", error);
+    }
+  })();
+
+  ipcMain.handle(ipcChannels.accountRemoteConnectDevice, async (_event, rawRequest: unknown) => {
+    const request = accountRemoteConnectDeviceRequestSchema.parse(rawRequest);
+    const accessToken = await accountSessionStore.requireAccessToken();
+    let device = await deviceIdentityStore.summary();
+    if (!device.deviceID) {
+      await registerLocalDevice();
+      device = await deviceIdentityStore.summary();
+    }
+    if (!device.deviceID) {
+      throw new Error("本机设备尚未注册，无法发起连接。");
+    }
+    if (signalingClient.status !== "connected") {
+      signalingClient.start(accessToken, device.deviceID);
+    }
+    const result = await deviceConnectService.connectDevice(request.deviceId, accessToken);
+    return remoteConnectResultSchema.parse(result);
   });
 }

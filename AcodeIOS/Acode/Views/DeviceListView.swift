@@ -59,7 +59,7 @@ struct DeviceListView: View {
             Text(L10n.key("选择电脑"))
                 .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(Color.acodeInk)
-            Text(L10n.key("所有设备都通过账号信令和远程通道连接。"))
+            Text(L10n.key("优先局域网直连，跨网时走 P2P 或公网端口映射。"))
                 .font(.system(size: 14))
                 .foregroundStyle(Color.acodeMuted)
         }
@@ -151,7 +151,7 @@ struct DeviceListView: View {
             Spacer()
             Button(L10n.string(connectViewModel.isConnecting ? "连接中…" : "连接")) {
                 Task {
-                    if let config = await connectViewModel.connect(deviceId: device.id, session: authViewModel.currentSession) {
+                    if let config = await connectViewModel.connect(deviceId: device.id, session: authViewModel.currentSession, device: device) {
                         chatConfig = config
                     }
                 }
@@ -172,7 +172,13 @@ struct DeviceListView: View {
 
     private func deviceSubtitle(_ device: RemoteDevice) -> String {
         let platform = device.platform ?? "macos"
-        if let lastSeenAt = device.lanEndpoint?.lastSeenAt ?? device.lastSeenAt {
+        if device.lanEndpoint != nil, !(device.transientToken?.isEmpty ?? true) {
+            return L10n.format("%@ · 局域网可连接", platform)
+        }
+        if device.remoteEnabled, device.status == "active" {
+            return L10n.format("%@ · 信令可请求", platform)
+        }
+        if let lastSeenAt = device.lastSeenAt {
             return L10n.format("%@ · 上次活动 %@", platform, lastSeenAt)
         }
         return platform
