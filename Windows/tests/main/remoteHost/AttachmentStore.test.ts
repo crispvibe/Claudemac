@@ -1,10 +1,12 @@
-import { readFile, rm } from "node:fs/promises";
+import { access, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
   ATTACHMENT_DIRECTORY_NAME,
+  attachmentRootDirectory,
+  cleanupAttachmentStore,
   sanitizeFilename,
   storeUploadedAttachment
 } from "../../../src/main/remoteHost/AttachmentStore";
@@ -70,5 +72,21 @@ describe("AttachmentStore.storeUploadedAttachment", () => {
   it("allows extension-less text files", async () => {
     const result = await storeUploadedAttachment("LICENSE", base64("MIT"));
     expect(result.ok).toBe(true);
+  });
+
+  it("cleanupAttachmentStore removes the whole root directory", async () => {
+    const stored = await storeUploadedAttachment("cleanup.txt", base64("bye"));
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) return;
+    await expect(access(stored.value.path)).resolves.toBeUndefined();
+
+    await cleanupAttachmentStore();
+
+    await expect(access(stored.value.path)).rejects.toBeTruthy();
+    await expect(access(attachmentRootDirectory())).rejects.toBeTruthy();
+  });
+
+  it("cleanupAttachmentStore is a no-op when nothing was uploaded", async () => {
+    await expect(cleanupAttachmentStore()).resolves.toBeUndefined();
   });
 });

@@ -6,7 +6,7 @@
 // 目录，并把绝对路径回给手机；手机再用该 path 走 `composerAttach` 命令把附件挂到
 // composer 上发送。校验顺序与上限严格对齐 Mac，保证两端行为一致。
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -32,6 +32,25 @@ export type StoreAttachmentResult =
 
 /** host 端落盘根目录（系统临时目录下的固定子目录）。 */
 export const ATTACHMENT_DIRECTORY_NAME = "AcodeRemoteChatAttachments";
+
+/** 附件落盘根目录的绝对路径。 */
+export function attachmentRootDirectory(): string {
+  return path.join(tmpdir(), ATTACHMENT_DIRECTORY_NAME);
+}
+
+/**
+ * 清空附件落盘根目录（host 启动/停用时调用）。
+ * 上传的文件只在「写入 → 手机 composerAttach → composerSend 时 CLI 读取」这段窗口内有用，
+ * host 重启/停用后即为无主垃圾；Windows 的 %TEMP% 不会自动回收，故在生命周期边界统一清理。
+ * 失败不致命（目录可能正被占用），静默忽略。
+ */
+export async function cleanupAttachmentStore(): Promise<void> {
+  try {
+    await rm(attachmentRootDirectory(), { recursive: true, force: true });
+  } catch {
+    // ignore：清理失败不影响 host 运行，下次生命周期边界再试。
+  }
+}
 
 /** 默认单附件上限 10MB，对齐 Mac `RemoteRecoveryLimits.maximumAttachmentBytes`。 */
 export const DEFAULT_MAX_ATTACHMENT_BYTES = remoteRecoveryLimits.maximumAttachmentBytes;

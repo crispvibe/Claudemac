@@ -14,6 +14,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { CredentialStore, CredentialStoreUnavailableError } from "../security/credentialStore.js";
+import { cleanupAttachmentStore } from "./AttachmentStore.js";
 import { localLanIPv4 } from "../remoteConnect/LanSubnetProbe.js";
 import { PanelStateBroadcaster, type ReplayPayload } from "./PanelStateBroadcaster.js";
 import {
@@ -242,6 +243,8 @@ export class RemoteHostController implements RemoteHostServerDelegate {
 
   private async startServer(): Promise<void> {
     if (this.server) return;
+    // 启动即清理上一次会话遗留的附件临时文件，避免跨运行无主累积。
+    await cleanupAttachmentStore();
     if (!this.token) this.token = await this.loadOrCreateToken();
     const server = new RemoteHostServer(
       { port: this.port, token: this.token, bindLAN: true },
@@ -277,6 +280,8 @@ export class RemoteHostController implements RemoteHostServerDelegate {
     const server = this.server;
     this.server = null;
     if (server) await server.stop();
+    // 停用时清理本次会话写入的附件临时文件。
+    await cleanupAttachmentStore();
   }
 
   // MARK: - tunnel responder（二期跨网）
