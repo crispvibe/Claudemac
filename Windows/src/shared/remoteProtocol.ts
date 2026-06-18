@@ -7,7 +7,23 @@ export const remoteVNCFrameType = {
   command: "command",
   commandAck: "command_ack",
   panelState: "panel_state",
-  resume: "resume"
+  resume: "resume",
+  recoveryRequest: "recovery_request",
+  recoveryResponse: "recovery_response"
+} as const;
+
+/**
+ * 附件上传相关上限，对齐 Mac 的 `RemoteRecoveryLimits`（ChatCore）。
+ * - 文件最大 10MB；base64 后约 13.34MB；文本帧再留 64KB JSON 头部余量。
+ */
+export const remoteRecoveryLimits = {
+  maximumAttachmentBytes: 10 * 1024 * 1024,
+  get maximumAttachmentContentBase64Length(): number {
+    return Math.floor((this.maximumAttachmentBytes + 2) / 3) * 4;
+  },
+  get maximumTextFrameUTF8Bytes(): number {
+    return this.maximumAttachmentContentBase64Length + 64 * 1024;
+  }
 } as const;
 
 export const chatMessageAttachmentSchema = z.object({
@@ -275,4 +291,88 @@ export function makeResumeRequest(sessionId: string | null, lastRevision: number
     sessionId,
     lastRevision
   });
+}
+
+// MARK: - Recovery RPC（client ↔ host）—— 对齐 Mac `RemoteRecoveryRequest/Response`
+//
+// 一期 Windows host 仅实现 `uploadAttachment`（图片/文件附件上传）；catalog/sessions/
+// messages/projectFiles 等历史浏览在 Windows 走 panel_state 推送，不经此通道，故对
+// 其余 op 返回明确错误，避免手机端静默卡住。
+
+export const recoveryOpSchema = z.enum([
+  "catalog",
+  "sessions",
+  "messages",
+  "projectFiles",
+  "uploadAttachment"
+]);
+
+export type RecoveryOp = z.infer<typeof recoveryOpSchema>;
+
+export const recoveryRequestSchema = z.object({
+  type: z.literal(remoteVNCFrameType.recoveryRequest),
+  requestId: uuidSchema,
+  op: recoveryOpSchema,
+  projectId: uuidSchema.nullable().optional(),
+  cli: z.string().nullable().optional(),
+  sessionId: uuidSchema.nullable().optional(),
+  limit: z.number().int().nullable().optional(),
+  before: z.number().int().nullable().optional(),
+  page: z.boolean().nullable().optional(),
+  path: z.string().nullable().optional(),
+  filename: z.string().nullable().optional(),
+  contentBase64: z.string().nullable().optional()
+}).passthrough();
+
+export type RecoveryRequest = z.infer<typeof recoveryRequestSchema>;
+
+/** 附件落盘后的回执（filename + host 端临时文件绝对路径）。 */
+export const recoveryAttachmentUploadSchema = z.object({
+  filename: z.string(),
+  path: z.string()
+});
+
+export type RecoveryAttachmentUpload = z.infer<typeof recoveryAttachmentUploadSchema>;
+
+export interface RecoveryResponse {
+  type: typeof remoteVNCFrameType.recoveryResponse;
+  requestId: string;
+  status: "ok" | "error";
+  message?: string | null;
+  attachmentUpload?: RecoveryAttachmentUpload | null;
+}
+
+export function recoveryOkResponse(
+  requestId: string,
+  fields: { attachmentUpload?: RecoveryAttachmentUpload } = {}
+): RecoveryResponse {
+  return {
+    type: remoteVNCFrameType.recoveryResponse,
+    requestId,
+    status: "ok",
+    ...(fields.attachmentUpload ? { attachmentUpload: fields.attachmentUpload } : {})
+  };
+}
+
+export function recoveryErrorResponse(requestId: string, message: string): RecoveryResponse {
+  return {
+    type: remoteVNCFrameType.recoveryResponse,
+    requestId,
+    status: "error",
+    message
+  };
+}
+
+// MARK: - HTTP 附件直传（LAN 直连）—— 对齐 Mac `RemoteAttachmentUpload{Request,Response}DTO`
+
+export const attachmentUploadRequestSchema = z.object({
+  filename: z.string(),
+  contentBase64: z.string()
+});
+
+export type AttachmentUploadRequest = z.infer<typeof attachmentUploadRequestSchema>;
+
+export interface AttachmentUploadResponse {
+  filename: string;
+  path: string;
 }

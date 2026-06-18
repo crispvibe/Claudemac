@@ -17,8 +17,13 @@ import type {
   AppUpdateCheckResponse,
   DesktopNotificationRequest,
   ProjectDirectorySelection,
+  RemoteHostApplyCommandRequest,
+  RemoteHostBridge,
+  RemoteHostCommandResult,
+  RemoteHostStatus,
   WindowControlAction
 } from "../shared/ipc";
+import type { PanelStateSnapshot } from "../shared/remoteProtocol";
 import type {
   AddProjectRequest,
   Project,
@@ -109,7 +114,14 @@ const ipcChannels = {
   chatSessionSave: "chat-session:save",
   chatSessionDelete: "chat-session:delete",
   chatEvent: "chat:event",
-  desktopNotificationShow: "desktop-notification:show"
+  desktopNotificationShow: "desktop-notification:show",
+  remoteHostGetStatus: "remote-host:get-status",
+  remoteHostSetEnabled: "remote-host:set-enabled",
+  remoteHostResetToken: "remote-host:reset-token",
+  remoteHostPushSnapshot: "remote-host:push-snapshot",
+  remoteHostApplyCommand: "remote-host:apply-command",
+  remoteHostCommandResult: "remote-host:command-result",
+  remoteHostStatus: "remote-host:status"
 } as const;
 
 function toAppInfo(value: unknown): AppInfo {
@@ -213,6 +225,8 @@ function toRemoteLegalDocument(value: unknown): RemoteLegalDocument {
 
 const chatEventListeners = new Set<(event: ChatBackendEventEnvelope) => void>();
 const accountRemoteStateListeners = new Set<(state: AccountRemoteState) => void>();
+const remoteHostStatusListeners = new Set<(status: RemoteHostStatus) => void>();
+const remoteHostApplyCommandListeners = new Set<(payload: RemoteHostApplyCommandRequest) => void>();
 
 ipcRenderer.on(ipcChannels.chatEvent, (_event, rawEnvelope: unknown) => {
   let envelope: ChatBackendEventEnvelope;
@@ -420,7 +434,36 @@ const api = {
         chatEventListeners.delete(listener);
       };
     }
-  }
+  },
+  remoteHost: {
+    async getStatus(): Promise<RemoteHostStatus> {
+      return ipcRenderer.invoke(ipcChannels.remoteHostGetStatus) as Promise<RemoteHostStatus>;
+    },
+    async setEnabled(enabled: boolean): Promise<RemoteHostStatus> {
+      return ipcRenderer.invoke(ipcChannels.remoteHostSetEnabled, { enabled }) as Promise<RemoteHostStatus>;
+    },
+    async resetToken(): Promise<RemoteHostStatus> {
+      return ipcRenderer.invoke(ipcChannels.remoteHostResetToken) as Promise<RemoteHostStatus>;
+    },
+    async pushSnapshot(snapshot: PanelStateSnapshot): Promise<void> {
+      await ipcRenderer.invoke(ipcChannels.remoteHostPushSnapshot, { snapshot });
+    },
+    async sendCommandResult(result: RemoteHostCommandResult): Promise<void> {
+      await ipcRenderer.invoke(ipcChannels.remoteHostCommandResult, result);
+    },
+    onStatus(listener: (status: RemoteHostStatus) => void): () => void {
+      remoteHostStatusListeners.add(listener);
+      return () => {
+        remoteHostStatusListeners.delete(listener);
+      };
+    },
+    onApplyCommand(listener: (payload: RemoteHostApplyCommandRequest) => void): () => void {
+      remoteHostApplyCommandListeners.add(listener);
+      return () => {
+        remoteHostApplyCommandListeners.delete(listener);
+      };
+    }
+  } satisfies RemoteHostBridge
 };
 
 ipcRenderer.on(ipcChannels.accountRemoteState, (_event, rawState: unknown) => {
@@ -432,6 +475,26 @@ ipcRenderer.on(ipcChannels.accountRemoteState, (_event, rawState: unknown) => {
   }
   for (const listener of accountRemoteStateListeners) {
     listener(state);
+  }
+});
+
+ipcRenderer.on(ipcChannels.remoteHostStatus, (_event, rawStatus: unknown) => {
+  if (!rawStatus || typeof rawStatus !== "object") {
+    return;
+  }
+  const status = rawStatus as RemoteHostStatus;
+  for (const listener of remoteHostStatusListeners) {
+    listener(status);
+  }
+});
+
+ipcRenderer.on(ipcChannels.remoteHostApplyCommand, (_event, rawPayload: unknown) => {
+  if (!rawPayload || typeof rawPayload !== "object") {
+    return;
+  }
+  const payload = rawPayload as RemoteHostApplyCommandRequest;
+  for (const listener of remoteHostApplyCommandListeners) {
+    listener(payload);
   }
 });
 

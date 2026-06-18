@@ -36,6 +36,21 @@ export type TunnelHandlerEvent = {
   reason?: string;
 };
 
+/** 入站隧道开启事件（别人打进来，本机是 toDeviceId / host 角色）。 */
+export type InboundTunnelOpenEvent = {
+  connectionId: number;
+  fromDeviceId: number | null;
+  toDeviceId: number | null;
+};
+
+/** 入站信令 relay 事件（WebRTC 协商：手机 offer/candidate 打到本机，host 作为 answerer）。 */
+export type InboundRelayEvent = {
+  connectionId: number;
+  fromDeviceId: number | null;
+  status: string | null;
+  payload: SignalingPayload;
+};
+
 type MinimalWebSocket = {
   readyState: number;
   send(data: string): void;
@@ -57,6 +72,8 @@ export class SignalingClient extends EventEmitter {
   private _lastConnectedAt: string | null = null;
   private _lastError: string | null = null;
   private tunnelHandlers = new Map<number, (event: TunnelHandlerEvent) => void>();
+  private inboundTunnelOpenHandler: ((event: InboundTunnelOpenEvent) => void) | null = null;
+  private inboundRelayHandler: ((event: InboundRelayEvent) => void) | null = null;
 
   constructor(
     private readonly baseURL = "https://acode.anna.vin",
@@ -127,6 +144,31 @@ export class SignalingClient extends EventEmitter {
     this.tunnelHandlers.delete(connectionId);
   }
 
+  /**
+   * 注册入站隧道处理器（host 角色）：当别人对本机发起 `tunnel_open` 且尚未有对应
+   * 的 per-connection handler 时回调。处理器应在内部用 `setTunnelHandler` 接管该
+   * connectionId 后续的 `tunnel_frame` / `tunnel_close` / `tunnel_error`。
+   */
+  setInboundTunnelOpenHandler(handler: (event: InboundTunnelOpenEvent) => void): void {
+    this.inboundTunnelOpenHandler = handler;
+  }
+
+  clearInboundTunnelOpenHandler(): void {
+    this.inboundTunnelOpenHandler = null;
+  }
+
+  /**
+   * 注册入站 relay 处理器（host 角色 WebRTC answerer）：收到手机经信令中转的
+   * `offer` / `candidate` relay 帧时回调。出站方向（本机发起）不会用到此回调。
+   */
+  setInboundRelayHandler(handler: (event: InboundRelayEvent) => void): void {
+    this.inboundRelayHandler = handler;
+  }
+
+  clearInboundRelayHandler(): void {
+    this.inboundRelayHandler = null;
+  }
+
   private connect(): void {
     if (!this.shouldReconnect || !this.deviceId) {
       return;
@@ -180,6 +222,17 @@ export class SignalingClient extends EventEmitter {
       this._lastError = null;
       this.setStatus("connected");
     }
+    if (parsed.type === "tunnel_open") {
+      const connectionId = parsed.connectionId;
+      // 只有不是某条出站隧道的 ack 路径时，才当作入站（host 角色）开启。
+      if (connectionId && !this.tunnelHandlers.has(connectionId)) {
+        this.inboundTunnelOpenHandler?.({
+          connectionId,
+          fromDeviceId: parsed.fromDeviceId ?? null,
+          toDeviceId: parsed.toDeviceId ?? null
+        });
+      }
+    }
     if (
       parsed.type === "tunnel_open_ack"
       || parsed.type === "tunnel_frame"
@@ -194,6 +247,17 @@ export class SignalingClient extends EventEmitter {
           connectionId,
           frame: typeof parsed.frame === "string" ? parsed.frame : undefined,
           reason: parsed.reason ?? parsed.message
+        });
+      }
+    }
+    if (parsed.type === "relay" && this.inboundRelayHandler) {
+      const connectionId = parsed.connectionId;
+      if (connectionId && parsed.payload) {
+        this.inboundRelayHandler({
+          connectionId,
+          fromDeviceId: parsed.fromDeviceId ?? null,
+          status: parsed.status ?? null,
+          payload: parsed.payload
         });
       }
     }

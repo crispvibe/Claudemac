@@ -21,6 +21,7 @@ import { useAccountRemoteStore } from "@renderer/src/stores/accountStore";
 import { useChatStore } from "@renderer/src/stores/chatStore";
 import { useEditorStore } from "@renderer/src/stores/editorStore";
 import { useProjectStore } from "@renderer/src/stores/projectStore";
+import { installRemoteHostBridge } from "@renderer/src/remoteHost/RemoteHostBridge";
 import "./styles.css";
 
 type AppMode = "workbench" | "settings";
@@ -56,6 +57,8 @@ function App() {
   const [mode, setMode] = useState<AppMode>("workbench");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
+
+  useEffect(() => installRemoteHostBridge(), []);
 
   useEffect(() => {
     function handleBeforeUnload(event: BeforeUnloadEvent) {

@@ -23,7 +23,12 @@ import {
   settingsProfileSecretSetRequestSchema,
   settingsProfileUpdateRequestSchema,
   settingsAuthorizedFolderRemoveRequestSchema,
-  windowControlActionSchema
+  windowControlActionSchema,
+  remoteHostSetEnabledRequestSchema,
+  remoteHostPushSnapshotRequestSchema,
+  remoteHostCommandResultSchema,
+  type RemoteHostApplyCommandRequest,
+  type RemoteHostStatus
 } from "../shared/ipc.js";
 import {
   addProjectRequestSchema,
@@ -43,6 +48,7 @@ import { AccountClient, AccountSessionStore } from "./account/index.js";
 import { DeviceIdentityStore } from "./device/index.js";
 import { SignalingClient } from "./signaling/index.js";
 import { registerAccountRemoteIpcHandlers } from "./account/registerAccountRemoteIpc.js";
+import { RemoteHostController } from "./remoteHost/RemoteHostController.js";
 import { resolveExistingDirectory } from "./security/pathGuards.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -60,6 +66,59 @@ const accountClient = new AccountClient({ appVersion: app.getVersion() || "0.1.0
 const accountSessionStore = new AccountSessionStore();
 const deviceIdentityStore = new DeviceIdentityStore();
 const signalingClient = new SignalingClient();
+
+const remoteHostController = new RemoteHostController({
+  userDataDir: app.getPath("userData"),
+  requestApplyCommand: (payload: RemoteHostApplyCommandRequest): boolean => {
+    if (!mainWindow || mainWindow.webContents.isDestroyed()) {
+      return false;
+    }
+    mainWindow.webContents.send(ipcChannels.remoteHostApplyCommand, payload);
+    return true;
+  },
+  publishStatus: (status: RemoteHostStatus): void => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(ipcChannels.remoteHostStatus, status);
+    }
+  },
+  lan: {
+    requireAccessToken: () => accountSessionStore.requireAccessToken(),
+    currentDeviceId: async () => (await deviceIdentityStore.summary()).deviceID,
+    publishLanToken: (deviceId, input, accessToken) =>
+      accountClient.publishLanToken(deviceId, input, accessToken)
+  },
+  tunnel: {
+    signaling: signalingClient,
+    ensureStarted: async () => {
+      try {
+        const summary = await deviceIdentityStore.summary();
+        if (!summary.deviceID) {
+          return;
+        }
+        const status = signalingClient.status;
+        if (status === "connected" || status === "connecting" || status === "reconnecting") {
+          return;
+        }
+        const accessToken = await accountSessionStore.requireAccessToken();
+        signalingClient.start(accessToken, summary.deviceID);
+      } catch {
+        // 未登录 / 无设备：静默；登录后账号子系统会自动拉起信令。
+      }
+    }
+  },
+  webrtc: {
+    signaling: signalingClient,
+    iceServers: async (connectionId: number) => {
+      const accessToken = await accountSessionStore.requireAccessToken();
+      const config = await accountClient.iceServers(connectionId, accessToken);
+      return config.iceServers.map((server) => ({
+        urls: server.urls,
+        username: server.username,
+        credential: server.credential
+      }));
+    }
+  }
+});
 
 if (process.platform === "win32") {
   app.setAppUserModelId("vin.anna.acode.windows");
@@ -355,6 +414,25 @@ function registerIpcHandlers(): void {
     return true;
   });
 
+  ipcMain.handle(ipcChannels.remoteHostGetStatus, () => remoteHostController.getStatus());
+
+  ipcMain.handle(ipcChannels.remoteHostSetEnabled, async (_event, rawRequest: unknown) => {
+    const request = remoteHostSetEnabledRequestSchema.parse(rawRequest);
+    return remoteHostController.setEnabled(request.enabled);
+  });
+
+  ipcMain.handle(ipcChannels.remoteHostResetToken, async () => remoteHostController.resetToken());
+
+  ipcMain.handle(ipcChannels.remoteHostPushSnapshot, (_event, rawRequest: unknown) => {
+    const request = remoteHostPushSnapshotRequestSchema.parse(rawRequest);
+    remoteHostController.ingestSnapshot(request.snapshot);
+  });
+
+  ipcMain.handle(ipcChannels.remoteHostCommandResult, (_event, rawRequest: unknown) => {
+    const request = remoteHostCommandResultSchema.parse(rawRequest);
+    remoteHostController.resolveCommandResult(request);
+  });
+
   registerEditorIpcHandlers({ projectStore, settingsService });
   registerChatIpcHandlers(chatSessionStore, profileService);
   registerAccountRemoteIpcHandlers({
@@ -389,9 +467,16 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     registerIpcHandlers();
     await createMainWindow();
+    await remoteHostController.init().catch((error: unknown) => {
+      console.error("Failed to init remote host", error);
+    });
   }).catch((error: unknown) => {
     console.error("Failed to start Acode Windows", error);
     app.quit();
+  });
+
+  app.on("before-quit", () => {
+    void remoteHostController.shutdown();
   });
 }
 

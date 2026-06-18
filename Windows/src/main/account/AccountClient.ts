@@ -23,6 +23,20 @@ const apiEnvelopeSchema = <T extends z.ZodTypeAny>(payload: T) => z.object({
 
 const emptyPayloadSchema = z.object({}).passthrough();
 
+export const remoteICEServerSchema = z.object({
+  urls: z.array(z.string()).default([]),
+  username: z.string().optional(),
+  credential: z.string().optional(),
+  realm: z.string().optional()
+});
+
+export const remoteICEConfigSchema = z.object({
+  iceServers: z.array(remoteICEServerSchema).default([])
+});
+
+export type RemoteICEServerConfig = z.infer<typeof remoteICEServerSchema>;
+export type RemoteICEConfig = z.infer<typeof remoteICEConfigSchema>;
+
 export const accountClientConfigSchema = z.object({
   baseURL: z.string().url().default("https://acode.anna.vin"),
   platform: z.literal("windows").default("windows"),
@@ -170,6 +184,19 @@ export class AccountClient {
 
   resetDeviceCode(deviceId: number, accessToken: string): Promise<DeviceCodeSummary> {
     return this.post(`remote/devices/${deviceId}/device-code/reset`, deviceCodeSummarySchema, {}, accessToken);
+  }
+
+  async publishLanToken(
+    deviceId: number,
+    input: { ip: string; port: number; transientToken: string; expiresAt: number },
+    accessToken: string
+  ): Promise<void> {
+    await this.post(`remote/devices/${deviceId}/lan-token`, emptyPayloadSchema, input, accessToken);
+  }
+
+  /** WebRTC（三期）所需的 STUN/TURN 配置；按 connectionId 下发短期 TURN 凭据。 */
+  iceServers(connectionId: number, accessToken: string): Promise<RemoteICEConfig> {
+    return this.get(`remote/ice-config?connectionId=${connectionId}`, remoteICEConfigSchema, accessToken);
   }
 
   updateDevice(deviceId: number, input: AccountRemoteDeviceUpdateInput, accessToken: string): Promise<RemoteDevice> {

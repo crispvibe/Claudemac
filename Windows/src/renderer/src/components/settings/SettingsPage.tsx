@@ -30,6 +30,7 @@ import type {
   WindowsTerminal
 } from "@shared/settings";
 import type { RemoteConnectResult, RemoteLegalDocument, RemoteLegalDocumentType } from "@shared/account";
+import type { RemoteHostStatus } from "@shared/ipc";
 import { connectionStatusLabel as sharedConnectionStatusLabel } from "../accountRemote/accountRemoteShared";
 import { AccountRemoteControlPanel, LegalDocumentModal } from "../accountRemote";
 import { AppLogo } from "../AppLogo";
@@ -716,6 +717,10 @@ function RemoteChatSettings({ onOpenAccountDialog }: { onOpenAccountDialog?: () 
 
         <div className="remote-account-divider" />
 
+        <WindowsHostPanel />
+
+        <div className="remote-account-divider" />
+
         {isAuthenticated ? (
           <AccountRemoteControlPanel embedded />
         ) : (
@@ -724,6 +729,133 @@ function RemoteChatSettings({ onOpenAccountDialog }: { onOpenAccountDialog?: () 
       </div>
     </div>
   );
+}
+
+function WindowsHostPanel() {
+  const [status, setStatus] = useState<RemoteHostStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [tokenVisible, setTokenVisible] = useState(false);
+  const bridgeAvailable = Boolean(window.acode?.remoteHost);
+
+  useEffect(() => {
+    const bridge = window.acode?.remoteHost;
+    if (!bridge) {
+      return;
+    }
+    let active = true;
+    void bridge.getStatus().then((value) => {
+      if (active) setStatus(value);
+    }).catch(() => undefined);
+    const unsubscribe = bridge.onStatus((value) => {
+      if (active) setStatus(value);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  async function runHostAction(action: () => Promise<RemoteHostStatus>, successMessage?: string) {
+    const bridge = window.acode?.remoteHost;
+    if (!bridge) {
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const next = await action();
+      setStatus(next);
+      if (successMessage) setMessage(successMessage);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "操作失败，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyText(text: string, successMessage: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage(successMessage);
+    } catch {
+      setMessage("复制失败，请手动选择文本。");
+    }
+  }
+
+  const enabled = status?.enabled ?? false;
+  const running = status?.running ?? false;
+  const serviceLabel = running ? "运行中" : enabled ? "启动中" : "已停止";
+
+  return (
+    <section className="remote-service-panel settings-panel">
+      <div className="toggle-header">
+        <div>
+          <h3>手机连接本机（局域网直连）</h3>
+          <p>开启后，手机在同一 Wi-Fi 下输入连接口令即可直连这台 Windows，发送消息并实时查看输出。</p>
+        </div>
+        <label className="switch">
+          <input
+            checked={enabled}
+            disabled={busy || !bridgeAvailable}
+            type="checkbox"
+            onChange={(event) => void runHostAction(() => window.acode!.remoteHost.setEnabled(event.currentTarget.checked))}
+          />
+          <span />
+        </label>
+      </div>
+
+      <div className="remote-metric-chips">
+        <MetricChip title="服务状态" value={serviceLabel} />
+        <MetricChip title="局域网地址" value={status?.lanAddress ?? "未发布"} />
+        <MetricChip title="当前连接" value={`${status?.activeConnectionCount ?? 0} 台`} />
+      </div>
+
+      {enabled ? (
+        <div className="settings-grid">
+          <SettingsPanel title="连接口令" subtitle="手机连接时需要填写；请妥善保管，可随时重置（旧口令立即失效）。">
+            <div className="settings-row">
+              <span>口令</span>
+              <code>{status?.token ? (tokenVisible ? status.token : maskToken(status.token)) : "未生成"}</code>
+            </div>
+            <div className="settings-actions">
+              <button type="button" disabled={!status?.token} onClick={() => setTokenVisible((value) => !value)}>
+                {tokenVisible ? "隐藏" : "显示"}
+              </button>
+              <button type="button" disabled={!status?.token} onClick={() => status?.token && void copyText(status.token, "口令已复制到剪贴板。")}>
+                <Copy size={14} /> 复制
+              </button>
+              <button className="settings-primary-button" type="button" disabled={busy} onClick={() => void runHostAction(() => window.acode!.remoteHost.resetToken(), "已重置连接口令，旧口令立即失效。")}>
+                <RefreshCw size={14} /> 重置口令
+              </button>
+            </div>
+          </SettingsPanel>
+          <SettingsPanel title="局域网地址" subtitle="手机与本机处于同一 Wi-Fi 时，使用以下地址连接。">
+            <div className="settings-row"><span>地址</span><code>{status?.lanAddress ?? "等待网络…"}</code></div>
+            <div className="settings-row"><span>端口</span><b>{status?.port ?? "-"}</b></div>
+            {status?.lanAddress ? (
+              <div className="settings-actions">
+                <button type="button" onClick={() => void copyText(status.lanAddress as string, "局域网地址已复制。")}>
+                  <Copy size={14} /> 复制地址
+                </button>
+              </div>
+            ) : null}
+          </SettingsPanel>
+        </div>
+      ) : null}
+
+      {status?.lastError ? <p className="account-message error">{status.lastError}</p> : null}
+      {message ? <p className="settings-hint">{message}</p> : null}
+      {!bridgeAvailable ? <p className="settings-hint">远程 host 接口不可用。</p> : null}
+    </section>
+  );
+}
+
+function maskToken(token: string): string {
+  if (token.length <= 8) {
+    return "••••••••";
+  }
+  return `${token.slice(0, 4)}••••${token.slice(-4)}`;
 }
 
 function MetricChip({ title, value }: { title: string; value: string }) {

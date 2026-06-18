@@ -3,6 +3,7 @@ import type {
   AppUpdateCheckResponse,
   DesktopNotificationRequest,
   ProjectDirectorySelection,
+  RemoteHostBridge,
   WindowControlAction
 } from "../shared/ipc";
 import type { AccountRemoteBridge } from "../shared/account";
@@ -59,6 +60,7 @@ declare global {
       };
       accountRemote: AccountRemoteBridge;
       chat: ChatBridge;
+      remoteHost: RemoteHostBridge;
     };
   }
 }

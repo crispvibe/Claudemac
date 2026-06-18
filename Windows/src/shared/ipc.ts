@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { accountRemoteDeviceUpdateInputSchema, remoteLegalDocumentTypeSchema } from "./account.js";
 import { secretFieldSchema } from "./settings.js";
+import { commandAckSchema, commandSchema, panelStateSnapshotSchema, type PanelStateSnapshot } from "./remoteProtocol.js";
 
 export const ipcChannels = {
   appInfo: "app:info",
@@ -55,7 +56,15 @@ export const ipcChannels = {
   chatSessionSave: "chat-session:save",
   chatSessionDelete: "chat-session:delete",
   chatEvent: "chat:event",
-  desktopNotificationShow: "desktop-notification:show"
+  desktopNotificationShow: "desktop-notification:show",
+  // 远程 host（手机连 Windows）相关
+  remoteHostGetStatus: "remote-host:get-status",
+  remoteHostSetEnabled: "remote-host:set-enabled",
+  remoteHostResetToken: "remote-host:reset-token",
+  remoteHostPushSnapshot: "remote-host:push-snapshot",
+  remoteHostApplyCommand: "remote-host:apply-command",
+  remoteHostCommandResult: "remote-host:command-result",
+  remoteHostStatus: "remote-host:status"
 } as const;
 
 export const appInfoSchema = z.object({
@@ -189,3 +198,63 @@ export type AccountRemoteDeleteAccountRequest = z.infer<typeof accountRemoteDele
 export type AccountRemoteLegalDocumentRequest = z.infer<typeof accountRemoteLegalDocumentRequestSchema>;
 export type AccountRemoteLegalConsentRequest = z.infer<typeof accountRemoteLegalConsentRequestSchema>;
 export type AccountRemoteDeviceUpdateRequest = z.infer<typeof accountRemoteDeviceUpdateRequestSchema>;
+
+// ---- 远程 host（手机连 Windows）IPC 负载 ----
+
+/** 远程 host 运行状态（主进程 → 渲染进程 / 设置页）。 */
+export const remoteHostStatusSchema = z.object({
+  enabled: z.boolean(),
+  running: z.boolean(),
+  port: z.number().int().nonnegative(),
+  token: z.string(),
+  lanAddress: z.string().nullable(),
+  activeConnectionCount: z.number().int().nonnegative(),
+  lastError: z.string().nullable()
+});
+
+export type RemoteHostStatus = z.infer<typeof remoteHostStatusSchema>;
+
+export const remoteHostSetEnabledRequestSchema = z.object({
+  enabled: z.boolean()
+});
+
+export type RemoteHostSetEnabledRequest = z.infer<typeof remoteHostSetEnabledRequestSchema>;
+
+/** 渲染进程把组装好的面板快照推给主进程广播。 */
+export const remoteHostPushSnapshotRequestSchema = z.object({
+  snapshot: panelStateSnapshotSchema
+});
+
+export type RemoteHostPushSnapshotRequest = z.infer<typeof remoteHostPushSnapshotRequestSchema>;
+
+/** 主进程把手机来的命令转给渲染进程执行。 */
+export const remoteHostApplyCommandRequestSchema = z.object({
+  requestId: z.string().min(1),
+  // 内部 IPC：放宽为非空字符串（chatStore 会话 id 经 toUUID 一般为裸 UUID，但不强校验以免误拒）。
+  focusedSessionId: z.string().min(1).nullable(),
+  command: commandSchema
+});
+
+export type RemoteHostApplyCommandRequest = z.infer<typeof remoteHostApplyCommandRequestSchema>;
+
+/** 渲染进程执行命令后回给主进程的结果。 */
+export const remoteHostCommandResultSchema = z.object({
+  requestId: z.string().min(1),
+  ack: commandAckSchema,
+  // 内部 IPC：放宽为非空字符串，避免非 UUID 会话 id 导致 parse 抛错、命令被拖到超时。
+  newFocusedSessionId: z.string().min(1).nullable().optional(),
+  shouldUpdateFocusedSessionId: z.boolean().default(false),
+  shouldPushSnapshotForFocus: z.boolean().default(false)
+});
+
+export type RemoteHostCommandResult = z.infer<typeof remoteHostCommandResultSchema>;
+
+export interface RemoteHostBridge {
+  getStatus: () => Promise<RemoteHostStatus>;
+  setEnabled: (enabled: boolean) => Promise<RemoteHostStatus>;
+  resetToken: () => Promise<RemoteHostStatus>;
+  pushSnapshot: (snapshot: PanelStateSnapshot) => Promise<void>;
+  sendCommandResult: (result: RemoteHostCommandResult) => Promise<void>;
+  onStatus: (listener: (status: RemoteHostStatus) => void) => () => void;
+  onApplyCommand: (listener: (payload: RemoteHostApplyCommandRequest) => void) => () => void;
+}
