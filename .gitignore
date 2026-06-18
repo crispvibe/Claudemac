@@ -10,3 +10,6 @@ local.properties
 .build/
 .kotlin/
 AcodeIOS/build-archive/
+CodevokeIOS/build-archive/
+CodevokeIOS/build/
+build-archive/
