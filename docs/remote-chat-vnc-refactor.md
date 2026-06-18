@@ -19,7 +19,7 @@ Each agent's allowed/forbidden file set is in §6. Merge order: protocol-server 
 
 After all three agents merge, the following greps MUST yield **zero** hits.
 
-### 0.1 iOS — `AcodeIOS/Codevoke/**/*.swift`
+### 0.1 iOS — `CodevokeIOS/Codevoke/**/*.swift`
 
 ```
 queuedMessagesBySession
@@ -33,7 +33,7 @@ trackAsActive
 
 (Variant names `visibleActiveRequestID`, `pendingDraftConversationID`, `sessionOperationalStreamingMessageIDs`, `runningRequestIDsBySession`, `queuedMessageCountBySession`, `queuedMessageOrderByRequestID`, `pendingUserPrompt`, `pendingPromptBySession`, `pendingCursorEvents`, `lastAppliedCursor`, `lastAckedCursor`, `scheduleAuthoritativeHistoryRestore`, `restoreGlobalStreamEvents` must also be removed when their parent field disappears — they only exist to maintain the bug-prone derived state we are deleting.)
 
-### 0.2 Mac Bridge — `ClaudeMac/Services/RemoteChat/RemoteChatBridge.swift`
+### 0.2 Mac Bridge — `Codevoke/Services/RemoteChat/RemoteChatBridge.swift`
 
 ```
 pendingRequests
@@ -44,7 +44,7 @@ livePersist
 
 (`RemoteChatBridge` ends up as a thin command-decoder + ack emitter. All queue/run/persist responsibilities move into `ChatPanelController`.)
 
-### 0.3 Mac — `ClaudeMac/ViewModels/ChatPanelState.swift`
+### 0.3 Mac — `Codevoke/ViewModels/ChatPanelState.swift`
 
 The bypass-Bridge local enqueue path at lines 422–429 (see §1.3) must be gone. `ChatPanelState` either becomes `ChatPanelController` or is replaced by it.
 
@@ -54,7 +54,7 @@ The bypass-Bridge local enqueue path at lines 422–429 (see §1.3) must be gone
 
 ### 1.1 Published properties (must survive on `ChatPanelController`)
 
-From `ClaudeMac/ViewModels/ChatPanelState.swift`:
+From `Codevoke/ViewModels/ChatPanelState.swift`:
 
 | Field | Type | Source |
 |-------|------|--------|
@@ -75,7 +75,7 @@ From `ClaudeMac/ViewModels/ChatPanelState.swift`:
 | derived `activity` | `ChatSessionActivity?` | `ChatPanelState.swift:163` |
 | derived `currentSessionID` | `UUID?` | `ChatPanelState.swift:160` |
 
-> **NOTE for `agent-mac-controller`**: Keep `ChatPanelController`'s public `@Published` surface drop-in compatible with the above so Mac views can keep their existing bindings (only the **mutation** API changes). The class can be renamed (`ChatPanelController`) and live in a new file `ClaudeMac/ViewModels/ChatPanelController.swift`; the old `ChatPanelState.swift` should be deleted or shrunk to a thin alias if needed for transition.
+> **NOTE for `agent-mac-controller`**: Keep `ChatPanelController`'s public `@Published` surface drop-in compatible with the above so Mac views can keep their existing bindings (only the **mutation** API changes). The class can be renamed (`ChatPanelController`) and live in a new file `Codevoke/ViewModels/ChatPanelController.swift`; the old `ChatPanelState.swift` should be deleted or shrunk to a thin alias if needed for transition.
 
 ### 1.2 Mutate API (signatures and call-sites)
 
@@ -148,16 +148,16 @@ After refactor every site in this table must call **`controller.send(...)` / `co
 
 ### 1.6 Code reference
 
-- `ClaudeMac/ViewModels/ChatPanelState.swift:6-1735` — controller's current full surface.
-- `ClaudeMac/Services/Chat/ChatRuntimeStore.swift:6-275` — owns `ChatPanelState` per history key; will own `ChatPanelController`.
-- `ClaudeMac/Services/RemoteChat/RemoteChatBridge.swift:218-1252` — to be amputated.
-- `ClaudeMac/Services/RemoteChat/RemoteSessionMirrorBus.swift:17-118` — to be repurposed (see §3.3, §5).
+- `Codevoke/ViewModels/ChatPanelState.swift:6-1735` — controller's current full surface.
+- `Codevoke/Services/Chat/ChatRuntimeStore.swift:6-275` — owns `ChatPanelState` per history key; will own `ChatPanelController`.
+- `Codevoke/Services/RemoteChat/RemoteChatBridge.swift:218-1252` — to be amputated.
+- `Codevoke/Services/RemoteChat/RemoteSessionMirrorBus.swift:17-118` — to be repurposed (see §3.3, §5).
 
 ---
 
 ## 2. iOS state machine — fields and entry points to delete
 
-All fields below live on `AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift`. After refactor the class is a renderer with only **rendering** state (`config`, `selectedSession`, derived UI flags driven from snapshot). Anything in this list must be deleted.
+All fields below live on `CodevokeIOS/Codevoke/ViewModels/ChatViewModel.swift`. After refactor the class is a renderer with only **rendering** state (`config`, `selectedSession`, derived UI flags driven from snapshot). Anything in this list must be deleted.
 
 ### 2.1 Fields to delete
 
@@ -236,7 +236,7 @@ After refactor iOS consumes only the new envelopes (`snapshot`, `patch`, `comman
 
 ### 2.5 iOS persistence today
 
-`AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift:204-216`:
+`CodevokeIOS/Codevoke/ViewModels/ChatViewModel.swift:204-216`:
 
 - `UserDefaults.standard` `remote.macHost` / `remote.port` / `remote.token` — **KEEP** (connection config)
 - `remote.selectedModelID` / `remote.selectedCLI` / `remote.selectedPermissionMode` / `remote.selectedReasoningEffort` — **DELETE writes**. Read once on first launch only as "last known preference" hint for the first `composerSet*` command. After Phase C they live solely in the snapshot.
@@ -246,10 +246,10 @@ iOS writes **zero business state** to disk after the refactor.
 
 ### 2.6 Code reference
 
-- `AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift:1-2680` — the file to gut.
-- `AcodeIOS/Codevoke/Networking/RemoteWebSocketClient.swift:65-152` — frame send helpers; replace with one generic `sendCommand`.
-- `AcodeIOS/Codevoke/Networking/RemoteHTTPClient.swift:17-83` — methods to delete (see §2.4).
-- `AcodeIOS/Codevoke/Models/RemoteModels.swift:195-245` — `RemoteSendMessageRequest`, `RemoteStreamEvent` deleted; replaced by new types from ChatCore.
+- `CodevokeIOS/Codevoke/ViewModels/ChatViewModel.swift:1-2680` — the file to gut.
+- `CodevokeIOS/Codevoke/Networking/RemoteWebSocketClient.swift:65-152` — frame send helpers; replace with one generic `sendCommand`.
+- `CodevokeIOS/Codevoke/Networking/RemoteHTTPClient.swift:17-83` — methods to delete (see §2.4).
+- `CodevokeIOS/Codevoke/Models/RemoteModels.swift:195-245` — `RemoteSendMessageRequest`, `RemoteStreamEvent` deleted; replaced by new types from ChatCore.
 
 ---
 
@@ -257,7 +257,7 @@ iOS writes **zero business state** to disk after the refactor.
 
 ### 3.1 Replay cache
 
-`ClaudeMac/Services/RemoteChat/RemoteChatServer.swift:21-23`:
+`Codevoke/Services/RemoteChat/RemoteChatServer.swift:21-23`:
 
 ```swift
 private let serverEpoch = UUID().uuidString
@@ -281,7 +281,7 @@ These remain produceable for **Phase B back-compat broadcast** only (§5). New i
 
 ### 3.3 `RemoteSessionMirrorBus`
 
-`ClaudeMac/Services/RemoteChat/RemoteSessionMirrorBus.swift:17-118`:
+`Codevoke/Services/RemoteChat/RemoteSessionMirrorBus.swift:17-118`:
 
 - `Event` cases: `.queue`, `.beginRun`, `.backend`, `.endRun`.
 - Mac `ChatPanelState` subscribes to mirror events to render iOS-triggered sessions.
@@ -794,9 +794,9 @@ The protocol-server agent assumes this interface exists. The mac-controller agen
 ### 4.10 Code reference
 
 - New file: `Shared/ChatCore/Sources/ChatCore/RemoteVNCProtocol.swift`
-- New file (Mac, by agent-mac-controller): `ClaudeMac/ViewModels/ChatPanelController.swift` (or rename `ChatPanelState.swift`)
-- New file (Mac, by agent-protocol-server): `ClaudeMac/Services/RemoteChat/PanelStateBroadcaster.swift` — owns the per-session `snapshotPublisher` subscriptions and the patch-or-snapshot heuristic.
-- New file (Mac, by agent-protocol-server): `ClaudeMac/Services/RemoteChat/RemoteChatCommandRouter.swift` — `func dispatch(_ command: Command, on connection: WSConnection)`.
+- New file (Mac, by agent-mac-controller): `Codevoke/ViewModels/ChatPanelController.swift` (or rename `ChatPanelState.swift`)
+- New file (Mac, by agent-protocol-server): `Codevoke/Services/RemoteChat/PanelStateBroadcaster.swift` — owns the per-session `snapshotPublisher` subscriptions and the patch-or-snapshot heuristic.
+- New file (Mac, by agent-protocol-server): `Codevoke/Services/RemoteChat/RemoteChatCommandRouter.swift` — `func dispatch(_ command: Command, on connection: WSConnection)`.
 
 ---
 
@@ -831,25 +831,25 @@ This means the legacy mirror plumbing (`NotificationCenter.default.post(.remoteC
 
 **Allowed to modify**:
 
-- `ClaudeMac/Services/RemoteChat/RemoteChatServer.swift`
-- `ClaudeMac/Services/RemoteChat/RemoteChatRouter.swift`
-- `ClaudeMac/Services/RemoteChat/RemoteChatWebSocket.swift` (only if frame size needs increase or new opcodes — likely untouched)
-- `ClaudeMac/Services/RemoteChat/RemoteChatDTOs.swift` (delete legacy DTOs no longer used by iOS routes)
-- `ClaudeMac/Services/RemoteChat/RemoteChatServerController.swift`
-- `ClaudeMac/Services/RemoteChat/RemoteSessionMirrorBus.swift` (Phase B keeps it; the legacy `RemoteChatBridge.swift` keeps producing for it. Agent must not delete it.)
-- `ClaudeMac/Services/RemoteChat/RemoteChatBridge.swift` — **only** to remove its private queue/backend/livePersist and convert it into a thin legacy-protocol shim that forwards `send_message` etc. to the controller. The controller-facing surface goes through `PanelStateBroadcaster`/`RemoteChatCommandRouter`, not Bridge.
+- `Codevoke/Services/RemoteChat/RemoteChatServer.swift`
+- `Codevoke/Services/RemoteChat/RemoteChatRouter.swift`
+- `Codevoke/Services/RemoteChat/RemoteChatWebSocket.swift` (only if frame size needs increase or new opcodes — likely untouched)
+- `Codevoke/Services/RemoteChat/RemoteChatDTOs.swift` (delete legacy DTOs no longer used by iOS routes)
+- `Codevoke/Services/RemoteChat/RemoteChatServerController.swift`
+- `Codevoke/Services/RemoteChat/RemoteSessionMirrorBus.swift` (Phase B keeps it; the legacy `RemoteChatBridge.swift` keeps producing for it. Agent must not delete it.)
+- `Codevoke/Services/RemoteChat/RemoteChatBridge.swift` — **only** to remove its private queue/backend/livePersist and convert it into a thin legacy-protocol shim that forwards `send_message` etc. to the controller. The controller-facing surface goes through `PanelStateBroadcaster`/`RemoteChatCommandRouter`, not Bridge.
 
 **Allowed to create**:
 
 - `Shared/ChatCore/Sources/ChatCore/RemoteVNCProtocol.swift` (authoritative DTO file)
-- `ClaudeMac/Services/RemoteChat/PanelStateBroadcaster.swift`
-- `ClaudeMac/Services/RemoteChat/RemoteChatCommandRouter.swift`
+- `Codevoke/Services/RemoteChat/PanelStateBroadcaster.swift`
+- `Codevoke/Services/RemoteChat/RemoteChatCommandRouter.swift`
 
 **Forbidden to modify**:
 
-- `ClaudeMac/ViewModels/ChatPanelState.swift` / `ChatPanelController.swift`
-- Any Mac view (`ClaudeMac/Views/**`)
-- Any iOS file (`AcodeIOS/**`)
+- `Codevoke/ViewModels/ChatPanelState.swift` / `ChatPanelController.swift`
+- Any Mac view (`Codevoke/Views/**`)
+- Any iOS file (`CodevokeIOS/**`)
 - Shared types other than the new `RemoteVNCProtocol.swift`
 
 **Contract dependency on mac-controller**: relies on `ChatPanelController: PanelStateBroadcasting` (§4.9). Stubs an empty no-op `PanelStateBroadcasting` test double for unit tests in this worktree.
@@ -858,23 +858,23 @@ This means the legacy mirror plumbing (`NotificationCenter.default.post(.remoteC
 
 **Allowed to modify**:
 
-- `ClaudeMac/ViewModels/ChatPanelState.swift` (rename to `ChatPanelController.swift` or refactor in place)
-- `ClaudeMac/ViewModels/AppState.swift` (only if controller lifecycle requires it)
-- `ClaudeMac/Services/Chat/ChatRuntimeStore.swift` (vending controllers; add a public accessor)
-- `ClaudeMac/Views/ClaudeSessionPanelView.swift`
-- `ClaudeMac/Views/ClaudeSessionPanelComposer.swift`
-- `ClaudeMac/Views/ClaudeSessionPanelSupport.swift`
+- `Codevoke/ViewModels/ChatPanelState.swift` (rename to `ChatPanelController.swift` or refactor in place)
+- `Codevoke/ViewModels/AppState.swift` (only if controller lifecycle requires it)
+- `Codevoke/Services/Chat/ChatRuntimeStore.swift` (vending controllers; add a public accessor)
+- `Codevoke/Views/ClaudeSessionPanelView.swift`
+- `Codevoke/Views/ClaudeSessionPanelComposer.swift`
+- `Codevoke/Views/ClaudeSessionPanelSupport.swift`
 - Other Mac views that call `chatState.<mutate>` (per §1.5 table) — receiver rename only.
 
 **Allowed to create**:
 
-- `ClaudeMac/ViewModels/ChatPanelController.swift` (new home for the renamed/extracted controller)
+- `Codevoke/ViewModels/ChatPanelController.swift` (new home for the renamed/extracted controller)
 
 **Forbidden to modify**:
 
 - `Shared/ChatCore/**` — DTOs are owned by agent-protocol-server.
-- `ClaudeMac/Services/RemoteChat/RemoteChatServer.swift` / `RemoteChatRouter.swift` / `RemoteChatWebSocket.swift` / `RemoteChatDTOs.swift` / `RemoteChatServerController.swift` / `RemoteChatBridge.swift` / `RemoteSessionMirrorBus.swift`
-- Any iOS file (`AcodeIOS/**`)
+- `Codevoke/Services/RemoteChat/RemoteChatServer.swift` / `RemoteChatRouter.swift` / `RemoteChatWebSocket.swift` / `RemoteChatDTOs.swift` / `RemoteChatServerController.swift` / `RemoteChatBridge.swift` / `RemoteSessionMirrorBus.swift`
+- Any iOS file (`CodevokeIOS/**`)
 
 **Contract dependency on protocol-server**: relies on the `PanelStateBroadcasting` protocol declared in `Shared/ChatCore/Sources/ChatCore/RemoteVNCProtocol.swift`. Until that file lands in main, this agent stubs the protocol locally and imports the real one after rebase. Conform `ChatPanelController` to `PanelStateBroadcasting`.
 
@@ -882,16 +882,16 @@ This means the legacy mirror plumbing (`NotificationCenter.default.post(.remoteC
 
 **Allowed to modify**:
 
-- All files under `AcodeIOS/Codevoke/` (Swift sources).
+- All files under `CodevokeIOS/Codevoke/` (Swift sources).
 
 **Allowed to create**:
 
-- `AcodeIOS/Codevoke/ViewModels/PanelStateMirror.swift` (the new thin-client renderer state object — replaces `ChatViewModel`'s deleted bits).
-- Any new view/networking helper file inside `AcodeIOS/Codevoke/`.
+- `CodevokeIOS/Codevoke/ViewModels/PanelStateMirror.swift` (the new thin-client renderer state object — replaces `ChatViewModel`'s deleted bits).
+- Any new view/networking helper file inside `CodevokeIOS/Codevoke/`.
 
 **Forbidden to modify**:
 
-- Any Mac file (`ClaudeMac/**`)
+- Any Mac file (`Codevoke/**`)
 - `Shared/**` — depend on whatever `agent-protocol-server` shipped to ChatCore.
 
 **Contract dependency on protocol-server**: imports `ChatCore.PanelStateSnapshot`, `PanelStatePatch`, `PanelStateEnvelope`, `Command`, `CommandAck`, `ResumeRequest` and assumes the wire format in §4.

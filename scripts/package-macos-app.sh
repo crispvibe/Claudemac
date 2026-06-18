@@ -4,16 +4,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DERIVED_DATA="$ROOT/build/DerivedData"
 CONFIGURATION="${CONFIGURATION:-Release}"
-APP_NAME="${APP_NAME:-AnnaCode}"
+APP_NAME="${APP_NAME:-Codevoke}"
 DESTINATION="${DESTINATION:-$HOME/Desktop/$APP_NAME.app}"
 ARCH_MODE="${ARCH_MODE:-universal}"
 CREATE_DMG="${CREATE_DMG:-1}"
-DMG_PATH="${DMG_PATH:-$ROOT/build/releases/annacode-macos.dmg}"
+DMG_PATH="${DMG_PATH:-$ROOT/build/releases/codevoke-macos.dmg}"
 STRIP_SYMBOLS="${STRIP_SYMBOLS:-1}"
 NOTARIZE="${NOTARIZE:-0}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-acode-notary}"
 NOTARY_TIMEOUT="${NOTARY_TIMEOUT:-30m}"
-ENTITLEMENTS="$ROOT/ClaudeMac/ClaudeMac.entitlements"
+ENTITLEMENTS="$ROOT/Codevoke/Codevoke.entitlements"
 SIGNING_AUTHORITY="Developer ID Application: Zhang XueFeng (XY6Z92AMPS)"
 TEAM_ID="XY6Z92AMPS"
 
@@ -140,8 +140,8 @@ fi
 
 log "building $CONFIGURATION with Developer ID signing ($ARCH_MODE: $ARCHS_VALUE)"
 xcodebuild \
-  -project ClaudeMac.xcodeproj \
-  -scheme ClaudeMac \
+  -project Codevoke.xcodeproj \
+  -scheme Codevoke \
   -configuration "$CONFIGURATION" \
   -destination 'generic/platform=macOS' \
   -derivedDataPath "$DERIVED_DATA" \

@@ -1,6 +1,6 @@
-# ClaudeMac
+# Codevoke
 
-ClaudeMac 是一个 macOS 原生 AI CLI 工作台，用来管理项目、快速浏览/编辑文件，并在内嵌面板中与 Claude Code / Codex 进行真实对话。同时保留外部 Terminal / iTerm2 启动作为 fallback。
+Codevoke 是一个 macOS 原生 AI CLI 工作台，用来管理项目、快速浏览/编辑文件，并在内嵌面板中与 Claude Code / Codex 进行真实对话。同时保留外部 Terminal / iTerm2 启动作为 fallback。
 
 > 当前完善程度、已验证链路和接手建议见：[`docs/project-current-status.md`](docs/project-current-status.md)。
 
@@ -9,15 +9,15 @@ ClaudeMac 是一个 macOS 原生 AI CLI 工作台，用来管理项目、快速�
 要求：macOS 14+，Xcode 15/16。
 
 ```bash
-xcodebuild -list -project ClaudeMac.xcodeproj
-xcodebuild -project ClaudeMac.xcodeproj -scheme ClaudeMac -configuration Debug build
+xcodebuild -list -project Codevoke.xcodeproj
+xcodebuild -project Codevoke.xcodeproj -scheme Codevoke -configuration Debug build
 open ~/Library/Developer/Xcode/DerivedData
 ```
 
 也可以直接用 Xcode 打开：
 
 ```bash
-open ClaudeMac.xcodeproj
+open Codevoke.xcodeproj
 ```
 
 ## 打包到桌面
@@ -130,9 +130,9 @@ NOTARIZE=1 scripts/package-macos-app.sh
 ## 项目结构
 
 ```text
-ClaudeMac.xcodeproj/
-ClaudeMac/
-  ClaudeMacApp.swift          # @main 入口，窗口配置，菜单中文化
+Codevoke.xcodeproj/
+Codevoke/
+  CodevokeApp.swift          # @main 入口，窗口配置，菜单中文化
   Models/
     AppModels.swift           # ProjectItem, FileNode, EditorTab, LaunchRecord, CLIHistorySession, AppSettings
     ChatModels.swift          # ChatMessage, ChatSessionRecord, ChatRunOptions, ChatBackendEvent, 权限/模型枚举
@@ -167,7 +167,7 @@ ClaudeMac/
       ChatSessionStore.swift          # 本地会话持久化
   Assets.xcassets/
   Info.plist
-  ClaudeMac.entitlements
+  Codevoke.entitlements
 ```
 
 ## 关键技术说明

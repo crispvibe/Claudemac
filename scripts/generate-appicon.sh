@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-appicon_dir="$root_dir/ClaudeMac/Assets.xcassets/AppIcon.appiconset"
+appicon_dir="$root_dir/Codevoke/Assets.xcassets/AppIcon.appiconset"
 source_png="${1:-$appicon_dir/icon_512x512@2x.png}"
 
 if [[ ! -d "$appicon_dir" ]]; then

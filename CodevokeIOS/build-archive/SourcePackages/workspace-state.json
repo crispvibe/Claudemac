@@ -1,0 +1,77 @@
+{
+  "object" : {
+    "artifacts" : [
+      {
+        "kind" : {
+          "xcframework" : {
+
+          }
+        },
+        "packageRef" : {
+          "identity" : "webrtc",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/stasel/WebRTC",
+          "name" : "WebRTC"
+        },
+        "path" : "/Users/oreo/Desktop/ClaudeMac/AcodeIOS/build-archive/SourcePackages/artifacts/webrtc/WebRTC/WebRTC.xcframework",
+        "source" : {
+          "checksum" : "0d61faf67dd145545bf8a0017bdcdbe7a9a1f3a96cce0d501e526655711d98d2",
+          "type" : "remote",
+          "url" : "https://github.com/stasel/WebRTC/releases/download/140.0.0/WebRTC-M140.xcframework.zip"
+        },
+        "targetName" : "WebRTC"
+      }
+    ],
+    "dependencies" : [
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "chatcore",
+          "kind" : "fileSystem",
+          "location" : "/Users/oreo/Desktop/ClaudeMac/Shared/ChatCore",
+          "name" : "ChatCore"
+        },
+        "state" : {
+          "name" : "fileSystem",
+          "path" : "/Users/oreo/Desktop/ClaudeMac/Shared/ChatCore"
+        },
+        "subpath" : "chatcore"
+      },
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "chatui",
+          "kind" : "fileSystem",
+          "location" : "/Users/oreo/Desktop/ClaudeMac/Shared/ChatUI",
+          "name" : "ChatUI"
+        },
+        "state" : {
+          "name" : "fileSystem",
+          "path" : "/Users/oreo/Desktop/ClaudeMac/Shared/ChatUI"
+        },
+        "subpath" : "chatui"
+      },
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "webrtc",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/stasel/WebRTC",
+          "name" : "WebRTC"
+        },
+        "state" : {
+          "checkoutState" : {
+            "revision" : "86dbb5cb57e4da009b859a6245b1c10d610f215a",
+            "version" : "140.0.0"
+          },
+          "name" : "sourceControlCheckout"
+        },
+        "subpath" : "WebRTC"
+      }
+    ],
+    "prebuilts" : [
+
+    ]
+  },
+  "version" : 7
+}

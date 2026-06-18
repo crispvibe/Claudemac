@@ -20,7 +20,7 @@ scripts/package-macos-app.sh
 脚本会：
 
 1. 检查本机是否存在 `Developer ID Application: Zhang XueFeng (XY6Z92AMPS)` 证书。
-2. 使用 `ClaudeMac.xcodeproj` / `ClaudeMac` scheme 构建 Universal Release。
+2. 使用 `Codevoke.xcodeproj` / `Codevoke` scheme 构建 Universal Release。
 3. 校验构建产物主程序和内嵌 framework 的 `arm64 x86_64` 架构。
 4. 校验构建产物的 `codesign` 签名和 `TeamIdentifier=XY6Z92AMPS`。
 5. 替换桌面 `~/Desktop/Codevoke.app`。

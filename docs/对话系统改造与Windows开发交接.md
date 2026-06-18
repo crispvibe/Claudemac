@@ -1,7 +1,7 @@
 # 对话系统改造与 Windows 开发交接文档
 
 生成日期：2026-05-09  
-适用范围：ClaudeMac/Codevoke 内嵌 Claude Code 与 Codex 对话面板、工具调用 UI、交互请求、队列消息、循序渐进 transcript、后续 Windows 端复刻。
+适用范围：Codevoke/Codevoke 内嵌 Claude Code 与 Codex 对话面板、工具调用 UI、交互请求、队列消息、循序渐进 transcript、后续 Windows 端复刻。
 
 ## 1. 文档目标
 
@@ -36,14 +36,14 @@
 
 关键证据：
 
-- 后端统一协议：`ClaudeMac/Services/Chat/ChatProcessBackend.swift:4`
-- 后端进程环境：`ClaudeMac/Services/Chat/ChatProcessBackend.swift:54`
-- message 类型：`ClaudeMac/Models/ChatModels.swift:174`
-- interactive request：`ClaudeMac/Models/ChatModels.swift:210`
-- run status：`ClaudeMac/Models/ChatModels.swift:227`
-- backend event：`ClaudeMac/Models/ChatModels.swift:394`
-- 队列请求模型：`ClaudeMac/ViewModels/ChatPanelState.swift:3`
-- transcript 渲染入口：`ClaudeMac/Views/ClaudeSessionPanelView.swift:140`
+- 后端统一协议：`Codevoke/Services/Chat/ChatProcessBackend.swift:4`
+- 后端进程环境：`Codevoke/Services/Chat/ChatProcessBackend.swift:54`
+- message 类型：`Codevoke/Models/ChatModels.swift:174`
+- interactive request：`Codevoke/Models/ChatModels.swift:210`
+- run status：`Codevoke/Models/ChatModels.swift:227`
+- backend event：`Codevoke/Models/ChatModels.swift:394`
+- 队列请求模型：`Codevoke/ViewModels/ChatPanelState.swift:3`
+- transcript 渲染入口：`Codevoke/Views/ClaudeSessionPanelView.swift:140`
 
 ### 2.1 2026-05-10 对话页面审计快照
 
@@ -64,15 +64,15 @@
 
 关键证据：
 
-- 多 runtime store：`ClaudeMac/Services/Chat/ChatRuntimeStore.swift:6`
-- per-session state：`ClaudeMac/ViewModels/ChatPanelState.swift:4`
-- 本地 JSON/JSONL store：`ClaudeMac/Services/Chat/ChatSessionStore.swift:4`
-- transcript 入口：`ClaudeMac/Views/ClaudeSessionPanelView.swift:174`
-- 本地历史加载：`ClaudeMac/ViewModels/AppState.swift`
-- 当前 CLI 过滤：`ClaudeMac/Views/ProjectSidebarView.swift:119`
-- 外部历史扫描源文件 `ClaudeMac/Services/ClaudeHistoryScanner.swift` 已删除
-- Agent process sheet：`ClaudeMac/Views/ClaudeSessionPanelView.swift:2444`
-- 子代理 transcript：`ClaudeMac/Services/Chat/SubagentTranscriptStore.swift:76`
+- 多 runtime store：`Codevoke/Services/Chat/ChatRuntimeStore.swift:6`
+- per-session state：`Codevoke/ViewModels/ChatPanelState.swift:4`
+- 本地 JSON/JSONL store：`Codevoke/Services/Chat/ChatSessionStore.swift:4`
+- transcript 入口：`Codevoke/Views/ClaudeSessionPanelView.swift:174`
+- 本地历史加载：`Codevoke/ViewModels/AppState.swift`
+- 当前 CLI 过滤：`Codevoke/Views/ProjectSidebarView.swift:119`
+- 外部历史扫描源文件 `Codevoke/Services/ClaudeHistoryScanner.swift` 已删除
+- Agent process sheet：`Codevoke/Views/ClaudeSessionPanelView.swift:2444`
+- 子代理 transcript：`Codevoke/Services/Chat/SubagentTranscriptStore.swift:76`
 
 ### 2.2 2026-05-10 最新实现基线
 
@@ -107,7 +107,7 @@
 - `error`：错误卡片。
 - `system/result/rawOutput`：保留给持久化或诊断，默认不进入主 transcript。
 
-证据：`ClaudeMac/Models/ChatModels.swift:174`
+证据：`Codevoke/Models/ChatModels.swift:174`
 
 Windows 复刻建议：
 
@@ -127,8 +127,8 @@ Windows 复刻建议：
 
 证据：
 
-- `ClaudeMac/Models/ChatModels.swift:210`
-- `ClaudeMac/Models/ChatModels.swift:221`
+- `Codevoke/Models/ChatModels.swift:210`
+- `Codevoke/Models/ChatModels.swift:221`
 
 Windows 复刻建议：
 
@@ -150,7 +150,7 @@ Windows 复刻建议：
 - `failed`：失败。
 - `unsupportedVersion`：CLI 或协议能力不支持。
 
-证据：`ClaudeMac/Models/ChatModels.swift:227`
+证据：`Codevoke/Models/ChatModels.swift:227`
 
 Windows 复刻建议：
 
@@ -168,7 +168,7 @@ Windows 复刻建议：
 - `respondToInteractiveRequest(requestID, response)`：选择题/文本输入回写。
 - `sendCompact()`：上下文压缩。
 
-证据：`ClaudeMac/Services/Chat/ChatProcessBackend.swift:4`
+证据：`Codevoke/Services/Chat/ChatProcessBackend.swift:4`
 
 统一层价值：
 
@@ -197,12 +197,12 @@ Claude backend 当前以非 PTY 的 `Process + Pipe` 启动 CLI，输出走 stdo
 
 证据：
 
-- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:43`
-- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:48`
-- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:89`
-- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:119`
-- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:208`
-- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:221`
+- `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:43`
+- `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:48`
+- `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:89`
+- `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:119`
+- `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:208`
+- `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:221`
 
 重要限制：
 
@@ -227,9 +227,9 @@ Claude 事件最终统一映射为：
 
 证据：
 
-- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:325`
-- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:436`
-- `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:488`
+- `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:325`
+- `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:436`
+- `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:488`
 
 Windows 复刻建议：
 
@@ -254,11 +254,11 @@ Codex 使用 `app-server --listen stdio://`，通过 stdin/stdout JSONL 承载 J
 
 证据：
 
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:33`
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:208`
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:239`
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:255`
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:459`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:33`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:208`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:239`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:255`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:459`
 
 ### 6.2 JSON-RPC 映射
 
@@ -270,9 +270,9 @@ Codex backend 处理三类消息：
 
 证据：
 
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:364`
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:434`
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:436`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:364`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:434`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:436`
 
 ### 6.3 requestID / itemID 合并策略
 
@@ -283,7 +283,7 @@ Codex command output 和 diff 容易出现缺少稳定 item id 的情况。当�
 3. 如果仍没有 id，使用 `activeTurnID-method-counter` 生成 fallback id。
 4. 这样避免多个 command output 全部落入 nil requestID，导致 UI 合并成一条。
 
-证据：`ClaudeMac/Services/Chat/CodexAppServerBackend.swift:521`
+证据：`Codevoke/Services/Chat/CodexAppServerBackend.swift:521`
 
 Windows 复刻建议：
 
@@ -301,11 +301,11 @@ Codex backend 支持：
 
 证据：
 
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:156`
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:179`
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:377`
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:606`
-- `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:610`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:156`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:179`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:377`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:606`
+- `Codevoke/Services/Chat/CodexAppServerBackend.swift:610`
 
 Windows 风险：
 
@@ -335,11 +335,11 @@ Windows 风险：
 
 证据：
 
-- `ClaudeMac/Services/Chat/ChatProcessBackend.swift:54`
-- `ClaudeMac/Services/Chat/ChatProcessBackend.swift:94`
-- `ClaudeMac/Services/Chat/ChatProcessBackend.swift:138`
-- `ClaudeMac/Services/Chat/ChatProcessBackend.swift:189`
-- `ClaudeMac/Services/Chat/ChatProcessBackend.swift:210`
+- `Codevoke/Services/Chat/ChatProcessBackend.swift:54`
+- `Codevoke/Services/Chat/ChatProcessBackend.swift:94`
+- `Codevoke/Services/Chat/ChatProcessBackend.swift:138`
+- `Codevoke/Services/Chat/ChatProcessBackend.swift:189`
+- `Codevoke/Services/Chat/ChatProcessBackend.swift:210`
 
 Windows 复刻建议：
 
@@ -368,9 +368,9 @@ Windows 复刻建议：
 
 证据：
 
-- `ClaudeMac/ViewModels/ChatPanelState.swift:3`
-- `ClaudeMac/ViewModels/ChatPanelState.swift:173`
-- `ClaudeMac/ViewModels/ChatPanelState.swift:217`
+- `Codevoke/ViewModels/ChatPanelState.swift:3`
+- `Codevoke/ViewModels/ChatPanelState.swift:173`
+- `Codevoke/ViewModels/ChatPanelState.swift:217`
 
 设计原因：
 
@@ -390,7 +390,7 @@ Windows 复刻建议：
 6. 创建 Claude 或 Codex backend。
 7. 启动 async stream 并逐个 `apply(event)`。
 
-证据：`ClaudeMac/ViewModels/ChatPanelState.swift:217`
+证据：`Codevoke/ViewModels/ChatPanelState.swift:217`
 
 ### 8.3 Backend 事件落地
 
@@ -403,7 +403,7 @@ Windows 复刻建议：
 - finished → 标记可在 backend stream 结束后出队。
 - failed → 停止当前 run，不自动出队。
 
-证据：`ClaudeMac/ViewModels/ChatPanelState.swift:433`
+证据：`Codevoke/ViewModels/ChatPanelState.swift:433`
 
 ### 8.4 Backend 结束后才出队
 
@@ -415,8 +415,8 @@ Windows 复刻建议：
 
 证据：
 
-- `ClaudeMac/ViewModels/ChatPanelState.swift:541`
-- `ClaudeMac/ViewModels/ChatPanelState.swift:620`
+- `Codevoke/ViewModels/ChatPanelState.swift:541`
+- `Codevoke/ViewModels/ChatPanelState.swift:620`
 
 设计原因：
 
@@ -449,8 +449,8 @@ Windows 复刻建议：
 
 证据：
 
-- `ClaudeMac/Views/ClaudeSessionPanelView.swift:140`
-- `ClaudeMac/Views/ClaudeSessionPanelView.swift:172`
+- `Codevoke/Views/ClaudeSessionPanelView.swift:140`
+- `Codevoke/Views/ClaudeSessionPanelView.swift:172`
 
 ### 9.2 Delta 合并规则
 
@@ -461,8 +461,8 @@ Windows 复刻建议：
 
 证据：
 
-- `ClaudeMac/ViewModels/ChatPanelState.swift:558`
-- `ClaudeMac/ViewModels/ChatPanelState.swift:627`
+- `Codevoke/ViewModels/ChatPanelState.swift:558`
+- `Codevoke/ViewModels/ChatPanelState.swift:627`
 
 设计效果：
 
@@ -481,9 +481,9 @@ assistant 回复不再只按纯文本渲染，输出层要识别常见 Markdown 
 
 证据：
 
-- `ClaudeMac/Views/ClaudeSessionPanelView.swift:286`
-- `ClaudeMac/Views/ClaudeSessionPanelView.swift:1219`
-- `ClaudeMac/Views/ClaudeSessionPanelView.swift:1271`
+- `Codevoke/Views/ClaudeSessionPanelView.swift:286`
+- `Codevoke/Views/ClaudeSessionPanelView.swift:1219`
+- `Codevoke/Views/ClaudeSessionPanelView.swift:1271`
 
 Windows 复刻建议：
 
@@ -509,8 +509,8 @@ Windows 复刻建议：
 
 证据：
 
-- `ClaudeMac/Views/ClaudeSessionPanelView.swift:327`
-- `ClaudeMac/Views/ClaudeSessionPanelView.swift:431`
+- `Codevoke/Views/ClaudeSessionPanelView.swift:327`
+- `Codevoke/Views/ClaudeSessionPanelView.swift:431`
 
 Windows 复刻建议：
 
@@ -532,7 +532,7 @@ thinking 行设计：
 - 标题和正文使用接近普通回复的字号，不做过小二级日志样式。
 - 不加边框、卡片背景或强容器感，避免把 thinking 看成工具结果。
 
-证据：`ClaudeMac/Views/ClaudeSessionPanelView.swift:391`
+证据：`Codevoke/Views/ClaudeSessionPanelView.swift:391`
 
 Windows 复刻建议：
 
@@ -561,10 +561,10 @@ Windows 复刻建议：
 
 证据：
 
-- Agent process 入口：`ClaudeMac/Views/ClaudeSessionPanelView.swift:429`
-- process sheet：`ClaudeMac/Views/ClaudeSessionPanelView.swift:2444`
-- 子代理读取：`ClaudeMac/Services/Chat/SubagentTranscriptStore.swift:76`
-- 子代理 block 映射：`ClaudeMac/Services/Chat/SubagentTranscriptStore.swift:187`
+- Agent process 入口：`Codevoke/Views/ClaudeSessionPanelView.swift:429`
+- process sheet：`Codevoke/Views/ClaudeSessionPanelView.swift:2444`
+- 子代理读取：`Codevoke/Services/Chat/SubagentTranscriptStore.swift:76`
+- 子代理 block 映射：`Codevoke/Services/Chat/SubagentTranscriptStore.swift:187`
 
 ## 10. 队列消息设计
 
@@ -581,9 +581,9 @@ Windows 复刻建议：
 
 证据：
 
-- `ClaudeMac/ViewModels/ChatPanelState.swift:173`
-- `ClaudeMac/ViewModels/ChatPanelState.swift:620`
-- `ClaudeMac/Views/ClaudeSessionPanelView.swift:598`
+- `Codevoke/ViewModels/ChatPanelState.swift:173`
+- `Codevoke/ViewModels/ChatPanelState.swift:620`
+- `Codevoke/Views/ClaudeSessionPanelView.swift:598`
 
 ### 10.2 停止与失败
 
@@ -599,7 +599,7 @@ Windows 复刻建议：
 - 不自动出队。
 - 保留队列，等待用户下一步。
 
-证据：`ClaudeMac/ViewModels/ChatPanelState.swift:541`
+证据：`Codevoke/ViewModels/ChatPanelState.swift:541`
 
 设计原因：
 
@@ -617,7 +617,7 @@ Windows 复刻建议：
 - 删除直接移除队列项；编辑会把队列文本回填到输入框并从队列中移除。
 - 队列消息也支持拖入输入框编辑，拖拽排序可直接调整未开始请求的执行顺序。
 
-证据：`ClaudeMac/Views/ClaudeSessionPanelView.swift:598`
+证据：`Codevoke/Views/ClaudeSessionPanelView.swift:598`
 
 Windows 复刻建议：
 
@@ -650,13 +650,13 @@ Windows 复刻建议：
 
 证据：
 
-- UI row 分发：`ClaudeMac/Views/ClaudeSessionPanelView.swift:253`
-- interactive card：`ClaudeMac/Views/ClaudeSessionPanelView.swift:1186`
-- selector buttons：`ClaudeMac/Views/ClaudeSessionPanelView.swift:1032`
-- root picker layer：`ClaudeMac/Views/ClaudeSessionPanelView.swift:68`
-- picker layer implementation：`ClaudeMac/Views/ClaudeSessionPanelView.swift:1117`
-- send button：`ClaudeMac/Views/ClaudeSessionPanelView.swift:925`
-- workbench split：`ClaudeMac/Views/RootView.swift:59`
+- UI row 分发：`Codevoke/Views/ClaudeSessionPanelView.swift:253`
+- interactive card：`Codevoke/Views/ClaudeSessionPanelView.swift:1186`
+- selector buttons：`Codevoke/Views/ClaudeSessionPanelView.swift:1032`
+- root picker layer：`Codevoke/Views/ClaudeSessionPanelView.swift:68`
+- picker layer implementation：`Codevoke/Views/ClaudeSessionPanelView.swift:1117`
+- send button：`Codevoke/Views/ClaudeSessionPanelView.swift:925`
+- workbench split：`Codevoke/Views/RootView.swift:59`
 
 ### 11.1 全局浮层层级规则
 
@@ -680,7 +680,7 @@ Windows 复刻要求：
 
 触发自动滚到底。
 
-证据：`ClaudeMac/Views/ClaudeSessionPanelView.swift:140`
+证据：`Codevoke/Views/ClaudeSessionPanelView.swift:140`
 
 状态机中：
 
@@ -711,19 +711,19 @@ Windows 复刻建议：
 
 证据：
 
-- runtime store 活动发布：`ClaudeMac/Services/Chat/ChatRuntimeStore.swift:51`
-- delta flush：`ClaudeMac/ViewModels/ChatPanelState.swift:672`
-- 消息持久化节流：`ClaudeMac/ViewModels/ChatPanelState.swift:789`
-- transcript 缓存：`ClaudeMac/Views/ClaudeSessionPanelView.swift:213`
-- 自动滚动节流：`ClaudeMac/Views/ClaudeSessionPanelView.swift:239`
-- assistant parse cache：`ClaudeMac/Views/ClaudeSessionPanelView.swift:2038`
-- 当前 CLI 过滤历史：`ClaudeMac/Views/ProjectSidebarView.swift:119`
+- runtime store 活动发布：`Codevoke/Services/Chat/ChatRuntimeStore.swift:51`
+- delta flush：`Codevoke/ViewModels/ChatPanelState.swift:672`
+- 消息持久化节流：`Codevoke/ViewModels/ChatPanelState.swift:789`
+- transcript 缓存：`Codevoke/Views/ClaudeSessionPanelView.swift:213`
+- 自动滚动节流：`Codevoke/Views/ClaudeSessionPanelView.swift:239`
+- assistant parse cache：`Codevoke/Views/ClaudeSessionPanelView.swift:2038`
+- 当前 CLI 过滤历史：`Codevoke/Views/ProjectSidebarView.swift:119`
 
 ## 13. 历史会话与持久化
 
 ### 13.1 本地 Codevoke 会话
 
-本地聊天数据当前放在 Application Support 的 `Codevoke` 目录，旧 `ClaudeMac` 和 sandbox 目录会被迁移复制。聊天数据拆为三类：
+本地聊天数据当前放在 Application Support 的 `Codevoke` 目录，旧 `Codevoke` 和 sandbox 目录会被迁移复制。聊天数据拆为三类：
 
 - `chat-sessions.json`：会话索引数组，保存 title、projectPath、CLI、externalSessionID、runStatus、queuedRequests、activeRunRequest 等。
 - `chat-messages/<uuid>.jsonl`：每行一条 `ChatMessage`，便于排障和增量恢复。
@@ -733,12 +733,12 @@ Windows 复刻建议：
 
 证据：
 
-- Codevoke Application Support：`ClaudeMac/Services/ProjectStore.swift:30`
-- 存储文件名：`ClaudeMac/Services/Chat/ChatSessionStore.swift:4`
-- JSONL 消息保存：`ClaudeMac/Services/Chat/ChatSessionStore.swift:36`
-- draft 保存：`ClaudeMac/Services/Chat/ChatSessionStore.swift:70`
-- 会话运行态字段：`ClaudeMac/Models/ChatModels.swift:347`
-- active run 中断恢复：`ClaudeMac/Models/ChatModels.swift:443`
+- Codevoke Application Support：`Codevoke/Services/ProjectStore.swift:30`
+- 存储文件名：`Codevoke/Services/Chat/ChatSessionStore.swift:4`
+- JSONL 消息保存：`Codevoke/Services/Chat/ChatSessionStore.swift:36`
+- draft 保存：`Codevoke/Services/Chat/ChatSessionStore.swift:70`
+- 会话运行态字段：`Codevoke/Models/ChatModels.swift:347`
+- active run 中断恢复：`Codevoke/Models/ChatModels.swift:443`
 
 ### 13.2 历史列表当前边界
 
@@ -751,10 +751,10 @@ Windows 复刻建议：
 
 证据：
 
-- 本地 session store：`ClaudeMac/Services/Chat/ChatSessionStore.swift`
-- 侧栏当前 CLI 过滤：`ClaudeMac/Views/ProjectSidebarView.swift`
-- 本地历史加载：`ClaudeMac/ViewModels/AppState.swift`
-- 外部扫描源文件 `ClaudeMac/Services/ClaudeHistoryScanner.swift` 已删除
+- 本地 session store：`Codevoke/Services/Chat/ChatSessionStore.swift`
+- 侧栏当前 CLI 过滤：`Codevoke/Views/ProjectSidebarView.swift`
+- 本地历史加载：`Codevoke/ViewModels/AppState.swift`
+- 外部扫描源文件 `Codevoke/Services/ClaudeHistoryScanner.swift` 已删除
 
 Windows 复刻建议：
 
@@ -851,12 +851,12 @@ Windows 缺口：
 
 证据：
 
-- Theme token：`ClaudeMac/Views/GlassPanel.swift:4`
-- GlassPanel：`ClaudeMac/Views/GlassPanel.swift:16`
-- Sidebar 密度：`ClaudeMac/Views/ProjectSidebarView.swift:14`
-- Chat panel 布局：`ClaudeMac/Views/ClaudeSessionPanelView.swift:67`
-- Composer 密度：`ClaudeMac/Views/ClaudeSessionPanelView.swift:830`
-- VisualEffectView：`ClaudeMac/AppKit/VisualEffectView.swift:4`
+- Theme token：`Codevoke/Views/GlassPanel.swift:4`
+- GlassPanel：`Codevoke/Views/GlassPanel.swift:16`
+- Sidebar 密度：`Codevoke/Views/ProjectSidebarView.swift:14`
+- Chat panel 布局：`Codevoke/Views/ClaudeSessionPanelView.swift:67`
+- Composer 密度：`Codevoke/Views/ClaudeSessionPanelView.swift:830`
+- VisualEffectView：`Codevoke/AppKit/VisualEffectView.swift:4`
 
 ## 15. 调试与验证建议
 
@@ -1056,44 +1056,44 @@ Windows 缺口：
 
 | 主题 | 文件与行号 |
 | --- | --- |
-| backend 协议 | `ClaudeMac/Services/Chat/ChatProcessBackend.swift:4` |
-| CLI 环境 | `ClaudeMac/Services/Chat/ChatProcessBackend.swift:54` |
-| process environment | `ClaudeMac/Services/Chat/ChatProcessBackend.swift:94` |
-| 代理镜像 | `ClaudeMac/Services/Chat/ChatProcessBackend.swift:189` |
-| message kind | `ClaudeMac/Models/ChatModels.swift:174` |
-| interactive request | `ClaudeMac/Models/ChatModels.swift:210` |
-| run status | `ClaudeMac/Models/ChatModels.swift:227` |
-| backend event | `ClaudeMac/Models/ChatModels.swift:394` |
-| queued request | `ClaudeMac/ViewModels/ChatPanelState.swift:3` |
-| send | `ClaudeMac/ViewModels/ChatPanelState.swift:173` |
-| startRun | `ClaudeMac/ViewModels/ChatPanelState.swift:217` |
-| apply event | `ClaudeMac/ViewModels/ChatPanelState.swift:433` |
-| backendStreamDidEnd | `ClaudeMac/ViewModels/ChatPanelState.swift:541` |
-| appendDelta | `ClaudeMac/ViewModels/ChatPanelState.swift:558` |
-| startNextQueuedRequestIfNeeded | `ClaudeMac/ViewModels/ChatPanelState.swift:620` |
-| assistant/reasoning 合并约束 | `ClaudeMac/ViewModels/ChatPanelState.swift:627` |
-| transcript | `ClaudeMac/Views/ClaudeSessionPanelView.swift:140` |
-| transcriptItems | `ClaudeMac/Views/ClaudeSessionPanelView.swift:172` |
-| tool row | `ClaudeMac/Views/ClaudeSessionPanelView.swift:337` |
-| file tool chip/open | `ClaudeMac/Views/ClaudeSessionPanelView.swift:386` / `ClaudeMac/ViewModels/AppState.swift:226` |
-| terminal detail card | `ClaudeMac/Views/ClaudeSessionPanelView.swift:467` |
-| tool display helpers | `ClaudeMac/Views/ClaudeSessionPanelView.swift:1955` |
-| thinking row | `ClaudeMac/Views/ClaudeSessionPanelView.swift:484` |
-| last visible row | `ClaudeMac/Views/ClaudeSessionPanelView.swift:431` |
-| queue view | `ClaudeMac/Views/ClaudeSessionPanelView.swift:598` |
-| send button | `ClaudeMac/Views/ClaudeSessionPanelView.swift:925` |
-| interactive card | `ClaudeMac/Views/ClaudeSessionPanelView.swift:1186` |
-| Claude backend start | `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:43` |
-| Claude permission response | `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:208` |
-| Claude interactive response | `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:221` |
-| Claude interactive parsing | `ClaudeMac/Services/Chat/ClaudeCodeProcessBackend.swift:488` |
-| Codex backend start | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:33` |
-| Codex permission response | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:156` |
-| Codex interactive response | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:179` |
-| Codex initialize | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:208` |
-| Codex turn/start | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:255` |
-| Codex output id | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:521` |
-| Codex interactive parsing | `ClaudeMac/Services/Chat/CodexAppServerBackend.swift:543` |
+| backend 协议 | `Codevoke/Services/Chat/ChatProcessBackend.swift:4` |
+| CLI 环境 | `Codevoke/Services/Chat/ChatProcessBackend.swift:54` |
+| process environment | `Codevoke/Services/Chat/ChatProcessBackend.swift:94` |
+| 代理镜像 | `Codevoke/Services/Chat/ChatProcessBackend.swift:189` |
+| message kind | `Codevoke/Models/ChatModels.swift:174` |
+| interactive request | `Codevoke/Models/ChatModels.swift:210` |
+| run status | `Codevoke/Models/ChatModels.swift:227` |
+| backend event | `Codevoke/Models/ChatModels.swift:394` |
+| queued request | `Codevoke/ViewModels/ChatPanelState.swift:3` |
+| send | `Codevoke/ViewModels/ChatPanelState.swift:173` |
+| startRun | `Codevoke/ViewModels/ChatPanelState.swift:217` |
+| apply event | `Codevoke/ViewModels/ChatPanelState.swift:433` |
+| backendStreamDidEnd | `Codevoke/ViewModels/ChatPanelState.swift:541` |
+| appendDelta | `Codevoke/ViewModels/ChatPanelState.swift:558` |
+| startNextQueuedRequestIfNeeded | `Codevoke/ViewModels/ChatPanelState.swift:620` |
+| assistant/reasoning 合并约束 | `Codevoke/ViewModels/ChatPanelState.swift:627` |
+| transcript | `Codevoke/Views/ClaudeSessionPanelView.swift:140` |
+| transcriptItems | `Codevoke/Views/ClaudeSessionPanelView.swift:172` |
+| tool row | `Codevoke/Views/ClaudeSessionPanelView.swift:337` |
+| file tool chip/open | `Codevoke/Views/ClaudeSessionPanelView.swift:386` / `Codevoke/ViewModels/AppState.swift:226` |
+| terminal detail card | `Codevoke/Views/ClaudeSessionPanelView.swift:467` |
+| tool display helpers | `Codevoke/Views/ClaudeSessionPanelView.swift:1955` |
+| thinking row | `Codevoke/Views/ClaudeSessionPanelView.swift:484` |
+| last visible row | `Codevoke/Views/ClaudeSessionPanelView.swift:431` |
+| queue view | `Codevoke/Views/ClaudeSessionPanelView.swift:598` |
+| send button | `Codevoke/Views/ClaudeSessionPanelView.swift:925` |
+| interactive card | `Codevoke/Views/ClaudeSessionPanelView.swift:1186` |
+| Claude backend start | `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:43` |
+| Claude permission response | `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:208` |
+| Claude interactive response | `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:221` |
+| Claude interactive parsing | `Codevoke/Services/Chat/ClaudeCodeProcessBackend.swift:488` |
+| Codex backend start | `Codevoke/Services/Chat/CodexAppServerBackend.swift:33` |
+| Codex permission response | `Codevoke/Services/Chat/CodexAppServerBackend.swift:156` |
+| Codex interactive response | `Codevoke/Services/Chat/CodexAppServerBackend.swift:179` |
+| Codex initialize | `Codevoke/Services/Chat/CodexAppServerBackend.swift:208` |
+| Codex turn/start | `Codevoke/Services/Chat/CodexAppServerBackend.swift:255` |
+| Codex output id | `Codevoke/Services/Chat/CodexAppServerBackend.swift:521` |
+| Codex interactive parsing | `Codevoke/Services/Chat/CodexAppServerBackend.swift:543` |
 
 ## 21. 结论
 

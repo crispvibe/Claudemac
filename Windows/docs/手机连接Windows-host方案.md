@@ -10,7 +10,7 @@
 
 ## 0. 背景与现状结论（调研已完成）
 
-- **唯一的 host 目前是 macOS 端**（`ClaudeMac/Services/RemoteChat/RemoteChatServer.swift`，监听 18765）。
+- **唯一的 host 目前是 macOS 端**（`Codevoke/Services/RemoteChat/RemoteChatServer.swift`，监听 18765）。
 - iOS / Android / **Windows 都是客户端**，都是去连 Mac。
 - Windows 设置页自己写明：「Host/Port 监听模式暂未接入」（`SettingsPage.tsx`）；
   整个 Windows 工程没有任何 server / listen / 端口绑定；`SignalingClient` 只会

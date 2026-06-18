@@ -4,7 +4,7 @@
 
 - 目标产物：`build/releases/acode-macos.dmg`
 - App bundle：`Codevoke.app`
-- Bundle ID：`vin.anna.ClaudeMac`
+- Bundle ID：`vin.anna.Codevoke`
 - Apple ID：`99400504@qq.com`
 - Team ID：`XY6Z92AMPS`
 - Developer ID 证书：`Developer ID Application: Zhang XueFeng (XY6Z92AMPS)`
@@ -42,11 +42,11 @@ scripts/package-macos-app.sh
 脚本会执行：
 
 1. 检查本机 Developer ID 签名证书。
-2. 使用 `ClaudeMac.xcodeproj` / `ClaudeMac` scheme 构建 Release。
+2. 使用 `Codevoke.xcodeproj` / `Codevoke` scheme 构建 Release。
 3. 强制 Universal 构建：`ARCHS="arm64 x86_64"`、`ONLY_ACTIVE_ARCH=NO`。
 4. 用 `lipo` 校验主程序和内嵌 Mach-O framework 架构。
 5. 对内嵌 `.framework` 使用 Developer ID、Hardened Runtime、secure timestamp 重签。
-6. 对 `Codevoke.app` 使用 `ClaudeMac/ClaudeMac.entitlements`、Developer ID、Hardened Runtime、secure timestamp 重签。
+6. 对 `Codevoke.app` 使用 `Codevoke/Codevoke.entitlements`、Developer ID、Hardened Runtime、secure timestamp 重签。
 7. 校验 `codesign --verify --deep --strict`、签名 Authority 和 Team ID。
 8. strip 发布包符号、校验无 debug entitlement，生成并签名 `build/releases/acode-macos.dmg`。
 

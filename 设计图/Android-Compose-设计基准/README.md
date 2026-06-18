@@ -1,6 +1,6 @@
 # Android Compose 设计基准
 
-用途：这个目录用于 Android 原生 Kotlin + Compose 还原 iOS Codevoke 的视觉和交互，不作为方案文档。Android 端稳定设计规范沉淀在 `/Users/oreo/Desktop/ClaudeMac/Android/DESIGN.md`。
+用途：这个目录用于 Android 原生 Kotlin + Compose 还原 iOS Codevoke 的视觉和交互，不作为方案文档。Android 端稳定设计规范沉淀在 `/Users/oreo/Desktop/Codevoke/Android/DESIGN.md`。
 
 ## 截图
 
@@ -21,16 +21,16 @@
 
 ## iOS 证据
 
-- 色彩、玻璃、圆角、阴影：`AcodeIOS/Codevoke/Views/VisualStyle.swift`
-- 聊天顶部栏、消息列表、空态、底部输入栏：`AcodeIOS/Codevoke/Views/ChatView.swift`
-- 输入框、附件按钮、发送按钮：`AcodeIOS/Codevoke/Views/InputBarView.swift`
-- 左侧抽屉：`AcodeIOS/Codevoke/Views/SidebarView.swift`
-- 侧栏遮罩、宽度、边缘手势：`AcodeIOS/Codevoke/Views/RootView.swift`
-- 远程设备：`AcodeIOS/Codevoke/Views/DeviceListView.swift`
-- 设置页：`AcodeIOS/Codevoke/Views/SettingsView.swift`
-- 登录/注册：`AcodeIOS/Codevoke/Views/Auth/LoginView.swift`、`AcodeIOS/Codevoke/Views/Auth/RegisterView.swift`
-- 登录/注册公共组件：`AcodeIOS/Codevoke/Views/Auth/AuthComponents.swift`
-- 登录/注册/法律文档接口：`AcodeIOS/Codevoke/ViewModels/AuthViewModel.swift`、`AcodeIOS/Codevoke/Networking/RemoteAuthClient.swift`、`AcodeIOS/Codevoke/Networking/RemoteLegalClient.swift`
+- 色彩、玻璃、圆角、阴影：`CodevokeIOS/Codevoke/Views/VisualStyle.swift`
+- 聊天顶部栏、消息列表、空态、底部输入栏：`CodevokeIOS/Codevoke/Views/ChatView.swift`
+- 输入框、附件按钮、发送按钮：`CodevokeIOS/Codevoke/Views/InputBarView.swift`
+- 左侧抽屉：`CodevokeIOS/Codevoke/Views/SidebarView.swift`
+- 侧栏遮罩、宽度、边缘手势：`CodevokeIOS/Codevoke/Views/RootView.swift`
+- 远程设备：`CodevokeIOS/Codevoke/Views/DeviceListView.swift`
+- 设置页：`CodevokeIOS/Codevoke/Views/SettingsView.swift`
+- 登录/注册：`CodevokeIOS/Codevoke/Views/Auth/LoginView.swift`、`CodevokeIOS/Codevoke/Views/Auth/RegisterView.swift`
+- 登录/注册公共组件：`CodevokeIOS/Codevoke/Views/Auth/AuthComponents.swift`
+- 登录/注册/法律文档接口：`CodevokeIOS/Codevoke/ViewModels/AuthViewModel.swift`、`CodevokeIOS/Codevoke/Networking/RemoteAuthClient.swift`、`CodevokeIOS/Codevoke/Networking/RemoteLegalClient.swift`
 
 ## 还原硬规则
 
@@ -65,7 +65,7 @@
 
 ## 后续页面实现要求
 
-- 写 screen 前先读 `/Users/oreo/Desktop/ClaudeMac/Android/DESIGN.md`。
+- 写 screen 前先读 `/Users/oreo/Desktop/Codevoke/Android/DESIGN.md`。
 - screen 里不要继续散写全局 magic number；优先用 `CodevokeColor`、`CodevokeRadius`、`CodevokeSpace`、`CodevokeSize`、`CodevokeType`、`CodevokeAlpha`。
 - 新增公共视觉值必须先沉淀到 token，再在组件或 screen 使用。
 - 截图负责视觉位置感，iOS 源码负责精确透明度、圆角、字号和交互值。

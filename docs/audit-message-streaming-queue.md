@@ -1,7 +1,7 @@
 # 域 B 审计 —— 消息流 / streaming / queue / 工具·权限·附件
 
 审计时间:2026-05-16  
-仓库:`/Users/oreo/Desktop/ClaudeMac` (HEAD = `cf10bef`)  
+仓库:`/Users/oreo/Desktop/Codevoke` (HEAD = `cf10bef`)  
 端点:`127.0.0.1:18765`,Mac App = 已加载到 Codevoke 进程  
 方式:静态读码 + 三轮活体 WS 验证(`/tmp/qa_*.py`)。**未修改任何代码、未 commit。**
 

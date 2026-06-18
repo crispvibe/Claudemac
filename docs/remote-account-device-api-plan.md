@@ -23,11 +23,11 @@
 
 相关文件：
 
-- `ClaudeMac/Services/RemoteChat/RemoteChatServer.swift`
-- `ClaudeMac/Services/RemoteChat/RemoteChatRouter.swift`
-- `ClaudeMac/Services/RemoteChat/RemoteChatBridge.swift`
-- `ClaudeMac/Services/RemoteChat/RemoteChatServerController.swift`
-- `ClaudeMac/Views/SettingsPageView.swift`
+- `Codevoke/Services/RemoteChat/RemoteChatServer.swift`
+- `Codevoke/Services/RemoteChat/RemoteChatRouter.swift`
+- `Codevoke/Services/RemoteChat/RemoteChatBridge.swift`
+- `Codevoke/Services/RemoteChat/RemoteChatServerController.swift`
+- `Codevoke/Views/SettingsPageView.swift`
 
 当前能力：
 
@@ -47,10 +47,10 @@
 
 相关文件：
 
-- `AcodeIOS/Codevoke/Networking/RemoteChatConfig.swift`
-- `AcodeIOS/Codevoke/Networking/RemoteHTTPClient.swift`
-- `AcodeIOS/Codevoke/Networking/RemoteWebSocketClient.swift`
-- `AcodeIOS/Codevoke/Views/SettingsView.swift`
+- `CodevokeIOS/Codevoke/Networking/RemoteChatConfig.swift`
+- `CodevokeIOS/Codevoke/Networking/RemoteHTTPClient.swift`
+- `CodevokeIOS/Codevoke/Networking/RemoteWebSocketClient.swift`
+- `CodevokeIOS/Codevoke/Views/SettingsView.swift`
 
 当前能力：
 
@@ -91,7 +91,7 @@
 - 响应结构：统一 `{code, data, msg}`
 - 当前业务路由入口：`initialize/router_biz.go`
 - 当前业务域样板：`dashboard`
-- 复制品已清理嵌套 `.git` 和 `.DS_Store`，后续可由 ClaudeMac 主仓库直接纳管
+- 复制品已清理嵌套 `.git` 和 `.DS_Store`，后续可由 Codevoke 主仓库直接纳管
 
 当前后端适合承接账号、设备、授权、订阅、审计、信令校验这类业务能力；但框架本身还没有 WebSocket/signaling 实现，也没有远程设备相关模型。
 
@@ -796,7 +796,7 @@ TURN 凭证建议使用 coturn REST API 临时用户名/密码，按用户、设
 建议新增：
 
 ```text
-ClaudeMac/Services/AccountRemote/
+Codevoke/Services/AccountRemote/
   AccountAuthClient.swift
   DeviceIdentityStore.swift
   DeviceRegistrationClient.swift
@@ -827,18 +827,18 @@ Mac 端 UI 改造：
 建议新增：
 
 ```text
-AcodeIOS/Codevoke/Networking/
+CodevokeIOS/Codevoke/Networking/
   AccountAPIClient.swift
   DeviceAPIClient.swift
   SignalingClient.swift
   PeerConnectionClient.swift
 
-AcodeIOS/Codevoke/Models/
+CodevokeIOS/Codevoke/Models/
   AccountModels.swift
   DeviceModels.swift
   SubscriptionModels.swift
 
-AcodeIOS/Codevoke/Views/
+CodevokeIOS/Codevoke/Views/
   LoginView.swift
   DeviceListView.swift
   DeviceCodeView.swift
@@ -860,7 +860,7 @@ AcodeIOS/Codevoke/Views/
 - 确认支付渠道。
 - 确认第一版是否必须 WebRTC，还是先做账号登录 + 设备发现 + signaling mock。
 - 确认远程用户是否复用 `accounts`，还是新增独立 C 端用户表。
-- `后端/.git` 已删除，ClaudeMac 主仓库可直接纳管后端源码。
+- `后端/.git` 已删除，Codevoke 主仓库可直接纳管后端源码。
 
 ### M1：Go API 骨架
 

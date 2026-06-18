@@ -6,12 +6,12 @@ set -euo pipefail
 #
 # Common overrides:
 #   RELEASE_NOTES="..." FORCE_UPDATE=1 scripts/deploy-macos-update.sh
-#   DMG_PATH=/path/to/annacode-macos.dmg APP_PATH=/path/to/AnnaCode.app scripts/deploy-macos-update.sh
+#   DMG_PATH=/path/to/codevoke-macos.dmg APP_PATH=/path/to/Codevoke.app scripts/deploy-macos-update.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-DMG_PATH="${DMG_PATH:-$ROOT_DIR/build/releases/annacode-macos.dmg}"
-APP_PATH="${APP_PATH:-/Users/oreo/Desktop/AnnaCode.app}"
+DMG_PATH="${DMG_PATH:-$ROOT_DIR/build/releases/codevoke-macos.dmg}"
+APP_PATH="${APP_PATH:-/Users/oreo/Desktop/Codevoke.app}"
 
 SSH_KEY="${SSH_KEY:-/Users/oreo/Desktop/ssh-root-8.156.64.76-ed25519}"
 REMOTE_HOST="${REMOTE_HOST:-8.156.64.76}"
@@ -20,7 +20,7 @@ REMOTE_PORT="${REMOTE_PORT:-22}"
 REMOTE_ROOT="${REMOTE_ROOT:-/www/wwwroot/acode.anna.vin}"
 REMOTE_DOWNLOAD_DIR="${REMOTE_DOWNLOAD_DIR:-$REMOTE_ROOT/downloads}"
 REMOTE_RELEASE_DIR="${REMOTE_RELEASE_DIR:-$REMOTE_DOWNLOAD_DIR/releases}"
-REMOTE_DMG_NAME="${REMOTE_DMG_NAME:-annacode-macos.dmg}"
+REMOTE_DMG_NAME="${REMOTE_DMG_NAME:-codevoke-macos.dmg}"
 DOWNLOAD_BASE_URL="${DOWNLOAD_BASE_URL:-https://acode.anna.vin/downloads}"
 DOWNLOAD_URL="${DOWNLOAD_URL:-$DOWNLOAD_BASE_URL/$REMOTE_DMG_NAME}"
 
@@ -44,9 +44,9 @@ SSH_ARGS=(-i "$SSH_KEY" -p "$REMOTE_PORT" -o BatchMode=yes -o StrictHostKeyCheck
 SCP_ARGS=(-i "$SSH_KEY" -P "$REMOTE_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 
 TMP_DIR="$(mktemp -d)"
-SQL_FILE="$TMP_DIR/annacode-macos-update.sql"
+SQL_FILE="$TMP_DIR/codevoke-macos-update.sql"
 REMOTE_TMP_DMG="$REMOTE_DOWNLOAD_DIR/.${REMOTE_DMG_NAME}.tmp-$(date +%Y%m%d%H%M%S)-$$"
-REMOTE_TMP_SQL="/tmp/annacode-macos-update-$(date +%Y%m%d%H%M%S)-$$.sql"
+REMOTE_TMP_SQL="/tmp/codevoke-macos-update-$(date +%Y%m%d%H%M%S)-$$.sql"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -141,7 +141,7 @@ remote_size=\$(stat -c '%s' '$(printf "%q" "$REMOTE_TMP_DMG")')
 test \"\$remote_sha\" = '$(printf "%q" "$digest")'
 test \"\$remote_size\" = '$(printf "%q" "$size")'
 if [ -f '$(printf "%q" "$REMOTE_DOWNLOAD_DIR/$REMOTE_DMG_NAME")' ]; then
-  cp -f '$(printf "%q" "$REMOTE_DOWNLOAD_DIR/$REMOTE_DMG_NAME")' '$(printf "%q" "$REMOTE_RELEASE_DIR/annacode-macos-$VERSION-$BUILD_NUMBER-$(date +%Y%m%d%H%M%S).dmg")'
+  cp -f '$(printf "%q" "$REMOTE_DOWNLOAD_DIR/$REMOTE_DMG_NAME")' '$(printf "%q" "$REMOTE_RELEASE_DIR/codevoke-macos-$VERSION-$BUILD_NUMBER-$(date +%Y%m%d%H%M%S).dmg")'
 fi
 mv -f '$(printf "%q" "$REMOTE_TMP_DMG")' '$(printf "%q" "$REMOTE_DOWNLOAD_DIR/$REMOTE_DMG_NAME")'
 chmod 0644 '$(printf "%q" "$REMOTE_DOWNLOAD_DIR/$REMOTE_DMG_NAME")'"

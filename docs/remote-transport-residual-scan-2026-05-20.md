@@ -6,17 +6,17 @@ Scope: residual scan for ICE/TURN aliases, user-facing transport text, backend T
 
 1. `remote/turn/ice-servers` is still a live compatibility alias.
    - Backend exposes both `remote/ice-config` and `remote/turn/ice-servers`: `后端/server/router/biz/remote.go:40-41`.
-   - iOS and macOS account clients already call `remote/ice-config`: `AcodeIOS/Codevoke/Networking/RemoteDeviceClient.swift:61-63`, `ClaudeMac/Services/AccountRemote/DeviceRegistrationClient.swift:39-41`.
+   - iOS and macOS account clients already call `remote/ice-config`: `CodevokeIOS/Codevoke/Networking/RemoteDeviceClient.swift:61-63`, `Codevoke/Services/AccountRemote/DeviceRegistrationClient.swift:39-41`.
    - Android now calls `remote/ice-config`: `Android/app/src/main/java/com/acode/android/data/RemoteApiClient.kt:133-134`.
    - Recommendation: do not delete the alias yet. Mark it deprecated, keep current clients on `remote/ice-config`, then remove the alias after one release window.
 
 2. Mac local remote-chat router still exposes `/remote/turn/ice-servers`.
-   - Local router route: `ClaudeMac/Services/RemoteChat/RemoteChatRouter.swift:85-90`.
-   - It returns STUN-only ICE configuration: `ClaudeMac/Services/RemoteChat/RemoteChatRouter.swift:167-171`.
+   - Local router route: `Codevoke/Services/RemoteChat/RemoteChatRouter.swift:85-90`.
+   - It returns STUN-only ICE configuration: `Codevoke/Services/RemoteChat/RemoteChatRouter.swift:167-171`.
    - Recommendation: keep during compatibility, but add `/remote/ice-config` there too when core implementation ownership is clear. Then deprecate the old path.
 
 3. User-facing transport text no longer exposes LAN/TURN as usable transport modes.
-   - `RemoteUserFacingText.transport` maps `p2p` to "remote connection" and maps `lan` / `turn` to "unsupported transport": `AcodeIOS/Codevoke/Utils/RemoteUserFacingText.swift:49-57`.
+   - `RemoteUserFacingText.transport` maps `p2p` to "remote connection" and maps `lan` / `turn` to "unsupported transport": `CodevokeIOS/Codevoke/Utils/RemoteUserFacingText.swift:49-57`.
    - Localized error strings still mention `P2P` and `UDP/STUN` to explain direct-connect failure, but no longer mention fallback relay / server relay / TURN as a supported option.
    - Recommendation: keep protocol terms in diagnostics unless product copy should hide technical detail completely.
 
@@ -26,7 +26,7 @@ Scope: residual scan for ICE/TURN aliases, user-facing transport text, backend T
    - Config files still expose empty `turn-secret` and `turn-urls`: `后端/server/config.yaml:125-130`, `后端/server/config.deploy.yaml:130-135`, `后端/server/config.deploy-init.yaml:130-135`.
    - Recommendation: keep fields only if near-term TURN work is planned; otherwise add comments/docs that they are reserved/deprecated so deployers do not assume setting them enables relay.
 
-5. Release/package scripts target `Codevoke.app` and `acode-macos.dmg`; no `ClaudeMac.app` script target was found.
+5. Release/package scripts target `Codevoke.app` and `acode-macos.dmg`; no `Codevoke.app` script target was found.
    - Package script defaults: `scripts/package-macos-app.sh:7,10,153`.
    - Verification script checks Release product at `Codevoke.app`: `scripts/verify-build.sh:38-43`.
    - README and packaging docs also point at `~/Desktop/Codevoke.app` and `build/releases/acode-macos.dmg`.

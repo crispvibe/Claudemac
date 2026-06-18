@@ -4,7 +4,7 @@
 
 ## 目标
 
-实现一个 iOS App，让用户可以在手机上远程和 Mac 上的 ClaudeMac/Claude Code 会话对话。iOS 不做文件管理，只提供：
+实现一个 iOS App，让用户可以在手机上远程和 Mac 上的 Codevoke/Claude Code 会话对话。iOS 不做文件管理，只提供：
 
 - 项目列表
 - 历史会话
@@ -555,7 +555,7 @@ POST /api/devices/mac_8F3A92/connect
 ## Mac 端模块建议
 
 ```text
-ClaudeMac/Services/Remote/
+Codevoke/Services/Remote/
   RemoteDeviceIdentityStore.swift
   RemoteDeviceCodeStore.swift
   RemoteSignalingClient.swift

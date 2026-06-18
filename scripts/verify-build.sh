@@ -19,17 +19,17 @@ swift test --package-path Shared/ChatCore
 echo "==> swift build ChatUI"
 swift build --package-path Shared/ChatUI
 
-echo "==> xcodebuild ClaudeMac"
-xcodebuild -project ClaudeMac.xcodeproj -scheme ClaudeMac -configuration Debug \
+echo "==> xcodebuild Codevoke"
+xcodebuild -project Codevoke.xcodeproj -scheme Codevoke -configuration Debug \
   -destination 'platform=macOS' build -quiet
 
-echo "==> xcodebuild test ClaudeMac"
-xcodebuild test -project ClaudeMac.xcodeproj -scheme ClaudeMac \
+echo "==> xcodebuild test Codevoke"
+xcodebuild test -project Codevoke.xcodeproj -scheme Codevoke \
   -destination 'platform=macOS' -quiet
 
-echo "==> xcodebuild ClaudeMac Release universal"
+echo "==> xcodebuild Codevoke Release universal"
 MAC_VERIFY_DERIVED_DATA="$ROOT/build/VerifyMacUniversal"
-xcodebuild -project ClaudeMac.xcodeproj -scheme ClaudeMac -configuration Release \
+xcodebuild -project Codevoke.xcodeproj -scheme Codevoke -configuration Release \
   -destination 'generic/platform=macOS' \
   -derivedDataPath "$MAC_VERIFY_DERIVED_DATA" \
   CODE_SIGNING_ALLOWED=NO \
@@ -56,7 +56,7 @@ while IFS= read -r -d '' executable; do
 done < <(find "$MAC_APP/Contents/Frameworks" -type f -perm -111 -print0 2>/dev/null || true)
 
 echo "==> xcodebuild Codevoke"
-xcodebuild -project AcodeIOS/Codevoke.xcodeproj -scheme Codevoke -configuration Debug \
+xcodebuild -project CodevokeIOS/Codevoke.xcodeproj -scheme Codevoke -configuration Debug \
   -destination 'generic/platform=iOS' build -quiet
 
 echo "all green"
