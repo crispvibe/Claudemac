@@ -882,12 +882,12 @@ This means the legacy mirror plumbing (`NotificationCenter.default.post(.remoteC
 
 **Allowed to modify**:
 
-- All files under `AcodeIOS/Acode/` (Swift sources).
+- All files under `AcodeIOS/Codevoke/` (Swift sources).
 
 **Allowed to create**:
 
 - `AcodeIOS/Acode/ViewModels/PanelStateMirror.swift` (the new thin-client renderer state object — replaces `ChatViewModel`'s deleted bits).
-- Any new view/networking helper file inside `AcodeIOS/Acode/`.
+- Any new view/networking helper file inside `AcodeIOS/Codevoke/`.
 
 **Forbidden to modify**:
 

@@ -26,10 +26,10 @@ Scope: residual scan for ICE/TURN aliases, user-facing transport text, backend T
    - Config files still expose empty `turn-secret` and `turn-urls`: `后端/server/config.yaml:125-130`, `后端/server/config.deploy.yaml:130-135`, `后端/server/config.deploy-init.yaml:130-135`.
    - Recommendation: keep fields only if near-term TURN work is planned; otherwise add comments/docs that they are reserved/deprecated so deployers do not assume setting them enables relay.
 
-5. Release/package scripts target `Acode.app` and `acode-macos.dmg`; no `ClaudeMac.app` script target was found.
+5. Release/package scripts target `Codevoke.app` and `acode-macos.dmg`; no `ClaudeMac.app` script target was found.
    - Package script defaults: `scripts/package-macos-app.sh:7,10,153`.
-   - Verification script checks Release product at `Acode.app`: `scripts/verify-build.sh:38-43`.
-   - README and packaging docs also point at `~/Desktop/Acode.app` and `build/releases/acode-macos.dmg`.
+   - Verification script checks Release product at `Codevoke.app`: `scripts/verify-build.sh:38-43`.
+   - README and packaging docs also point at `~/Desktop/Codevoke.app` and `build/releases/acode-macos.dmg`.
    - Recommendation: no script target change needed for `acode.app`; keep validating these names in release smoke.
 
 ## Test Gap Filled

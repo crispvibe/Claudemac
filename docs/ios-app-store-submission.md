@@ -1,11 +1,11 @@
-# AnnaCode iOS App Store Submission Pack
+# Codevoke iOS App Store Submission Pack
 
 更新日期：2026-05-19
 
 ## App Review Notes
 
 ```text
-AnnaCode iOS is a free companion app for the user's own Mac running AnnaCode.
+Codevoke iOS is a free companion app for the user's own Mac running Codevoke.
 
 The iOS app does not include in-app purchases, subscriptions, paid plans, renewal flows, paywalls, external purchase links, or payment prompts. It is only used to sign in, pair with a user-owned Mac, start an authorized remote session, send chat messages, and upload user-selected photos/files to the connected Mac.
 
@@ -26,10 +26,10 @@ Test Mac:
 We can provide a prepared Mac device code or keep a Mac online during review if needed.
 
 Connection steps:
-1. Install Acode on the Mac from the download link above.
-2. Open Acode on the Mac and sign in with the same test account.
+1. Install Codevoke on the Mac from the download link above.
+2. Open Codevoke on the Mac and sign in with the same test account.
 3. In the Mac app, enable remote connection and display the device code.
-4. Open AnnaCode iOS, sign in with the same test account, then enter the Mac device code.
+4. Open Codevoke iOS, sign in with the same test account, then enter the Mac device code.
 5. Approve the connection on the Mac if prompted.
 6. After the connection is established, send a message from iOS and optionally attach a photo or file selected through the system picker.
 7. Account deletion is available in iOS Settings > Account & Security > Delete Account.
@@ -88,7 +88,7 @@ No tracking domains are declared.
 | 隐私政策 URL | `https://acode.anna.vin/privacy-ios.html` |
 | 支持 URL | `https://acode.anna.vin/support.html` |
 | 联系邮箱 | TODO |
-| 应用名称 | Acode |
+| 应用名称 | Codevoke |
 | 应用类型 | 免费远程伴侣工具 / 效率工具 |
 | 付费说明 | iOS 端免费，无 IAP，无订阅，无购买入口 |
 

@@ -37,7 +37,7 @@
 | 21 | Command.args 字段缺失/类型错 | Codable 严格 decode 失败 → server 发 `assistant_error` 事件并 close；**这是 legacy `RemoteChatStreamEvent` 帧，VNC iOS 客户端只看 type 标签会忽略** | 实测：`{"type":"command"}` → `assistant_error` 但 iOS 直接 drop | P1 | `RemoteChatServer.swift:451-455,636-646`，iOS `RemoteWebSocketClient.swift:202-205` |
 | 22 | /projects/{id}/files 大目录 | `prefix(200)` 截顶 → 安全；但目录超过 200 没有翻页 | 静态 | P2 | `RemoteChatRouter.swift:291` |
 | 23 | /files path 含 ../ 或绝对路径 | `sanitizedRelativePath` 过滤 `..` 和 `.`，并 `resolvingSymlinksInPath` 做 isURL check；实测 `path=../../../etc` 返 `directory_not_found`（`..` 已被剔），`%2e%2e/%2e%2e` 解码后同样剔。**没有目录穿越** | 实测安全 | — | `RemoteChatRouter.swift:352-357,443-449` |
-| 24 | POST /attachments 超大文件 | 没有显式 per-file 限制；buffer 上限只受 `maxRequestBytes=64MB` 制约。每个 upload 落到 `tmp/AcodeRemoteChatAttachments/<uuid>/`，**从不清理**；带 token 的人能慢慢把磁盘灌满 | 实测 5MB OK，70MB Content-Length 让 server 卡读 | P1 | `RemoteChatRouter.swift:157-177`，无清理 |
+| 24 | POST /attachments 超大文件 | 没有显式 per-file 限制；buffer 上限只受 `maxRequestBytes=64MB` 制约。每个 upload 落到 `tmp/CodevokeRemoteChatAttachments/<uuid>/`，**从不清理**；带 token 的人能慢慢把磁盘灌满 | 实测 5MB OK，70MB Content-Length 让 server 卡读 | P1 | `RemoteChatRouter.swift:157-177`，无清理 |
 | 25 | legacy /events 等 endpoint 是否还被 iOS 调 | iOS `RemoteHTTPClient` 不再调 `/events` `/projects` `/sessions` `/models` 等；但 server 仍 serving。冗余代码面 | 实测：`/events` 仍 200 | P2 | `RemoteChatRouter.swift:108-141`；iOS 只调 `/health`,`/projects/<id>/files`,`/attachments`,`/config/*` (`RemoteHTTPClient.swift:24-57`) |
 | 26 | HTTP token 变（外部改 settings） | iOS HTTP token 来自 `RemoteChatConfig`；server token 用启动时快照。**server 不监听 settings.json 变化**；用户在 Mac UI 改 token 必须手动 `restart()` | 静态 | P2 | `RemoteChatServerController.swift:38-43,80-87` |
 | 27 | WS 连上后 token rotate | 已连 WS 不重新校验 token；下次重连用新 token。OK 设计 | 静态 OK | — | `RemoteChatServer.swift:232-238` |
@@ -124,9 +124,9 @@ private func scheduleReconnect(generation: Int) {
 
 ### P1-4 — 大附件 / 大文件树等无清理
 
-`ClaudeMac/Services/RemoteChat/RemoteChatRouter.swift:167-173`：附件落到 `FileManager.default.temporaryDirectory + AcodeRemoteChatAttachments/<uuid>/`，**没有任何 GC**。`tmp` 由 macOS 偶发清理但生命周期没有保证。`/projects/{id}/files` 一次最多 200 entries，没翻页；大目录的用户看不到 200 以外的文件且没提示。
+`ClaudeMac/Services/RemoteChat/RemoteChatRouter.swift:167-173`：附件落到 `FileManager.default.temporaryDirectory + CodevokeRemoteChatAttachments/<uuid>/`，**没有任何 GC**。`tmp` 由 macOS 偶发清理但生命周期没有保证。`/projects/{id}/files` 一次最多 200 entries，没翻页；大目录的用户看不到 200 以外的文件且没提示。
 
-**建议**：(a) 启动时清空 `AcodeRemoteChatAttachments`；(b) 文件列表加 `truncated` 字段；(c) 每个 upload 写 sidecar 加上时间戳供 GC。
+**建议**：(a) 启动时清空 `CodevokeRemoteChatAttachments`；(b) 文件列表加 `truncated` 字段；(c) 每个 upload 写 sidecar 加上时间戳供 GC。
 
 ### P1-5 — Decode 失败用 legacy `assistant_error` 帧，VNC iOS 静默忽略
 
@@ -183,7 +183,7 @@ Sane defaults. 但 retention 是按 patch 计，不是按时间。空闲会话�
 
 1. **iOS 真机后台/前台切换实测**：只读代码确认 `scenePhase` 接线，没在模拟器/真机上跑完整 background→foreground→reconnect 链。
 2. **Wi-Fi 切换 + 断网恢复**：没法在 macOS 上模拟 iOS 网络中断。
-3. **Mac server 重启时 iOS 客户端的 fresh-snapshot 路径**：静态分析认为 OK，但没真实 kill `Acode.app` 再观察 iOS WS 行为。
+3. **Mac server 重启时 iOS 客户端的 fresh-snapshot 路径**：静态分析认为 OK，但没真实 kill `Codevoke.app` 再观察 iOS WS 行为。
 4. **真实 401 后 iOS 重连风暴**：脚本能用 bad token 触发 401，但没观察 iOS app 的实际重试节奏（需要 iOS 真机日志）。
 5. **多 session 并发 attach 后 focus=nil 的 firehose**：观察到设计漏洞但没造出真实多 session 并发场景（需要 Mac UI 在多个 session 间切来切去，让 broadcaster attach 多个 controller）。
 6. **`composerAttach` 大 base64 blob 走 WS**：协议允许 `ChatMessageAttachment.thumbnailData` 走命令帧；如果 iOS 直接走 WS 传 thumbnail 而不走 `/attachments`，单 command 可能就撞 1MB 上限。没实测，但 iOS 当前代码只走 `/attachments` HTTP（`ChatViewModel.swift:375-386`），所以暂时无忧。

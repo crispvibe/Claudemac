@@ -1,6 +1,6 @@
 # Android Compose 设计基准
 
-用途：这个目录用于 Android 原生 Kotlin + Compose 还原 iOS Acode 的视觉和交互，不作为方案文档。Android 端稳定设计规范沉淀在 `/Users/oreo/Desktop/ClaudeMac/Android/DESIGN.md`。
+用途：这个目录用于 Android 原生 Kotlin + Compose 还原 iOS Codevoke 的视觉和交互，不作为方案文档。Android 端稳定设计规范沉淀在 `/Users/oreo/Desktop/ClaudeMac/Android/DESIGN.md`。
 
 ## 截图
 
@@ -45,27 +45,27 @@
 
 ## Compose Token 落点
 
-- 颜色：`Android/app/src/main/java/com/acode/android/ui/theme/AcodeTheme.kt` 的 `AcodeColor`。
-- 圆角/间距/尺寸/字号/透明度/阴影/动效：`Android/app/src/main/java/com/acode/android/ui/theme/AcodeTokens.kt`。
-- 背景、玻璃卡片、圆形按钮：`Android/app/src/main/java/com/acode/android/ui/components/AcodeSurfaces.kt`。
-- 设置行、主按钮、状态点、分段控件：`Android/app/src/main/java/com/acode/android/ui/components/AcodeRows.kt`。
+- 颜色：`Android/app/src/main/java/com/acode/android/ui/theme/CodevokeTheme.kt` 的 `CodevokeColor`。
+- 圆角/间距/尺寸/字号/透明度/阴影/动效：`Android/app/src/main/java/com/acode/android/ui/theme/CodevokeTokens.kt`。
+- 背景、玻璃卡片、圆形按钮：`Android/app/src/main/java/com/acode/android/ui/components/CodevokeSurfaces.kt`。
+- 设置行、主按钮、状态点、分段控件：`Android/app/src/main/java/com/acode/android/ui/components/CodevokeRows.kt`。
 
 ## iOS -> Android Token 对照
 
-- `Color.acodeInk` -> `AcodeColor.Ink`：`#141414`。
-- `Color.acodeMuted` -> `AcodeColor.Muted`：`#6B6B6B`。
-- `Color.acodeGlassFill` -> `AcodeColor.GlassFill`：white 52%。
-- `Color.acodeGlassStroke` -> `AcodeColor.GlassStroke`：white 74%。
-- `Color.acodeAuthGlassFill` -> `AcodeColor.AuthGlassFill`：white 68%。
-- `Color.acodeAuthGlassStroke` -> `AcodeColor.AuthGlassStroke`：white 88%。
-- `GlassCard(cornerRadius: 28)` -> `AcodeGlassCard(corner = AcodeRadius.Chrome)`。
-- `AuthLiquidCard(cornerRadius: 30)` -> `AcodeRadius.Sheet` + `AcodeColor.AuthGlassFill`。
-- `AuthPrimaryButton(minHeight: 52, cornerRadius: 26)` -> `BlackCapsuleButton` + `AcodeSize.PrimaryButtonHeight` + `AcodeRadius.CircleControl`。
-- `.buttonStyle(.acodePress)` -> `AcodeMotion.PressScale` / `AcodeAlpha.PressedOpacity` / `AcodeMotion.PressMillis`。
+- `Color.acodeInk` -> `CodevokeColor.Ink`：`#141414`。
+- `Color.acodeMuted` -> `CodevokeColor.Muted`：`#6B6B6B`。
+- `Color.codevokeGlassFill` -> `CodevokeColor.GlassFill`：white 52%。
+- `Color.codevokeGlassStroke` -> `CodevokeColor.GlassStroke`：white 74%。
+- `Color.acodeAuthGlassFill` -> `CodevokeColor.AuthGlassFill`：white 68%。
+- `Color.acodeAuthGlassStroke` -> `CodevokeColor.AuthGlassStroke`：white 88%。
+- `GlassCard(cornerRadius: 28)` -> `CodevokeGlassCard(corner = CodevokeRadius.Chrome)`。
+- `AuthLiquidCard(cornerRadius: 30)` -> `CodevokeRadius.Sheet` + `CodevokeColor.AuthGlassFill`。
+- `AuthPrimaryButton(minHeight: 52, cornerRadius: 26)` -> `BlackCapsuleButton` + `CodevokeSize.PrimaryButtonHeight` + `CodevokeRadius.CircleControl`。
+- `.buttonStyle(.acodePress)` -> `CodevokeMotion.PressScale` / `CodevokeAlpha.PressedOpacity` / `CodevokeMotion.PressMillis`。
 
 ## 后续页面实现要求
 
 - 写 screen 前先读 `/Users/oreo/Desktop/ClaudeMac/Android/DESIGN.md`。
-- screen 里不要继续散写全局 magic number；优先用 `AcodeColor`、`AcodeRadius`、`AcodeSpace`、`AcodeSize`、`AcodeType`、`AcodeAlpha`。
+- screen 里不要继续散写全局 magic number；优先用 `CodevokeColor`、`CodevokeRadius`、`CodevokeSpace`、`CodevokeSize`、`CodevokeType`、`CodevokeAlpha`。
 - 新增公共视觉值必须先沉淀到 token，再在组件或 screen 使用。
 - 截图负责视觉位置感，iOS 源码负责精确透明度、圆角、字号和交互值。

@@ -34,7 +34,7 @@ open ClaudeMac.xcodeproj
 scripts/package-macos-app.sh
 ```
 
-产物会替换到 `~/Desktop/Acode.app`，并默认生成 `build/releases/acode-macos.dmg`。脚本会执行 Universal Release build（`arm64 x86_64`）、strip 发布包符号、校验 `lipo` 架构、校验 `codesign` 签名链和 Team ID，并拒绝带 `get-task-allow` 的调试 entitlement。
+产物会替换到 `~/Desktop/Codevoke.app`，并默认生成 `build/releases/acode-macos.dmg`。脚本会执行 Universal Release build（`arm64 x86_64`）、strip 发布包符号、校验 `lipo` 架构、校验 `codesign` 签名链和 Team ID，并拒绝带 `get-task-allow` 的调试 entitlement。
 
 正式公证包使用：
 
@@ -90,7 +90,7 @@ NOTARIZE=1 scripts/package-macos-app.sh
 
 ### 历史会话
 
-- 历史侧栏只显示和管理 Acode 本地 `ChatSessionStore` 会话。
+- 历史侧栏只显示和管理 Codevoke 本地 `ChatSessionStore` 会话。
 - 会话按当前 CLI 分流显示，使用本地 `chat-sessions.json` 索引和 `chat-messages/<uuid>.jsonl` transcript。
 - 支持删除本地会话，删除时同步清理相关索引和 transcript。
 
@@ -238,14 +238,14 @@ cd '/Users/oreo/Desktop/公司/摄影 go-server/server' && claude --continue
 本 App 数据写入：
 
 ```text
-~/Library/Application Support/Acode/projects.json
-~/Library/Application Support/Acode/settings.json
-~/Library/Application Support/Acode/launch-history.json
-~/Library/Application Support/Acode/file-tree-state.json
-~/Library/Application Support/Acode/config-profiles.json
-~/Library/Application Support/Acode/chat-sessions.json
-~/Library/Application Support/Acode/chat-messages/<session-id>.jsonl
-~/Library/Application Support/Acode/chat-drafts.json
+~/Library/Application Support/Codevoke/projects.json
+~/Library/Application Support/Codevoke/settings.json
+~/Library/Application Support/Codevoke/launch-history.json
+~/Library/Application Support/Codevoke/file-tree-state.json
+~/Library/Application Support/Codevoke/config-profiles.json
+~/Library/Application Support/Codevoke/chat-sessions.json
+~/Library/Application Support/Codevoke/chat-messages/<session-id>.jsonl
+~/Library/Application Support/Codevoke/chat-drafts.json
 ```
 
-旧版 `~/Library/Application Support/ClaudeMac` 数据会迁移到 `~/Library/Application Support/Acode`。Acode 不再扫描外部 Claude/Codex 历史文件，历史侧栏以本地会话存储为准。
+旧版 `~/Library/Application Support/ClaudeMac` 数据会迁移到 `~/Library/Application Support/Codevoke`。Codevoke 不再扫描外部 Claude/Codex 历史文件，历史侧栏以本地会话存储为准。

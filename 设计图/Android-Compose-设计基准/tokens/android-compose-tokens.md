@@ -25,9 +25,9 @@
 
 ## Components
 
-- `AcodeGlassCard`: 白色实体玻璃卡片，1dp 黑色 8% 边线，轻阴影。
-- `AcodeSoftGlass`: 半透明控件底，用于输入框、圆形按钮。
-- `AcodeIconButton`: 40-48dp 圆形玻璃按钮，按下缩放到 0.94。
+- `CodevokeGlassCard`: 白色实体玻璃卡片，1dp 黑色 8% 边线，轻阴影。
+- `CodevokeSoftGlass`: 半透明控件底，用于输入框、圆形按钮。
+- `CodevokeIconButton`: 40-48dp 圆形玻璃按钮，按下缩放到 0.94。
 - `BlackCapsuleButton`: 黑色主操作按钮。
 - `SettingsRow`: 设置/列表菜单行，图标 31dp，标题 15sp semibold，副标题 12sp。
 

@@ -910,7 +910,7 @@ AcodeIOS/Acode/Views/
 - 范围：统一后端 `remote_connection_attempts.id` / JSON `connectionId`、连接指标上报、管理端远程用户/设备/连接/协议页面、菜单/API/Casbin 种子、Dashboard SLI、iOS/Mac `connection_id` 调试展示。
 - 生产验证摘要：`/remote` 公共与私有 API、`/admin/remote-admin` 管理 API、`/admin/dashboard/panel`、后台 Dashboard 与远程用户/设备/连接/协议页面均已通过验证。
 - 菜单修复：生产 `remoteAdmin` 父菜单组件已修正为 router holder component `cmp_59af108da78062d9`，子页面路由可正常展开。
-- 验证数据清理：临时管理员、远程用户、设备、连接、token、设备码、同意记录、订阅和临时协议验证数据已清理，未触碰真实 Acode 数据。
+- 验证数据清理：临时管理员、远程用户、设备、连接、token、设备码、同意记录、订阅和临时协议验证数据已清理，未触碰真实 Codevoke 数据。
 
 ### M5.6：远程管理体验与状态修正（2026-05-16）
 

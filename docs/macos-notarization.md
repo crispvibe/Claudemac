@@ -3,7 +3,7 @@
 ## 当前状态
 
 - 目标产物：`build/releases/acode-macos.dmg`
-- App bundle：`Acode.app`
+- App bundle：`Codevoke.app`
 - Bundle ID：`vin.anna.ClaudeMac`
 - Apple ID：`99400504@qq.com`
 - Team ID：`XY6Z92AMPS`
@@ -46,7 +46,7 @@ scripts/package-macos-app.sh
 3. 强制 Universal 构建：`ARCHS="arm64 x86_64"`、`ONLY_ACTIVE_ARCH=NO`。
 4. 用 `lipo` 校验主程序和内嵌 Mach-O framework 架构。
 5. 对内嵌 `.framework` 使用 Developer ID、Hardened Runtime、secure timestamp 重签。
-6. 对 `Acode.app` 使用 `ClaudeMac/ClaudeMac.entitlements`、Developer ID、Hardened Runtime、secure timestamp 重签。
+6. 对 `Codevoke.app` 使用 `ClaudeMac/ClaudeMac.entitlements`、Developer ID、Hardened Runtime、secure timestamp 重签。
 7. 校验 `codesign --verify --deep --strict`、签名 Authority 和 Team ID。
 8. strip 发布包符号、校验无 debug entitlement，生成并签名 `build/releases/acode-macos.dmg`。
 
@@ -123,7 +123,7 @@ origin=Developer ID Application: Zhang XueFeng (XY6Z92AMPS)
 验证 App bundle：
 
 ```bash
-spctl -a -vv ~/Desktop/Acode.app
+spctl -a -vv ~/Desktop/Codevoke.app
 ```
 
 期望：
@@ -150,7 +150,7 @@ checksum of "build/releases/acode-macos.dmg" is VALID
 
 临时测试产物：
 
-- App：`/tmp/AcodeIntelCheck.app`
+- App：`/tmp/CodevokeIntelCheck.app`
 - DMG：`/tmp/acode-macos-intel-check.dmg`
 
 第一次提交结果：
@@ -165,7 +165,7 @@ checksum of "build/releases/acode-macos.dmg" is VALID
 - 状态：`Accepted`
 - `xcrun stapler staple /tmp/acode-macos-intel-check.dmg`：通过
 - `xcrun stapler validate /tmp/acode-macos-intel-check.dmg`：通过
-- `spctl -a -vv /tmp/AcodeIntelCheck.app`：`accepted / Notarized Developer ID`
+- `spctl -a -vv /tmp/CodevokeIntelCheck.app`：`accepted / Notarized Developer ID`
 - `spctl -a -vv -t open --context context:primary-signature /tmp/acode-macos-intel-check.dmg`：`accepted / Notarized Developer ID`
 - `hdiutil verify /tmp/acode-macos-intel-check.dmg`：checksum valid
 

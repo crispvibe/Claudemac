@@ -42,7 +42,7 @@
 
 1. UI 调用层尽量不变。
 2. 高版本 API 不直接散落在业务视图里。
-3. 所有跨版本差异放到 `AcodeCompatibility`、`VisualStyle` 或独立组件里。
+3. 所有跨版本差异放到 `CodevokeCompatibility`、`VisualStyle` 或独立组件里。
 4. 视觉优先使用自定义实现，而不是系统默认材质差异。
 5. 动画遵守 reduced motion：如果系统减少动态效果，思考动画降级为静态三个点。
 
@@ -52,7 +52,7 @@
 
 新增或改造：
 
-- `AcodeCompatibility.swift`
+- `CodevokeCompatibility.swift`
 - `VisualStyle.swift`
 
 处理：
@@ -71,7 +71,7 @@
 
 改造 `VisualStyle.swift`：
 
-- `acodeGlass(cornerRadius:)` 不再默认使用 `glassEffect`。
+- `codevokeGlass(cornerRadius:)` 不再默认使用 `glassEffect`。
 - 使用白色半透明背景、material、顶部高光、描边、阴影组合。
 - `acodeCircleGlass()` 使用相同风格还原圆形按钮。
 - `GlassCard` 保持现有调用方式。
@@ -89,7 +89,7 @@
 
 新增：
 
-- `AcodeGrowingTextInput.swift`
+- `CodevokeGrowingTextInput.swift`
 
 目标：
 
@@ -112,7 +112,7 @@
 
 如果系统 `Menu` 在 iOS 16/17/18 的位置体验不一致，新增：
 
-- `AcodeAttachmentMenu.swift`
+- `CodevokeAttachmentMenu.swift`
 
 目标：
 

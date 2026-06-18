@@ -1,6 +1,6 @@
-# Acode Windows
+# Codevoke Windows
 
-Electron + React + TypeScript Windows client shell for the Acode desktop experience.
+Electron + React + TypeScript Windows client shell for the Codevoke desktop experience.
 
 ## Commands
 

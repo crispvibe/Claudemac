@@ -2,8 +2,8 @@
 
 ## 当前本地测试策略
 
-- 交付物：`Acode.app`
-- 默认输出：`~/Desktop/Acode.app`
+- 交付物：`Codevoke.app`
+- 默认输出：`~/Desktop/Codevoke.app`
 - 默认 DMG：`build/releases/acode-macos.dmg`
 - 构建配置：`Release`
 - 默认架构：Universal（`arm64 x86_64`）
@@ -23,7 +23,7 @@ scripts/package-macos-app.sh
 2. 使用 `ClaudeMac.xcodeproj` / `ClaudeMac` scheme 构建 Universal Release。
 3. 校验构建产物主程序和内嵌 framework 的 `arm64 x86_64` 架构。
 4. 校验构建产物的 `codesign` 签名和 `TeamIdentifier=XY6Z92AMPS`。
-5. 替换桌面 `~/Desktop/Acode.app`。
+5. 替换桌面 `~/Desktop/Codevoke.app`。
 6. 再次校验桌面产物架构和签名。
 7. 生成并签名 `build/releases/acode-macos.dmg`。
 8. 正式发布前按 `docs/macos-notarization.md` 提交 Apple 公证并 staple 票据。
@@ -33,7 +33,7 @@ scripts/package-macos-app.sh
 必须通过：
 
 - `xcodebuild` Release build 成功。
-- `lipo -archs Acode.app/Contents/MacOS/Acode` 同时包含 `arm64` 和 `x86_64`。
+- `lipo -archs Codevoke.app/Contents/MacOS/Codevoke` 同时包含 `arm64` 和 `x86_64`。
 - 内嵌 Mach-O framework 至少包含 `x86_64`，默认应为 `arm64 x86_64`。
 - `codesign --verify --deep --strict` 通过。
 - `codesign -dv --verbose=4` 里出现：

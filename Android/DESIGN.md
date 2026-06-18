@@ -1,4 +1,4 @@
-# Acode Android Design System
+# Codevoke Android Design System
 
 本文件是 Android Kotlin + Compose 端的设计系统基准。后续写页面前先读这里，再读 `ui/theme` 与 `ui/components`，不要在 screen 里重新发明颜色、圆角、字号、阴影和按压反馈。
 
@@ -14,7 +14,7 @@
 
 ## 产品气质
 
-Acode Android 不是 Material 默认工具页，也不是营销页。它要还原 iOS 端的轻玻璃、浅色、低饱和、黑白灰、高留白和胶囊操作气质。
+Codevoke Android 不是 Material 默认工具页，也不是营销页。它要还原 iOS 端的轻玻璃、浅色、低饱和、黑白灰、高留白和胶囊操作气质。
 
 执行规则：
 - 第一屏必须直接是可用工具界面，不做介绍型 landing。
@@ -24,7 +24,7 @@ Acode Android 不是 Material 默认工具页，也不是营销页。它要还�
 
 ## 颜色
 
-Compose 颜色入口是 `AcodeColor`。
+Compose 颜色入口是 `CodevokeColor`。
 
 - `Ink`: `#141414`，等价 iOS `Color(red: 0.08, green: 0.08, blue: 0.08)`。
 - `Muted`: `#6B6B6B`，等价 iOS `Color(red: 0.42, green: 0.42, blue: 0.42)`。
@@ -50,13 +50,13 @@ Compose 颜色入口是 `AcodeColor`。
 - 线性渐变：white -> `#FDFDFC` -> `#F9F9F8`。
 - 左上角叠加 240dp 白色柔光，offset `x=-70dp, y=-80dp`，blur 34dp。
 
-卡片统一使用 `AcodeGlassCard`：
+卡片统一使用 `CodevokeGlassCard`：
 - 默认圆角 28dp。
 - 填充 white 82%。
 - 双描边：white 82% + black 4.5%。
 - 阴影：black 6%，radius 18dp。
 
-控件玻璃统一使用 `AcodeSoftGlass`：
+控件玻璃统一使用 `CodevokeSoftGlass`：
 - 默认圆角 24dp。
 - 默认填充 white 52%。
 - 描边 white 74%。
@@ -64,7 +64,7 @@ Compose 颜色入口是 `AcodeColor`。
 
 ## 圆角
 
-Compose 圆角入口是 `AcodeRadius`。
+Compose 圆角入口是 `CodevokeRadius`。
 
 - `Tile`: 14dp，附件缩略图、轻图标底。
 - `Field`: 16dp，普通字段和小卡片。
@@ -82,7 +82,7 @@ Compose 圆角入口是 `AcodeRadius`。
 
 ## 字号与字重
 
-Compose 字号入口是 `AcodeType`。
+Compose 字号入口是 `CodevokeType`。
 
 - `Hero`: 28sp，登录页标题、远程设备大标题。
 - `NavTitle` / `Title`: 17sp，顶部标题、区块标题。
@@ -105,7 +105,7 @@ Compose 字号入口是 `AcodeType`。
 
 ## 间距与尺寸
 
-Compose 间距入口是 `AcodeSpace`，固定尺寸入口是 `AcodeSize`。
+Compose 间距入口是 `CodevokeSpace`，固定尺寸入口是 `CodevokeSize`。
 
 - 页面水平边距：16dp，登录/远程设备可用 18dp。
 - 页面顶部节奏：22dp。
@@ -125,9 +125,9 @@ Compose 间距入口是 `AcodeSpace`，固定尺寸入口是 `AcodeSize`。
 
 公共组件优先级：
 1. `WhiteGlassBackground`
-2. `AcodeGlassCard`
-3. `AcodeSoftGlass`
-4. `AcodeIconButton`
+2. `CodevokeGlassCard`
+3. `CodevokeSoftGlass`
+4. `CodevokeIconButton`
 5. `SettingsRow`
 6. `BlackCapsuleButton`
 7. `StatusDot`
@@ -169,7 +169,7 @@ Compose 间距入口是 `AcodeSpace`，固定尺寸入口是 `AcodeSize`。
 
 ## 交互反馈
 
-Compose 交互入口是 `AcodeMotion` 与 `AcodeAlpha`。
+Compose 交互入口是 `CodevokeMotion` 与 `CodevokeAlpha`。
 
 - 按压缩放：0.94。
 - 按压时透明度：0.82。
@@ -194,7 +194,7 @@ Compose 交互入口是 `AcodeMotion` 与 `AcodeAlpha`。
 
 ## Android 编码规则
 
-- screen 中优先消费 `AcodeColor`、`AcodeRadius`、`AcodeSpace`、`AcodeSize`、`AcodeType`、`AcodeAlpha`、`AcodeShadow`、`AcodeMotion`。
+- screen 中优先消费 `CodevokeColor`、`CodevokeRadius`、`CodevokeSpace`、`CodevokeSize`、`CodevokeType`、`CodevokeAlpha`、`CodevokeShadow`、`CodevokeMotion`。
 - 新增公共视觉值必须先放进 token，再在组件或 screen 使用。
 - 组件里可以有局部参数默认值，但默认值必须来自 token。
 - 不要为了还原 iOS 在 Composable 中做网络、文件、WebSocket 或其他 IO。

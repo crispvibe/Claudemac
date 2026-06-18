@@ -55,9 +55,9 @@ conditional：
 
 ### 当前代码状态
 
-- `AcodeApp.kt` 已引入 `BackHandler`，并在 `screen != AcodeScreen.Login` 时接管系统返回：`Android/app/src/main/java/com/acode/android/ui/screens/AcodeApp.kt:3`、`:76`。
-- `AcodeApp.kt` 当前有本地 `backStack`、`navigateTo`、`navigateBack`、`replaceScreen`：`AcodeApp.kt:32-52`。
-- `handleBack()` 对各页面有明确 fallback：注册/忘记密码回登录，设备/设置回聊天，设备码回设备页，账号/协议回设置，修改密码/注销回账号：`AcodeApp.kt:54-67`。
+- `CodevokeApp.kt` 已引入 `BackHandler`，并在 `screen != CodevokeScreen.Login` 时接管系统返回：`Android/app/src/main/java/com/acode/android/ui/screens/CodevokeApp.kt:3`、`:76`。
+- `CodevokeApp.kt` 当前有本地 `backStack`、`navigateTo`、`navigateBack`、`replaceScreen`：`CodevokeApp.kt:32-52`。
+- `handleBack()` 对各页面有明确 fallback：注册/忘记密码回登录，设备/设置回聊天，设备码回设备页，账号/协议回设置，修改密码/注销回账号：`CodevokeApp.kt:54-67`。
 - Chat 页在侧栏打开时有单独 `BackHandler` 关闭侧栏：`Android/app/src/main/java/com/acode/android/ui/screens/ChatScreen.kt:116-119`。
 - Chat 页左侧 32dp 热区与遮罩都加了 `systemGestureExclusion()`，并使用横向拖动打开/关闭侧栏：`ChatScreen.kt:148-170`、`:211-235`。
 
@@ -71,11 +71,11 @@ conditional：
 
 ### 当前代码状态
 
-- 本机身份持久化在 `LocalDeviceIdentityStore`，使用 SharedPreferences：`Android/app/src/main/java/com/acode/android/data/AcodeStores.kt:38-66`。
-- `deviceUid` 当前优先从 SharedPreferences 读取；没有时用 `ANDROID_ID` + packageName 做 SHA-256，生成稳定 `android-...`：`AcodeStores.kt:83-90`。
-- `devicePublicKey` 仍为首次生成 UUID 并持久化：`AcodeStores.kt:50-53`。
-- 注册前会先查缓存的 `deviceId`，再查 `remote/devices` 里是否已有相同 `deviceUid` 的 Android 设备，最后才调用 `api.registerDevice`：`Android/app/src/main/java/com/acode/android/ui/state/AcodeViewModel.kt:787-801`。
-- 本地匹配条件是 `deviceUid == identity.deviceUid` 且 `deviceType == android` 或 `platform == android`：`AcodeViewModel.kt:804-808`。
+- 本机身份持久化在 `LocalDeviceIdentityStore`，使用 SharedPreferences：`Android/app/src/main/java/com/acode/android/data/CodevokeStores.kt:38-66`。
+- `deviceUid` 当前优先从 SharedPreferences 读取；没有时用 `ANDROID_ID` + packageName 做 SHA-256，生成稳定 `android-...`：`CodevokeStores.kt:83-90`。
+- `devicePublicKey` 仍为首次生成 UUID 并持久化：`CodevokeStores.kt:50-53`。
+- 注册前会先查缓存的 `deviceId`，再查 `remote/devices` 里是否已有相同 `deviceUid` 的 Android 设备，最后才调用 `api.registerDevice`：`Android/app/src/main/java/com/acode/android/ui/state/CodevokeViewModel.kt:787-801`。
+- 本地匹配条件是 `deviceUid == identity.deviceUid` 且 `deviceType == android` 或 `platform == android`：`CodevokeViewModel.kt:804-808`。
 - register 请求体包含 `deviceUid`、`deviceType=android`、`platform=android`、`deviceName`、`devicePublicKey`、`appVersion=1.0`：`Android/app/src/main/java/com/acode/android/data/RemoteApiClient.kt:80-91`。
 
 ### 静态判断
@@ -88,11 +88,11 @@ conditional：
 
 ### 当前代码状态
 
-- 设备码解析前会确保本机设备已注册，并启动 signaling：`AcodeViewModel.kt:425-437`。
-- 设备连接前也会确保本机设备已注册：`AcodeViewModel.kt:443-450`。
-- pending 授权会等待 push decision 或轮询 connection：`AcodeViewModel.kt:451-452`、`:845-855`。
-- LAN 分支需要 endpoint + transient token，随后设置 `RemoteChatConfig` 并 `connectRemoteChat(config)`：`AcodeViewModel.kt:459-473`。
-- P2P/TURN 分支会等待 signaling、拉 ICE、创建 WebRTC transport、设置 relay，再 `transport.connect(...)`：`AcodeViewModel.kt:600-633`。
+- 设备码解析前会确保本机设备已注册，并启动 signaling：`CodevokeViewModel.kt:425-437`。
+- 设备连接前也会确保本机设备已注册：`CodevokeViewModel.kt:443-450`。
+- pending 授权会等待 push decision 或轮询 connection：`CodevokeViewModel.kt:451-452`、`:845-855`。
+- LAN 分支需要 endpoint + transient token，随后设置 `RemoteChatConfig` 并 `connectRemoteChat(config)`：`CodevokeViewModel.kt:459-473`。
+- P2P/TURN 分支会等待 signaling、拉 ICE、创建 WebRTC transport、设置 relay，再 `transport.connect(...)`：`CodevokeViewModel.kt:600-633`。
 - Android `RemoteChatConfig.isComplete` 对 relay 只要求 `transport` 非空：`Android/app/src/main/java/com/acode/android/data/RemoteModels.kt:109-128`。
 
 ### 剩余验证风险
@@ -130,4 +130,4 @@ conditional：
 1. 修复连接体验：Android 对 LAN WebSocket 和 P2P/TURN DataChannel 都应“成功 ready 后再切 Chat”，失败留在设备页展示错误。
 2. 服务端核对重复设备：按同账号下 `deviceUid/platform/deviceType` 查已有重复记录，确定是否需要合并、软删或注册接口幂等修复。
 3. 真机验证手势：至少覆盖 Android 13/14/15 手势导航；重点测左边缘 0-32dp、侧栏打开时返回、Chat 根页返回。
-4. 补自动化：为 `AcodeApp` 返回栈和 `LocalDeviceIdentityStore` 稳定 UID/查重逻辑补最小单测；为连接状态转移补 ViewModel 测试。
+4. 补自动化：为 `CodevokeApp` 返回栈和 `LocalDeviceIdentityStore` 稳定 UID/查重逻辑补最小单测；为连接状态转移补 ViewModel 测试。
