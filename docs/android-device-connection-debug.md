@@ -2,7 +2,7 @@
 
 更新时间：2026-05-19
 
-范围：只读排查 Mac 端 `ClaudeMac/Services/AccountRemote`、iOS 端 `AcodeIOS/Acode/Networking` / 相关 ViewModel、后端 `后端/server`、官网远程连接说明。本文只沉淀证据和建议，不修改 Android UI 或业务代码。
+范围：只读排查 Mac 端 `ClaudeMac/Services/AccountRemote`、iOS 端 `AcodeIOS/Codevoke/Networking` / 相关 ViewModel、后端 `后端/server`、官网远程连接说明。本文只沉淀证据和建议，不修改 Android UI 或业务代码。
 
 ## 结论
 
@@ -64,9 +64,9 @@ iOS 端使用同一套注册字段，但本机移动端固定发送：
 
 证据：
 
-- `AcodeIOS/Acode/Models/RemoteAuthModels.swift:169-176`
-- `AcodeIOS/Acode/ViewModels/AuthViewModel.swift:440-456`
-- `AcodeIOS/Acode/Networking/RemoteAPIClient.swift:32-35`
+- `AcodeIOS/Codevoke/Models/RemoteAuthModels.swift:169-176`
+- `AcodeIOS/Codevoke/ViewModels/AuthViewModel.swift:440-456`
+- `AcodeIOS/Codevoke/Networking/RemoteAPIClient.swift:32-35`
 
 ### 后端注册语义
 
@@ -118,7 +118,7 @@ iOS 端设备列表从 `remote/devices` 拉全量设备，然后本地过滤：
 
 证据：
 
-- `AcodeIOS/Acode/ViewModels/DeviceListViewModel.swift:39-45`
+- `AcodeIOS/Codevoke/ViewModels/DeviceListViewModel.swift:39-45`
 
 风险：这里是 `OR`。只要某个客户端错误注册了 `deviceType=desktop` 或 `platform=macos`，就会被展示成可连接 Mac。Android 如果复用了 Mac 注册参数，就会在列表里表现为“又多了一台 Mac”。
 
@@ -131,8 +131,8 @@ iOS 连接前先从 Keychain 读取本机身份，要求存在已注册的 `devi
 
 证据：
 
-- `AcodeIOS/Acode/Networking/RemoteDeviceClient.swift:37-50`
-- `AcodeIOS/Acode/Models/RemoteAuthModels.swift:290-294`
+- `AcodeIOS/Codevoke/Networking/RemoteDeviceClient.swift:37-50`
+- `AcodeIOS/Codevoke/Models/RemoteAuthModels.swift:290-294`
 
 后端实际只绑定 `fromDeviceId`：
 
@@ -172,7 +172,7 @@ iOS 连接前先从 Keychain 读取本机身份，要求存在已注册的 `devi
 
 证据：
 
-- `AcodeIOS/Acode/Models/RemoteAuthModels.swift:340-379`
+- `AcodeIOS/Codevoke/Models/RemoteAuthModels.swift:340-379`
 
 风险：Android 如果只按 camelCase 解析 `transientToken`，LAN 连接会表现为“已允许，但拿不到电脑连接地址/令牌”。
 
@@ -200,9 +200,9 @@ iOS 对 `p2p/turn/remote_transport_required` 的处理：
 
 证据：
 
-- `AcodeIOS/Acode/ViewModels/DeviceConnectViewModel.swift:106-180`
-- `AcodeIOS/Acode/ViewModels/DeviceConnectViewModel.swift:286-299`
-- `AcodeIOS/Acode/Networking/SignalingClient.swift:119-141`
+- `AcodeIOS/Codevoke/ViewModels/DeviceConnectViewModel.swift:106-180`
+- `AcodeIOS/Codevoke/ViewModels/DeviceConnectViewModel.swift:286-299`
+- `AcodeIOS/Codevoke/Networking/SignalingClient.swift:119-141`
 
 风险：Android 如果只实现了 LAN WebSocket，或者 P2P 时没有等 signaling、没有拉 ICE、没有处理 relay，就会在跨网场景必然无法连接。
 
@@ -258,7 +258,7 @@ Mac/iOS 的设备身份保存在 Keychain。首次无身份会生成新 UUID。�
 证据：
 
 - Mac 生成 UUID：`ClaudeMac/Services/AccountRemote/DeviceIdentityStore.swift:67-80`
-- iOS 生成 UUID：`AcodeIOS/Acode/Networking/DeviceIdentityStore.swift:50-64`
+- iOS 生成 UUID：`AcodeIOS/Codevoke/Networking/DeviceIdentityStore.swift:50-64`
 
 建议：
 
@@ -272,7 +272,7 @@ iOS 列表用 `deviceType == "desktop" || platform == "macos"` 过滤。后端�
 
 证据：
 
-- iOS 列表过滤：`AcodeIOS/Acode/ViewModels/DeviceListViewModel.swift:43-44`
+- iOS 列表过滤：`AcodeIOS/Codevoke/ViewModels/DeviceListViewModel.swift:43-44`
 - 后端注册只 trim 并存储：`后端/server/service/biz/remote.go:267-313`
 
 建议：
@@ -312,7 +312,7 @@ Android 后续修复应逐项对齐：
 已执行的只读命令：
 
 - `curl -fsS https://skills.anna.vin/api/v1/manifest`
-- `rg --files ClaudeMac/Services/AccountRemote AcodeIOS/Acode/Networking`
+- `rg --files ClaudeMac/Services/AccountRemote AcodeIOS/Codevoke/Networking`
 - `rg -n "remote/devices|devices/register|devices/.*/connect|device-codes|turn/ice|signaling" ...`
 - 多个 `nl -ba ... | sed -n ...` 读取 Mac/iOS/后端/官网证据行。
 

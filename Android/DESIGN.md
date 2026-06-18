@@ -4,11 +4,11 @@
 
 ## 证据来源
 
-- iOS 设计 Token：`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Acode/Views/VisualStyle.swift`
-- iOS 登录/注册组件：`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Acode/Views/Auth/AuthComponents.swift`
-- iOS 聊天顶部栏与输入栏：`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Acode/Views/ChatView.swift`、`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Acode/Views/InputBarView.swift`
-- iOS 侧栏：`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Acode/Views/RootView.swift`、`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Acode/Views/SidebarView.swift`
-- iOS 远程设备与设置：`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Acode/Views/DeviceListView.swift`、`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Acode/Views/SettingsView.swift`
+- iOS 设计 Token：`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Codevoke/Views/VisualStyle.swift`
+- iOS 登录/注册组件：`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Codevoke/Views/Auth/AuthComponents.swift`
+- iOS 聊天顶部栏与输入栏：`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Codevoke/Views/ChatView.swift`、`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Codevoke/Views/InputBarView.swift`
+- iOS 侧栏：`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Codevoke/Views/RootView.swift`、`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Codevoke/Views/SidebarView.swift`
+- iOS 远程设备与设置：`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Codevoke/Views/DeviceListView.swift`、`/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Codevoke/Views/SettingsView.swift`
 - 截图基准：`/Users/oreo/Desktop/ClaudeMac/设计图/Android-Compose-设计基准/screenshots`
 - Android 当前落点：`/Users/oreo/Desktop/ClaudeMac/Android/app/src/main/java/com/acode/android/ui/theme`、`/Users/oreo/Desktop/ClaudeMac/Android/app/src/main/java/com/acode/android/ui/components`
 

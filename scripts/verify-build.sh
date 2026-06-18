@@ -39,10 +39,10 @@ xcodebuild -project ClaudeMac.xcodeproj -scheme ClaudeMac -configuration Release
   CLANG_COVERAGE_MAPPING=NO \
   build -quiet
 
-MAC_APP="$MAC_VERIFY_DERIVED_DATA/Build/Products/Release/AnnaCode.app"
-MAC_BINARY="$MAC_APP/Contents/MacOS/AnnaCode"
+MAC_APP="$MAC_VERIFY_DERIVED_DATA/Build/Products/Release/Codevoke.app"
+MAC_BINARY="$MAC_APP/Contents/MacOS/Codevoke"
 MAC_ARCHS="$(lipo -archs "$MAC_BINARY")"
-echo "==> AnnaCode architectures: $MAC_ARCHS"
+echo "==> Codevoke architectures: $MAC_ARCHS"
 require_arch "$MAC_ARCHS" arm64
 require_arch "$MAC_ARCHS" x86_64
 
@@ -55,8 +55,8 @@ while IFS= read -r -d '' executable; do
   fi
 done < <(find "$MAC_APP/Contents/Frameworks" -type f -perm -111 -print0 2>/dev/null || true)
 
-echo "==> xcodebuild Acode"
-xcodebuild -project AcodeIOS/Acode.xcodeproj -scheme Acode -configuration Debug \
+echo "==> xcodebuild Codevoke"
+xcodebuild -project AcodeIOS/Codevoke.xcodeproj -scheme Codevoke -configuration Debug \
   -destination 'generic/platform=iOS' build -quiet
 
 echo "all green"

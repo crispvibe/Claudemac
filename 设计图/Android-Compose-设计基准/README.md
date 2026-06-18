@@ -21,16 +21,16 @@
 
 ## iOS 证据
 
-- 色彩、玻璃、圆角、阴影：`AcodeIOS/Acode/Views/VisualStyle.swift`
-- 聊天顶部栏、消息列表、空态、底部输入栏：`AcodeIOS/Acode/Views/ChatView.swift`
-- 输入框、附件按钮、发送按钮：`AcodeIOS/Acode/Views/InputBarView.swift`
-- 左侧抽屉：`AcodeIOS/Acode/Views/SidebarView.swift`
-- 侧栏遮罩、宽度、边缘手势：`AcodeIOS/Acode/Views/RootView.swift`
-- 远程设备：`AcodeIOS/Acode/Views/DeviceListView.swift`
-- 设置页：`AcodeIOS/Acode/Views/SettingsView.swift`
-- 登录/注册：`AcodeIOS/Acode/Views/Auth/LoginView.swift`、`AcodeIOS/Acode/Views/Auth/RegisterView.swift`
-- 登录/注册公共组件：`AcodeIOS/Acode/Views/Auth/AuthComponents.swift`
-- 登录/注册/法律文档接口：`AcodeIOS/Acode/ViewModels/AuthViewModel.swift`、`AcodeIOS/Acode/Networking/RemoteAuthClient.swift`、`AcodeIOS/Acode/Networking/RemoteLegalClient.swift`
+- 色彩、玻璃、圆角、阴影：`AcodeIOS/Codevoke/Views/VisualStyle.swift`
+- 聊天顶部栏、消息列表、空态、底部输入栏：`AcodeIOS/Codevoke/Views/ChatView.swift`
+- 输入框、附件按钮、发送按钮：`AcodeIOS/Codevoke/Views/InputBarView.swift`
+- 左侧抽屉：`AcodeIOS/Codevoke/Views/SidebarView.swift`
+- 侧栏遮罩、宽度、边缘手势：`AcodeIOS/Codevoke/Views/RootView.swift`
+- 远程设备：`AcodeIOS/Codevoke/Views/DeviceListView.swift`
+- 设置页：`AcodeIOS/Codevoke/Views/SettingsView.swift`
+- 登录/注册：`AcodeIOS/Codevoke/Views/Auth/LoginView.swift`、`AcodeIOS/Codevoke/Views/Auth/RegisterView.swift`
+- 登录/注册公共组件：`AcodeIOS/Codevoke/Views/Auth/AuthComponents.swift`
+- 登录/注册/法律文档接口：`AcodeIOS/Codevoke/ViewModels/AuthViewModel.swift`、`AcodeIOS/Codevoke/Networking/RemoteAuthClient.swift`、`AcodeIOS/Codevoke/Networking/RemoteLegalClient.swift`
 
 ## 还原硬规则
 

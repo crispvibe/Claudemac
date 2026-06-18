@@ -36,7 +36,7 @@
 
 ### 2.1 CLI 切换 (claude ↔ codex)
 
-**路径** (`AcodeIOS/Acode/Views/SettingsView.swift:251-279` → `ChatViewModel.swift:226-229`)
+**路径** (`AcodeIOS/Codevoke/Views/SettingsView.swift:251-279` → `ChatViewModel.swift:226-229`)
 ```swift
 viewModel.selectCLI("claude" | "codex")  // → composerSetCLI 命令
 ```
@@ -292,7 +292,7 @@ viewModel.selectCLI("claude" | "codex")  // → composerSetCLI 命令
 
 ### C-01 (Blocker) — newDraftSession 自动 focus 永不触发
 
-**文件**: `AcodeIOS/Acode/ViewModels/ChatViewModel.swift:674-689`
+**文件**: `AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift:674-689`
 
 ```swift
 private func handleAck(_ ack: CommandAck) {

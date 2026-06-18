@@ -47,10 +47,10 @@
 
 相关文件：
 
-- `AcodeIOS/Acode/Networking/RemoteChatConfig.swift`
-- `AcodeIOS/Acode/Networking/RemoteHTTPClient.swift`
-- `AcodeIOS/Acode/Networking/RemoteWebSocketClient.swift`
-- `AcodeIOS/Acode/Views/SettingsView.swift`
+- `AcodeIOS/Codevoke/Networking/RemoteChatConfig.swift`
+- `AcodeIOS/Codevoke/Networking/RemoteHTTPClient.swift`
+- `AcodeIOS/Codevoke/Networking/RemoteWebSocketClient.swift`
+- `AcodeIOS/Codevoke/Views/SettingsView.swift`
 
 当前能力：
 
@@ -827,18 +827,18 @@ Mac 端 UI 改造：
 建议新增：
 
 ```text
-AcodeIOS/Acode/Networking/
+AcodeIOS/Codevoke/Networking/
   AccountAPIClient.swift
   DeviceAPIClient.swift
   SignalingClient.swift
   PeerConnectionClient.swift
 
-AcodeIOS/Acode/Models/
+AcodeIOS/Codevoke/Models/
   AccountModels.swift
   DeviceModels.swift
   SubscriptionModels.swift
 
-AcodeIOS/Acode/Views/
+AcodeIOS/Codevoke/Views/
   LoginView.swift
   DeviceListView.swift
   DeviceCodeView.swift

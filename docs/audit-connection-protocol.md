@@ -4,7 +4,7 @@
 
 ## TL;DR
 
-1. **P0 — Server 没有 `commandId` 幂等去重**：iOS `replayPendingCommands` 在重连后会重发同 commandId 的未 ack 命令；实测 `newDraftSession` 用同 commandId 发 3 次会创建 3 个独立 session、3 个独立 ok ack。`composerSend` 同理可能让用户消息被发两次（`ClaudeMac/Services/RemoteChat/RemoteChatCommandRouter.swift:25-218` 无 dedup；iOS 重发逻辑 `AcodeIOS/Acode/ViewModels/ChatViewModel.swift:696-708`）。
+1. **P0 — Server 没有 `commandId` 幂等去重**：iOS `replayPendingCommands` 在重连后会重发同 commandId 的未 ack 命令；实测 `newDraftSession` 用同 commandId 发 3 次会创建 3 个独立 session、3 个独立 ok ack。`composerSend` 同理可能让用户消息被发两次（`ClaudeMac/Services/RemoteChat/RemoteChatCommandRouter.swift:25-218` 无 dedup；iOS 重发逻辑 `AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift:696-708`）。
 2. **P0 — `remoteComposerSend` 空 composer 走 500ms 兜底，但同步 ack 返回 `rejected`**：iOS `handleAck` 直接把 reject message 写进 `lastError` 让用户看到弹窗式错误，即使 0.5s 后实际成功（`PanelStateBroadcasterAdapter.swift:207-257`、`ChatViewModel.swift:684-688`）。
 3. **P1 — 默认 focus=nil 的连接收"所有 session"广播**：`RemoteChatServer.broadcastVNCEnvelope` 的过滤逻辑 `state.focusedSessionID != envelope.sessionId, state.focusedSessionID != nil` 在 focus 为 nil 时不过滤；多 session 并发时会泄漏其它 session 的 patch 给一个未聚焦的连接（`RemoteChatServer.swift:411`）。
 4. **P1 — 重连退避无指数策略 + 不区分错误类型**：iOS 固定 1.5s 重试，不区分 401 / DNS 失败 / 拒连，401 会无限循环（`ChatViewModel.swift:774-781`、`RemoteWebSocketClient.swift:208-214`）。
@@ -57,7 +57,7 @@ ack: cid=D49F6593-... sessionId=82FF52AF-...
 ```
 同一个 commandId 收到 3 个 ok ack、3 个独立 sessionId。
 
-**根因**：`ClaudeMac/Services/RemoteChat/RemoteChatCommandRouter.swift:25-218` 全程没有 commandId 缓存。`ClaudeMac/Services/RemoteChat/RemoteChatServer.swift:442-477` `handleVNCCommand` 也无 dedup。iOS replay 见 `AcodeIOS/Acode/ViewModels/ChatViewModel.swift:696-708`。
+**根因**：`ClaudeMac/Services/RemoteChat/RemoteChatCommandRouter.swift:25-218` 全程没有 commandId 缓存。`ClaudeMac/Services/RemoteChat/RemoteChatServer.swift:442-477` `handleVNCCommand` 也无 dedup。iOS replay 见 `AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift:696-708`。
 
 **最严重的具体后果**：
 - `composerSend`：用户消息可能被发送两次（ack 在飞行中丢包 → reconnect → replay → 服务端再次 sendFromComposer）。
@@ -80,7 +80,7 @@ UI（`shouldShowDebugLog`、`SettingsView` 等）依赖 `lastError != nil` 触�
 
 **用户感受**：每次"发送消息"按钮按下，约 0.5s 内成功显示消息，**同时**也会看到一行刺眼的红色"send rejected (composer empty or capability check failed)"。延迟重试的成功路径无后续 ack 通知客户端"现在好了"。
 
-**根因**：`ClaudeMac/Services/RemoteChat/PanelStateBroadcasterAdapter.swift:246-256`、`AcodeIOS/Acode/ViewModels/ChatViewModel.swift:684-688`。
+**根因**：`ClaudeMac/Services/RemoteChat/PanelStateBroadcasterAdapter.swift:246-256`、`AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift:684-688`。
 
 **建议**：要么 (a) server 在重试 path 上等待 500ms 再发 ack（让 ack 反映最终结果），要么 (b) router 在已知 race-tolerant op 上区分"deferred"状态、不发同步 reject，要么 (c) iOS 区分技术性 reject 与可重试 reject 不弹给用户。任一即可，目前是最影响用户感受的体验 bug。
 
@@ -98,7 +98,7 @@ if state.focusedSessionID != envelope.sessionId, state.focusedSessionID != nil {
 
 ### P1-2 — iOS 重连退避固定 1.5s，不区分错误类型，401 无限循环
 
-`AcodeIOS/Acode/ViewModels/ChatViewModel.swift:774-781`：
+`AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift:774-781`：
 ```swift
 private func scheduleReconnect(generation: Int) {
     Task { [weak self] in

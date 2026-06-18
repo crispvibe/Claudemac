@@ -42,7 +42,7 @@ Notes:
 
 ## App Store Connect Privacy Labels
 
-Use these labels to match current code and `AcodeIOS/Acode/PrivacyInfo.xcprivacy`.
+Use these labels to match current code and `AcodeIOS/Codevoke/PrivacyInfo.xcprivacy`.
 
 | Category | Data Type | Linked | Tracking | Purpose |
 | --- | --- | --- | --- | --- |
@@ -69,8 +69,8 @@ No tracking domains are declared.
 
 ## Privacy Manifest Evidence
 
-- Added: `AcodeIOS/Acode/PrivacyInfo.xcprivacy`
-- Required reason API found in code: `UserDefaults.standard` in `AcodeIOS/Acode/ViewModels/ChatViewModel.swift`
+- Added: `AcodeIOS/Codevoke/PrivacyInfo.xcprivacy`
+- Required reason API found in code: `UserDefaults.standard` in `AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift`
 - Declared required reason: `NSPrivacyAccessedAPICategoryUserDefaults` / `CA92.1`
 - Existing permission strings:
   - `NSCameraUsageDescription`

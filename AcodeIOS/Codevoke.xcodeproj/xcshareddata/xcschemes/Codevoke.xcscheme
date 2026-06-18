@@ -17,8 +17,8 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "AC0000000000000000000001"
                BuildableName = "Codevoke.app"
-               BlueprintName = "Acode"
-               ReferencedContainer = "container:Acode.xcodeproj">
+               BlueprintName = "Codevoke"
+               ReferencedContainer = "container:Codevoke.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -47,8 +47,8 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AC0000000000000000000001"
             BuildableName = "Codevoke.app"
-            BlueprintName = "Acode"
-            ReferencedContainer = "container:Acode.xcodeproj">
+            BlueprintName = "Codevoke"
+            ReferencedContainer = "container:Codevoke.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -64,8 +64,8 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AC0000000000000000000001"
             BuildableName = "Codevoke.app"
-            BlueprintName = "Acode"
-            ReferencedContainer = "container:Acode.xcodeproj">
+            BlueprintName = "Codevoke"
+            ReferencedContainer = "container:Codevoke.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

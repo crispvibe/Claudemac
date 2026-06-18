@@ -19,7 +19,7 @@ Each agent's allowed/forbidden file set is in §6. Merge order: protocol-server 
 
 After all three agents merge, the following greps MUST yield **zero** hits.
 
-### 0.1 iOS — `AcodeIOS/Acode/**/*.swift`
+### 0.1 iOS — `AcodeIOS/Codevoke/**/*.swift`
 
 ```
 queuedMessagesBySession
@@ -157,7 +157,7 @@ After refactor every site in this table must call **`controller.send(...)` / `co
 
 ## 2. iOS state machine — fields and entry points to delete
 
-All fields below live on `AcodeIOS/Acode/ViewModels/ChatViewModel.swift`. After refactor the class is a renderer with only **rendering** state (`config`, `selectedSession`, derived UI flags driven from snapshot). Anything in this list must be deleted.
+All fields below live on `AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift`. After refactor the class is a renderer with only **rendering** state (`config`, `selectedSession`, derived UI flags driven from snapshot). Anything in this list must be deleted.
 
 ### 2.1 Fields to delete
 
@@ -236,7 +236,7 @@ After refactor iOS consumes only the new envelopes (`snapshot`, `patch`, `comman
 
 ### 2.5 iOS persistence today
 
-`AcodeIOS/Acode/ViewModels/ChatViewModel.swift:204-216`:
+`AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift:204-216`:
 
 - `UserDefaults.standard` `remote.macHost` / `remote.port` / `remote.token` — **KEEP** (connection config)
 - `remote.selectedModelID` / `remote.selectedCLI` / `remote.selectedPermissionMode` / `remote.selectedReasoningEffort` — **DELETE writes**. Read once on first launch only as "last known preference" hint for the first `composerSet*` command. After Phase C they live solely in the snapshot.
@@ -246,10 +246,10 @@ iOS writes **zero business state** to disk after the refactor.
 
 ### 2.6 Code reference
 
-- `AcodeIOS/Acode/ViewModels/ChatViewModel.swift:1-2680` — the file to gut.
-- `AcodeIOS/Acode/Networking/RemoteWebSocketClient.swift:65-152` — frame send helpers; replace with one generic `sendCommand`.
-- `AcodeIOS/Acode/Networking/RemoteHTTPClient.swift:17-83` — methods to delete (see §2.4).
-- `AcodeIOS/Acode/Models/RemoteModels.swift:195-245` — `RemoteSendMessageRequest`, `RemoteStreamEvent` deleted; replaced by new types from ChatCore.
+- `AcodeIOS/Codevoke/ViewModels/ChatViewModel.swift:1-2680` — the file to gut.
+- `AcodeIOS/Codevoke/Networking/RemoteWebSocketClient.swift:65-152` — frame send helpers; replace with one generic `sendCommand`.
+- `AcodeIOS/Codevoke/Networking/RemoteHTTPClient.swift:17-83` — methods to delete (see §2.4).
+- `AcodeIOS/Codevoke/Models/RemoteModels.swift:195-245` — `RemoteSendMessageRequest`, `RemoteStreamEvent` deleted; replaced by new types from ChatCore.
 
 ---
 
@@ -886,7 +886,7 @@ This means the legacy mirror plumbing (`NotificationCenter.default.post(.remoteC
 
 **Allowed to create**:
 
-- `AcodeIOS/Acode/ViewModels/PanelStateMirror.swift` (the new thin-client renderer state object — replaces `ChatViewModel`'s deleted bits).
+- `AcodeIOS/Codevoke/ViewModels/PanelStateMirror.swift` (the new thin-client renderer state object — replaces `ChatViewModel`'s deleted bits).
 - Any new view/networking helper file inside `AcodeIOS/Codevoke/`.
 
 **Forbidden to modify**:

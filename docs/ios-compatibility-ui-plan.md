@@ -16,7 +16,7 @@
 
 | 项目 | 位置 | 风险 | 处理建议 |
 | --- | --- | --- | --- |
-| `IPHONEOS_DEPLOYMENT_TARGET = 26.0` | `Acode.xcodeproj/project.pbxproj` | 无法验证 iOS 16 编译 | 最后降到 `16.0` |
+| `IPHONEOS_DEPLOYMENT_TARGET = 26.0` | `Codevoke.xcodeproj/project.pbxproj` | 无法验证 iOS 16 编译 | 最后降到 `16.0` |
 | `glassEffect` | `VisualStyle.swift` | iOS 26+ API，视觉跨版本不一致 | 改为自定义 glass 视觉，iOS 26 也默认走统一实现 |
 | 双参数 `onChange` | `ChatView.swift`、`InputBarView.swift` | iOS 17+ API | 替换为 iOS 16 兼容封装或旧签名 |
 | `presentationCornerRadius` | `RootView.swift` | iOS 16.4+ API | 封装 availability，iOS 16.0-16.3 内容层兜底 |

@@ -6,7 +6,7 @@ Scope: residual scan for ICE/TURN aliases, user-facing transport text, backend T
 
 1. `remote/turn/ice-servers` is still a live compatibility alias.
    - Backend exposes both `remote/ice-config` and `remote/turn/ice-servers`: `后端/server/router/biz/remote.go:40-41`.
-   - iOS and macOS account clients already call `remote/ice-config`: `AcodeIOS/Acode/Networking/RemoteDeviceClient.swift:61-63`, `ClaudeMac/Services/AccountRemote/DeviceRegistrationClient.swift:39-41`.
+   - iOS and macOS account clients already call `remote/ice-config`: `AcodeIOS/Codevoke/Networking/RemoteDeviceClient.swift:61-63`, `ClaudeMac/Services/AccountRemote/DeviceRegistrationClient.swift:39-41`.
    - Android now calls `remote/ice-config`: `Android/app/src/main/java/com/acode/android/data/RemoteApiClient.kt:133-134`.
    - Recommendation: do not delete the alias yet. Mark it deprecated, keep current clients on `remote/ice-config`, then remove the alias after one release window.
 
@@ -16,7 +16,7 @@ Scope: residual scan for ICE/TURN aliases, user-facing transport text, backend T
    - Recommendation: keep during compatibility, but add `/remote/ice-config` there too when core implementation ownership is clear. Then deprecate the old path.
 
 3. User-facing transport text no longer exposes LAN/TURN as usable transport modes.
-   - `RemoteUserFacingText.transport` maps `p2p` to "remote connection" and maps `lan` / `turn` to "unsupported transport": `AcodeIOS/Acode/Utils/RemoteUserFacingText.swift:49-57`.
+   - `RemoteUserFacingText.transport` maps `p2p` to "remote connection" and maps `lan` / `turn` to "unsupported transport": `AcodeIOS/Codevoke/Utils/RemoteUserFacingText.swift:49-57`.
    - Localized error strings still mention `P2P` and `UDP/STUN` to explain direct-connect failure, but no longer mention fallback relay / server relay / TURN as a supported option.
    - Recommendation: keep protocol terms in diagnostics unless product copy should hide technical detail completely.
 
