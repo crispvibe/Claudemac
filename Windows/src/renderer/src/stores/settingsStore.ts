@@ -29,8 +29,8 @@ interface SettingsBridgeApi {
   removeAuthorizedFolder: (folderId: string) => Promise<AppSettings>;
 }
 
-interface AcodeSettingsWindow extends Window {
-  acode?: Window["acode"] & {
+interface CodevokeSettingsWindow extends Window {
+  codevoke?: Window["codevoke"] & {
     settings?: SettingsBridgeApi;
   };
 }
@@ -208,15 +208,15 @@ export function selectProfiles(settings: AppSettings | null, kind: CLIKind): CLI
 function getSettingsBridge(): SettingsBridgeApi {
   const api = getAppBridge().settings;
   if (!api) {
-    throw new Error("window.acode.settings bridge is not available");
+    throw new Error("window.codevoke.settings bridge is not available");
   }
   return api;
 }
 
-function getAppBridge(): NonNullable<AcodeSettingsWindow["acode"]> {
-  const api = (window as AcodeSettingsWindow).acode;
+function getAppBridge(): NonNullable<CodevokeSettingsWindow["codevoke"]> {
+  const api = (window as CodevokeSettingsWindow).codevoke;
   if (!api) {
-    throw new Error("window.acode bridge is not available");
+    throw new Error("window.codevoke bridge is not available");
   }
   return api;
 }

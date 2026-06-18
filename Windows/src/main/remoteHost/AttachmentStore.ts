@@ -31,7 +31,7 @@ export type StoreAttachmentResult =
   | { ok: false; error: AttachmentStoreFailure };
 
 /** host 端落盘根目录（系统临时目录下的固定子目录）。 */
-export const ATTACHMENT_DIRECTORY_NAME = "AcodeRemoteChatAttachments";
+export const ATTACHMENT_DIRECTORY_NAME = "CodevokeRemoteChatAttachments";
 
 /** 附件落盘根目录的绝对路径。 */
 export function attachmentRootDirectory(): string {
@@ -146,9 +146,19 @@ export async function storeUploadedAttachment(
   }
   try {
     const directory = path.join(tmpdir(), ATTACHMENT_DIRECTORY_NAME, randomUUID());
-    await mkdir(directory, { recursive: true });
     const fileURL = path.join(directory, filename);
-    await writeFile(fileURL, data, { flag: "wx" });
+    await mkdir(directory, { recursive: true });
+    try {
+      await writeFile(fileURL, data, { flag: "wx" });
+    } catch (error) {
+      // host 停用会清空附件根目录；若与上传并发把父目录删掉（ENOENT），重建一次再写。
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+        await mkdir(directory, { recursive: true });
+        await writeFile(fileURL, data, { flag: "wx" });
+      } else {
+        throw error;
+      }
+    }
     return { ok: true, value: { filename, path: fileURL } };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

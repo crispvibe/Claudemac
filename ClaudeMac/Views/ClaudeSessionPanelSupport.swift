@@ -517,7 +517,7 @@ struct FileReference: Identifiable, Hashable {
 
     var openURL: URL? {
         var components = URLComponents()
-        components.scheme = "acode-file"
+        components.scheme = "codevoke-file"
         components.host = "open"
         var items = [URLQueryItem(name: "path", value: path)]
         if let line { items.append(URLQueryItem(name: "line", value: String(line))) }
@@ -527,7 +527,7 @@ struct FileReference: Identifiable, Hashable {
     }
 
     init?(openURL: URL) {
-        guard openURL.scheme == "acode-file" else { return nil }
+        guard openURL.scheme == "codevoke-file" else { return nil }
         let components = URLComponents(url: openURL, resolvingAgainstBaseURL: false)
         guard let path = components?.queryItems?.first(where: { $0.name == "path" })?.value, !path.isEmpty else { return nil }
         let line = components?.queryItems?.first(where: { $0.name == "line" })?.value.flatMap(Int.init)
@@ -2623,7 +2623,7 @@ struct ChatComposerTextView: NSViewRepresentable {
 
         private func pastedImagePath(from pasteboard: NSPasteboard) -> String? {
             guard let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) else { return nil }
-            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AcodePastedImages", isDirectory: true)
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("CodevokePastedImages", isDirectory: true)
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 let destination = directory.appendingPathComponent("pasted-image-\(UUID().uuidString).png")

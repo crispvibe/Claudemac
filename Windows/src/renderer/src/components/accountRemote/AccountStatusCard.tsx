@@ -65,7 +65,7 @@ export function AccountStatusCard({
   }, [device?.deviceID, device?.deviceName, devices]);
 
   function requireBridge() {
-    const bridge = window.acode?.accountRemote;
+    const bridge = window.codevoke?.accountRemote;
     if (!bridge) {
       throw new Error("Account API is not available.");
     }

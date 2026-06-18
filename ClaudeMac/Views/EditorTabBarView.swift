@@ -48,7 +48,7 @@ struct EditorTabBarView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help("登录 AnnaCode 账号")
+        .help("登录 Codevoke 账号")
     }
 
     private var loginButtonTitle: String {

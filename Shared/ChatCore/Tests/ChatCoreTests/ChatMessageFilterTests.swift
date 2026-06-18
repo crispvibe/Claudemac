@@ -67,7 +67,7 @@ final class ChatMessageFilterTests: XCTestCase {
             kind: .diff,
             title: "changes.diff",
             subtitle: "Codex",
-            text: #"{"diff":"diff --git a/AcodeIOS/Acode/Views/ChatView.swift b/AcodeIOS/Acode/Views/ChatView.swift\n+test"}"#
+            text: #"{"diff":"diff --git a/CodevokeIOS/Codevoke/Views/ChatView.swift b/CodevokeIOS/Codevoke/Views/ChatView.swift\n+test"}"#
         ))
     }
 
@@ -95,7 +95,7 @@ final class ChatMessageFilterTests: XCTestCase {
         - mysql_xy
         - skill-router
         - terminal
-        - mysql_acode
+        - mysql_codevoke
         """
 
         XCTAssertTrue(ChatMessageFilter.looksLikeClaudeToolInventory(text))
@@ -111,7 +111,7 @@ final class ChatMessageFilterTests: XCTestCase {
             "mysql_xy",
             "skill-router",
             "terminal",
-            "mysql_acode"
+            "mysql_codevoke"
         ])
     }
 
@@ -157,7 +157,7 @@ final class ChatMessageFilterTests: XCTestCase {
             kind: .toolCall,
             title: "Read",
             subtitle: "tool",
-            text: #"{"file_path":"/Users/oreo/Desktop/ClaudeMac/AcodeIOS/Acode/Views/ChatView.swift"}"#
+            text: #"{"file_path":"/Users/oreo/Desktop/ClaudeMac/CodevokeIOS/Codevoke/Views/ChatView.swift"}"#
         ))
         XCTAssertFalse(ChatMessageFilter.shouldHideMessage(
             kind: .commandOutput,

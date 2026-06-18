@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AcodeWorkspace"
+rootProject.name = "CodevokeWorkspace"
 include(":android")
 project(":android").projectDir = file("Android/app")

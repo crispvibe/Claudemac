@@ -26,7 +26,7 @@ import "./styles.css";
 
 type AppMode = "workbench" | "settings";
 
-const CHAT_PANE_WIDTH_STORAGE_KEY = "acode.windows.chatPaneWidth";
+const CHAT_PANE_WIDTH_STORAGE_KEY = "codevoke.windows.chatPaneWidth";
 const DEFAULT_CHAT_PANE_WIDTH = 420;
 const MIN_CHAT_PANE_WIDTH = 260;
 const MIN_EDITOR_PANE_WIDTH = 320;
@@ -73,7 +73,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const accountRemote = window.acode?.accountRemote;
+    const accountRemote = window.codevoke?.accountRemote;
     if (!accountRemote) {
       return;
     }
@@ -87,11 +87,11 @@ function App() {
   }, []);
 
   async function chooseProject(): Promise<string | null> {
-    if (!window.acode) {
+    if (!window.codevoke) {
       return null;
     }
 
-    const result = await window.acode.selectProjectDirectory();
+    const result = await window.codevoke.selectProjectDirectory();
     if (!result.canceled) {
       return result.path;
     }
@@ -108,7 +108,7 @@ function App() {
         return;
       }
     }
-    await window.acode?.windowControl(action);
+    await window.codevoke?.windowControl(action);
   }
 
   return (
@@ -224,7 +224,7 @@ function Workbench({
   }
 
   async function handleOpenFileFromDialog() {
-    const selection = await window.acode?.selectEditorFile();
+    const selection = await window.codevoke?.selectEditorFile();
     if (selection?.path) {
       await openFile(selection.path);
     }
@@ -325,7 +325,7 @@ function Workbench({
                 <div className="app-logo" aria-hidden="true">
                   <AppLogo />
                 </div>
-                <span className="brand-title">Acode</span>
+                <span className="brand-title">Codevoke</span>
                 <span className="brand-divider" aria-hidden="true" />
                 <button className="project-switch window-no-drag" type="button" onClick={() => setHistoryOpen(!historyOpen)}>
                   <span className="project-switch-title">{projectTitle}</span>

@@ -341,7 +341,7 @@ function AccountSecuritySettings({ onOpenAccountDialog }: { onOpenAccountDialog?
     && !accountAction;
 
   function requireBridge() {
-    const bridge = window.acode?.accountRemote;
+    const bridge = window.codevoke?.accountRemote;
     if (!bridge) {
       throw new Error("Account API is not available.");
     }
@@ -736,10 +736,10 @@ function WindowsHostPanel() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [tokenVisible, setTokenVisible] = useState(false);
-  const bridgeAvailable = Boolean(window.acode?.remoteHost);
+  const bridgeAvailable = Boolean(window.codevoke?.remoteHost);
 
   useEffect(() => {
-    const bridge = window.acode?.remoteHost;
+    const bridge = window.codevoke?.remoteHost;
     if (!bridge) {
       return;
     }
@@ -757,7 +757,7 @@ function WindowsHostPanel() {
   }, []);
 
   async function runHostAction(action: () => Promise<RemoteHostStatus>, successMessage?: string) {
-    const bridge = window.acode?.remoteHost;
+    const bridge = window.codevoke?.remoteHost;
     if (!bridge) {
       return;
     }
@@ -799,7 +799,7 @@ function WindowsHostPanel() {
             checked={enabled}
             disabled={busy || !bridgeAvailable}
             type="checkbox"
-            onChange={(event) => void runHostAction(() => window.acode!.remoteHost.setEnabled(event.currentTarget.checked))}
+            onChange={(event) => void runHostAction(() => window.codevoke!.remoteHost.setEnabled(event.currentTarget.checked))}
           />
           <span />
         </label>
@@ -825,7 +825,7 @@ function WindowsHostPanel() {
               <button type="button" disabled={!status?.token} onClick={() => status?.token && void copyText(status.token, "口令已复制到剪贴板。")}>
                 <Copy size={14} /> 复制
               </button>
-              <button className="settings-primary-button" type="button" disabled={busy} onClick={() => void runHostAction(() => window.acode!.remoteHost.resetToken(), "已重置连接口令，旧口令立即失效。")}>
+              <button className="settings-primary-button" type="button" disabled={busy} onClick={() => void runHostAction(() => window.codevoke!.remoteHost.resetToken(), "已重置连接口令，旧口令立即失效。")}>
                 <RefreshCw size={14} /> 重置口令
               </button>
             </div>
@@ -998,7 +998,7 @@ function AboutSettings() {
     setUpdateUrl("");
     setUpdateMessage("正在检查更新...");
     try {
-      const data = await window.acode?.checkAppUpdate(appInfo?.version ?? "0.0.0");
+      const data = await window.codevoke?.checkAppUpdate(appInfo?.version ?? "0.0.0");
       if (!data) throw new Error("更新服务不可用");
       if (data.updateAvailable) {
         const build = data.latestBuildNumber ? ` (${data.latestBuildNumber})` : "";
@@ -1022,7 +1022,7 @@ function AboutSettings() {
       return;
     }
 
-    const bridge = window.acode?.accountRemote;
+    const bridge = window.codevoke?.accountRemote;
     if (!bridge) {
       setLegalMessage("协议服务不可用");
       return;
@@ -1048,7 +1048,7 @@ function AboutSettings() {
         <div className="about-hero">
           <div className="about-logo"><AppLogo /></div>
           <div>
-            <h3>Acode</h3>
+            <h3>Codevoke</h3>
             <p>一个轻量级的 Claude Code / Codex 桌面客户端</p>
           </div>
         </div>

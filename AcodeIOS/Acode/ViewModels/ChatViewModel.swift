@@ -1960,7 +1960,7 @@ final class ChatViewModel: ObservableObject {
 
     private func appendDebug(_ line: String) {
 #if DEBUG
-        print("[AnnaCodeRemote] \(line)")
+        print("[CodevokeRemote] \(line)")
 #endif
     }
 

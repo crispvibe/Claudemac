@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.acode.android"
+    namespace = "com.codevoke.android"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.acode.android"
+        applicationId = "com.codevoke.android"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

@@ -83,7 +83,7 @@ final class SignalingClient: ObservableObject {
         connectEpoch &+= 1
         let epoch = connectEpoch
 #if DEBUG
-        print("[AnnaCodeSignaling] connect epoch=\(epoch) host=\(url.host ?? "nil")")
+        print("[CodevokeSignaling] connect epoch=\(epoch) host=\(url.host ?? "nil")")
 #endif
         let wsTask = session.webSocketTask(with: url)
         task = wsTask
@@ -105,7 +105,7 @@ final class SignalingClient: ObservableObject {
             } catch {
                 if connectEpoch == epoch {
 #if DEBUG
-                    print("[AnnaCodeSignaling] receive failed epoch=\(epoch): \(error.localizedDescription)")
+                    print("[CodevokeSignaling] receive failed epoch=\(epoch): \(error.localizedDescription)")
 #endif
                     if Self.isAuthError(error) {
                         failAuthentication(message: nil)
@@ -237,7 +237,7 @@ final class SignalingClient: ObservableObject {
         let delay = reconnectDelay
         reconnectDelay = min(reconnectDelay * 2, 30)
 #if DEBUG
-        print("[AnnaCodeSignaling] reconnect scheduled delay=\(delay)s nextEpoch=\(connectEpoch + 1)")
+        print("[CodevokeSignaling] reconnect scheduled delay=\(delay)s nextEpoch=\(connectEpoch + 1)")
 #endif
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
@@ -286,7 +286,7 @@ final class SignalingClient: ObservableObject {
             Task { @MainActor [weak self] in
                 guard self?.task === task, self?.connectEpoch == epoch else { return }
 #if DEBUG
-                print("[AnnaCodeSignaling] ping failed epoch=\(epoch): \(error.localizedDescription)")
+                print("[CodevokeSignaling] ping failed epoch=\(epoch): \(error.localizedDescription)")
 #endif
                 self?.markDisconnected()
                 self?.scheduleReconnect()
@@ -304,7 +304,7 @@ final class SignalingClient: ObservableObject {
             Task { @MainActor [weak self] in
                 guard self?.task === task else { return }
 #if DEBUG
-                print("[AnnaCodeSignaling] send failed type=\(type ?? "nil"): \(error.localizedDescription)")
+                print("[CodevokeSignaling] send failed type=\(type ?? "nil"): \(error.localizedDescription)")
 #endif
                 if Self.isAuthError(error) {
                     self?.failAuthentication(message: nil)
@@ -328,7 +328,7 @@ final class SignalingClient: ObservableObject {
     private func signalingURL(token: String) -> URL? {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         components?.scheme = baseURL.scheme == "http" ? "ws" : "wss"
-        if let host = UserDefaults.standard.string(forKey: "AnnaCodeRemoteSignalingHost")?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty {
+        if let host = UserDefaults.standard.string(forKey: "CodevokeRemoteSignalingHost")?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty {
             components?.host = host
         }
         components?.path = "/remote/signaling/ws"

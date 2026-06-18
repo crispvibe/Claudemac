@@ -104,7 +104,7 @@
 		F00000000000000000000020 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F00000000000000000000021 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000022 /* ClaudeMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeMac.entitlements; sourceTree = "<group>"; };
-		F00000000000000000000023 /* AnnaCode.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AnnaCode.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000023 /* Codevoke.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Codevoke.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000024 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F00000000000000000000025 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
 		F00000000000000000000026 /* ChatPanelState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPanelState.swift; sourceTree = "<group>"; };
@@ -280,7 +280,7 @@
 		G00000000000000000000008 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				F00000000000000000000023 /* AnnaCode.app */,
+				F00000000000000000000023 /* Codevoke.app */,
 					A20000000000000000000021 /* ClaudeMacTests.xctest */,
 			);
 			name = Products;
@@ -383,8 +383,8 @@
 				CHU000000000000000000003 /* ChatUI */,
 				CWEBRTC000000000000003 /* WebRTC */,
 			);
-			productName = AnnaCode;
-			productReference = F00000000000000000000023 /* AnnaCode.app */;
+			productName = Codevoke;
+			productReference = F00000000000000000000023 /* Codevoke.app */;
 			productType = "com.apple.product-type.application";
 		};
 
@@ -697,7 +697,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = vin.anna.ClaudeMac;
-				PRODUCT_NAME = AnnaCode;
+				PRODUCT_NAME = Codevoke;
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -724,7 +724,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = vin.anna.ClaudeMac;
-				PRODUCT_NAME = AnnaCode;
+				PRODUCT_NAME = Codevoke;
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -749,7 +749,7 @@
 					PRODUCT_NAME = "$(TARGET_NAME)";
 					SDKROOT = macosx;
 					SWIFT_VERSION = 5.0;
-					TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AnnaCode.app/Contents/MacOS/AnnaCode";
+					TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Codevoke.app/Contents/MacOS/Codevoke";
 				};
 				name = Debug;
 			};
@@ -770,7 +770,7 @@
 					PRODUCT_NAME = "$(TARGET_NAME)";
 					SDKROOT = macosx;
 					SWIFT_VERSION = 5.0;
-					TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AnnaCode.app/Contents/MacOS/AnnaCode";
+					TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Codevoke.app/Contents/MacOS/Codevoke";
 				};
 				name = Release;
 			};

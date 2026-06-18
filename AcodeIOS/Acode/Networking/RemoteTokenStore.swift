@@ -21,7 +21,7 @@ enum RemoteTokenStoreError: LocalizedError {
 actor RemoteTokenStore {
     static let shared = RemoteTokenStore()
 
-    private let service = "com.anna.vin.acode.remote.auth"
+    private let service = "com.anna.vin.codevoke.remote.auth"
     private let account = "session"
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()

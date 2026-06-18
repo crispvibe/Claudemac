@@ -341,7 +341,7 @@ export function ChatRuntimePanel() {
   const canSend = Boolean(project?.path && (input.trim() || attachments.length > 0));
 
   useEffect(() => {
-    const chat = window.acode?.chat;
+    const chat = window.codevoke?.chat;
     setBackend(chat ? createIpcChatBackend(chat) : null);
     if (chat) {
       void chat.loadSessions().then(hydrateSessions).catch((error: unknown) => {
@@ -470,7 +470,7 @@ export function ChatRuntimePanel() {
   }
 
   async function handleAttachFile() {
-    const selection = await window.acode?.selectEditorFile();
+    const selection = await window.codevoke?.selectEditorFile();
     if (!selection?.path) {
       return;
     }

@@ -29,7 +29,7 @@ import type { ChatBridge } from "../shared/chat";
 
 declare global {
   interface Window {
-    acode?: {
+    codevoke?: {
       getAppInfo: () => Promise<AppInfo>;
       checkAppUpdate: (version: string) => Promise<AppUpdateCheckResponse>;
       selectProjectDirectory: () => Promise<ProjectDirectorySelection>;

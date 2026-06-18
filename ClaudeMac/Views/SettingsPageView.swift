@@ -664,7 +664,7 @@ struct SettingsPageView: View {
                 )
                 connectionRail(isActive: isSignedIn && isServerReady)
                 connectionNode(
-                    title: deviceProvisioning.device?.deviceName ?? "AnnaCode Mac",
+                    title: deviceProvisioning.device?.deviceName ?? "Codevoke Mac",
                     subtitle: deviceProvisioning.device.map { "设备 #\($0.id)" } ?? "本机设备",
                     systemImage: "desktopcomputer",
                     isActive: isServerReady
@@ -1404,7 +1404,7 @@ struct SettingsPageView: View {
         VStack(alignment: .leading, spacing: 14) {
             settingsCard(title: "关于") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("AnnaCode")
+                    Text("Codevoke")
                         .font(.system(size: 15, weight: .semibold))
                     Text("一个轻量级的 Claude Code / Codex 桌面客户端")
                         .font(.system(size: 13))
@@ -1752,7 +1752,7 @@ struct SettingsPageView: View {
             snapshot.model = tomlValue(in: text, key: "model") ?? ""
             configuredProvider = tomlValue(in: text, key: "model_provider") ?? ""
 
-            let providerSection = configuredProvider.isEmpty ? "acode_custom" : configuredProvider
+            let providerSection = configuredProvider.isEmpty ? "codevoke_custom" : configuredProvider
             if let customSection = tomlSection(in: text, section: "model_providers.\(providerSection)") {
                 snapshot.baseURL = tomlValue(in: customSection, key: "base_url") ?? ""
                 snapshot.wireApi = tomlValue(in: customSection, key: "wire_api") ?? "responses"
@@ -1769,7 +1769,7 @@ struct SettingsPageView: View {
     }
 
     private nonisolated static func settingsError(_ message: String) -> NSError {
-        NSError(domain: "AnnaCodeSettings", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+        NSError(domain: "CodevokeSettings", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     private nonisolated static func tomlRawValue(in text: String, key: String) -> String? {
@@ -2467,7 +2467,7 @@ struct SettingsPageView: View {
             codexModel = parseTomlValue(text, key: "model") ?? ""
             configuredProvider = parseTomlValue(text, key: "model_provider") ?? ""
 
-            let providerSection = configuredProvider.isEmpty ? "acode_custom" : configuredProvider
+            let providerSection = configuredProvider.isEmpty ? "codevoke_custom" : configuredProvider
             if let customSection = extractTomlSection(text, section: "model_providers.\(providerSection)") {
                 codexBaseURL = parseTomlValue(customSection, key: "base_url") ?? ""
                 codexWireApi = parseTomlValue(customSection, key: "wire_api") ?? "responses"
@@ -2503,7 +2503,7 @@ struct SettingsPageView: View {
         let previousAuthData = try? Data(contentsOf: Self.codexAuthURL)
 
         do {
-            let providerID = "acode_custom"
+            let providerID = "codevoke_custom"
             codexAuthMode = .apiKey
             var configText = (try? String(contentsOf: Self.codexConfigURL, encoding: .utf8)) ?? ""
             configText = updateTomlValue(configText, key: "model", value: codexModel.isEmpty ? "gpt-5.5" : codexModel)

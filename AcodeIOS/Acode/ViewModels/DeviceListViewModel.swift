@@ -28,7 +28,7 @@ final class DeviceListViewModel: ObservableObject {
     func load(session: RemoteAuthSession?, showsLoading: Bool = true) async {
         guard let session, !isLoading else {
 #if DEBUG
-            print("[AnnaCodeDeviceList] load skipped hasSession=\(session != nil) isLoading=\(isLoading)")
+            print("[CodevokeDeviceList] load skipped hasSession=\(session != nil) isLoading=\(isLoading)")
 #endif
             return
         }
@@ -38,18 +38,18 @@ final class DeviceListViewModel: ObservableObject {
 
         do {
 #if DEBUG
-            print("[AnnaCodeDeviceList] devices load start")
+            print("[CodevokeDeviceList] devices load start")
 #endif
             devices = try await client.devices(accessToken: session.accessToken)
                 .filter { $0.deviceType == "desktop" || $0.platform == "macos" }
 #if DEBUG
             let summary = devices.map { "\($0.id):\($0.deviceName):online=\($0.online):status=\($0.status):remote=\($0.remoteEnabled)" }.joined(separator: ";")
-            print("[AnnaCodeDeviceList] devices load ok count=\(devices.count) \(summary)")
+            print("[CodevokeDeviceList] devices load ok count=\(devices.count) \(summary)")
 #endif
         } catch {
             message = authErrorMessage(error, fallback: "设备列表加载失败。")
 #if DEBUG
-            print("[AnnaCodeDeviceList] devices load failed: \(error.localizedDescription)")
+            print("[CodevokeDeviceList] devices load failed: \(error.localizedDescription)")
 #endif
         }
     }

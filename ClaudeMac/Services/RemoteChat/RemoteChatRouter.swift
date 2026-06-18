@@ -3,7 +3,7 @@ import ChatCore
 import Darwin
 import os
 
-private let remoteChatRouterLog = Logger(subsystem: "vin.anna.Acode", category: "RemoteChatRouter")
+private let remoteChatRouterLog = Logger(subsystem: "vin.anna.Codevoke", category: "RemoteChatRouter")
 
 /// Constant-time string comparison for secrets (bearer/transient tokens) to avoid a timing
 /// side-channel that a `==` short-circuit would leak over the network.
@@ -87,7 +87,7 @@ struct RemoteChatRouter {
             }
             return .json(RemoteHealthDTO(
                 ok: true,
-                name: "Acode Remote Chat",
+                name: "Codevoke Remote Chat",
                 version: 1,
                 bindLAN: configuration.bindLAN,
                 port: configuration.port,
@@ -314,7 +314,7 @@ struct RemoteChatRouter {
         }
         do {
             let directoryURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("AcodeRemoteChatAttachments", isDirectory: true)
+                .appendingPathComponent("CodevokeRemoteChatAttachments", isDirectory: true)
                 .appendingPathComponent(UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             let fileURL = directoryURL.appendingPathComponent(filename, isDirectory: false)
@@ -327,7 +327,7 @@ struct RemoteChatRouter {
 
     /// Audit B-P1-6: extension allow-list for uploaded attachments. Keeps the
     /// surface to images, common documents, and source code files — the
-    /// universe Acode actually surfaces in chat.
+    /// universe Codevoke actually surfaces in chat.
     private static let allowedAttachmentExtensions: Set<String> = [
         // images
         "png", "jpg", "jpeg", "gif", "webp", "bmp", "heic",

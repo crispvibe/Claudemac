@@ -4,7 +4,7 @@ import ChatUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-let queuedRequestDragTypeIdentifier = "vin.anna.acode.queued-request"
+let queuedRequestDragTypeIdentifier = "vin.anna.codevoke.queued-request"
 let queuedRequestPasteboardType = NSPasteboard.PasteboardType(queuedRequestDragTypeIdentifier)
 
 extension String {
@@ -509,7 +509,7 @@ struct ChatPanelView: View {
     var appDisplayName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
-            ?? "Acode"
+            ?? "Codevoke"
     }
 
     var transcript: some View {

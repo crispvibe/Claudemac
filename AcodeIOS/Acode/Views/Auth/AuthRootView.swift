@@ -31,7 +31,7 @@ struct AuthRootView: View {
             }
             .transition(.opacity)
         }
-        .animation(.acodeSmooth(duration: 0.2), value: screen)
+        .animation(.codevokeSmooth(duration: 0.2), value: screen)
         .task {
             async let legalDocuments: Void = viewModel.loadLegalDocumentsIfNeeded()
             async let appFooter: Void = viewModel.loadAppFooterIfNeeded()
@@ -39,7 +39,7 @@ struct AuthRootView: View {
         }
         .sheet(item: legalDocumentBinding) { document in
             LegalDocumentSheet(document: document)
-                .acodePresentationCornerRadius(28)
+                .codevokePresentationCornerRadius(28)
         }
     }
 

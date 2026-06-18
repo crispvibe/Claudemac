@@ -7,11 +7,11 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="Acode"
+        android:label="Codevoke"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Acode">
+        android:theme="@style/Theme.Codevoke">
         <activity
             android:name=".MainActivity"
             android:exported="true"

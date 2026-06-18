@@ -346,7 +346,7 @@ function notifyTerminalSession(session: ChatSessionRecord, kind: TerminalNotific
   const body = kind === "completed" || !statusText
     ? `${project} · ${title}`
     : `${project} · ${title} · ${statusText}`;
-  const notificationPromise = window.acode?.showDesktopNotification({
+  const notificationPromise = window.codevoke?.showDesktopNotification({
     title: kind === "completed" ? "对话已完成" : "对话异常",
     body
   });
@@ -1300,7 +1300,7 @@ useChatPanelStore.subscribe((state) => {
   chatSessionPersistTimer = window.setTimeout(() => {
     chatSessionPersistTimer = null;
     lastPersistedChatSessionPayload = payload;
-    const savePromise = window.acode?.chat.saveSessions(snapshot);
+    const savePromise = window.codevoke?.chat.saveSessions(snapshot);
     if (!savePromise) {
       return;
     }

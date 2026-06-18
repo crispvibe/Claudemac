@@ -84,27 +84,27 @@ final class AuthViewModel: ObservableObject {
         guard !didBootstrap else { return }
         didBootstrap = true
 #if DEBUG
-        print("[AnnaCodeAuth] bootstrap start")
+        print("[CodevokeAuth] bootstrap start")
 #endif
 
         do {
             if let session = try await tokenStore.load() {
 #if DEBUG
-                print("[AnnaCodeAuth] token loaded expired=\(session.isExpired)")
+                print("[CodevokeAuth] token loaded expired=\(session.isExpired)")
 #endif
                 if session.isExpired {
                     let refreshed = try await authClient.refresh(refreshToken: session.refreshToken)
                     try await tokenStore.save(refreshed)
                     currentSession = refreshed
 #if DEBUG
-                    print("[AnnaCodeAuth] token refreshed")
+                    print("[CodevokeAuth] token refreshed")
 #endif
                 } else {
                     currentSession = session
                 }
                 gateState = .authenticated
 #if DEBUG
-                print("[AnnaCodeAuth] gate authenticated")
+                print("[CodevokeAuth] gate authenticated")
 #endif
                 if let currentSession {
                     await bootstrapLocalDevice(session: currentSession)
@@ -112,12 +112,12 @@ final class AuthViewModel: ObservableObject {
             } else {
                 gateState = .unauthenticated
 #if DEBUG
-                print("[AnnaCodeAuth] no token; gate unauthenticated")
+                print("[CodevokeAuth] no token; gate unauthenticated")
 #endif
             }
         } catch {
 #if DEBUG
-            print("[AnnaCodeAuth] bootstrap failed: \(error.localizedDescription)")
+            print("[CodevokeAuth] bootstrap failed: \(error.localizedDescription)")
 #endif
             try? await tokenStore.clear()
             currentSession = nil

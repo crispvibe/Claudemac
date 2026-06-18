@@ -1,5 +1,5 @@
 "欢迎回来" = "Welcome back";
-"登录 AnnaCode，继续连接你的远程工作区" = "Sign in to AnnaCode to keep connecting to your remote workspace";
+"登录 Codevoke，继续连接你的远程工作区" = "Sign in to Codevoke to keep connecting to your remote workspace";
 "邮箱" = "Email";
 "请输入邮箱" = "Enter your email";
 "密码" = "Password";
@@ -86,7 +86,7 @@
 "当前账号没有远程连接权限，请确认电脑端服务状态后再试。" = "This account does not have remote connection access. Check the desktop service status and try again.";
 "当前网络需要远程连接，但连接通道还没准备好，请稍后重试。" = "This network needs remote transport, but the channel is not ready yet. Try again later.";
 "电脑端已拒绝本次连接。" = "The desktop rejected this connection.";
-"目标设备当前离线，请打开电脑端 AnnaCode 后重试。" = "The target device is offline. Open AnnaCode on the desktop and try again.";
+"目标设备当前离线，请打开电脑端 Codevoke 后重试。" = "The target device is offline. Open Codevoke on the desktop and try again.";
 "目标设备已关闭远程连接。" = "Remote connection is disabled on the target device.";
 "当前账号还没有这台设备的连接授权。" = "This account is not authorized for this device.";
 "目标设备未开启远程连接。" = "Remote connection is not enabled on the target device.";
@@ -133,7 +133,7 @@
 "协议与隐私" = "Legal & Privacy";
 "用户协议、隐私政策" = "Terms of Service, Privacy Policy";
 "在线更新" = "Updates";
-"关于 AnnaCode" = "About AnnaCode";
+"关于 Codevoke" = "About Codevoke";
 "版本 %@ (%@)" = "Version %@ (%@)";
 "当前版本" = "Current Version";
 "检查中..." = "Checking...";
@@ -144,7 +144,7 @@
 "发现新版 %@%@%@。%@" = "Version %@%@ available%@. %@";
 "当前已是最新版本。" = "You are on the latest version.";
 "当前账号" = "Current Account";
-"AnnaCode 远程账号" = "AnnaCode remote account";
+"Codevoke 远程账号" = "Codevoke remote account";
 "已登录" = "Signed in";
 "状态正常" = "Active";
 "修改密码" = "Change Password";
@@ -224,7 +224,7 @@
 "上滑加载更早消息" = "Swipe up to load earlier messages";
 "加载会话消息中…" = "Loading chat messages...";
 "准备开始远程对话" = "Ready to start a remote chat";
-"选择项目后，底部输入框会把消息发送到电脑端 AnnaCode。" = "Choose a project, then messages from the bottom input will be sent to AnnaCode on your desktop.";
+"选择项目后，底部输入框会把消息发送到电脑端 Codevoke。" = "Choose a project, then messages from the bottom input will be sent to Codevoke on your desktop.";
 "重新连接" = "Reconnect";
 "已更新" = "Updated";
 "文件已更新" = "File updated";

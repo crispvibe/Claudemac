@@ -9,7 +9,7 @@ import {
   type EditorTab
 } from "@shared/editor";
 
-interface AcodeEditorApi {
+interface CodevokeEditorApi {
   openEditorFile?: (path: string) => Promise<EditorOpenFileResult>;
   saveEditorFile?: (path: string, text: string, expectedText: string) => Promise<EditorSaveFileResult>;
   statEditorFile?: (path: string) => Promise<EditorFileStat>;
@@ -87,8 +87,8 @@ function selectedTabFromState(state: Pick<EditorStoreState, "tabs" | "selectedTa
   return state.tabs.find((tab) => tab.id === state.selectedTabId) ?? null;
 }
 
-function editorApi(): AcodeEditorApi | undefined {
-  return window.acode as (typeof window.acode & AcodeEditorApi) | undefined;
+function editorApi(): CodevokeEditorApi | undefined {
+  return window.codevoke as (typeof window.codevoke & CodevokeEditorApi) | undefined;
 }
 
 export const useEditorStore = create<EditorStoreState>((set, get) => ({

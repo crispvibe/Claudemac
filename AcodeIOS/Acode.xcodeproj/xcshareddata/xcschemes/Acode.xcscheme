@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "AC0000000000000000000001"
-               BuildableName = "AnnaCode.app"
+               BuildableName = "Codevoke.app"
                BlueprintName = "Acode"
                ReferencedContainer = "container:Acode.xcodeproj">
             </BuildableReference>
@@ -46,7 +46,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AC0000000000000000000001"
-            BuildableName = "AnnaCode.app"
+            BuildableName = "Codevoke.app"
             BlueprintName = "Acode"
             ReferencedContainer = "container:Acode.xcodeproj">
          </BuildableReference>
@@ -63,7 +63,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AC0000000000000000000001"
-            BuildableName = "AnnaCode.app"
+            BuildableName = "Codevoke.app"
             BlueprintName = "Acode"
             ReferencedContainer = "container:Acode.xcodeproj">
          </BuildableReference>

@@ -498,4 +498,4 @@ ipcRenderer.on(ipcChannels.remoteHostApplyCommand, (_event, rawPayload: unknown)
   }
 });
 
-contextBridge.exposeInMainWorld("acode", api);
+contextBridge.exposeInMainWorld("codevoke", api);

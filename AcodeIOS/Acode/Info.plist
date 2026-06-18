@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>AnnaCode</string>
+	<string>Codevoke</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -20,7 +20,7 @@
 		<string>zh-Hans</string>
 	</array>
 	<key>CFBundleName</key>
-	<string>AnnaCode</string>
+	<string>Codevoke</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>CFBundlePackageType</key>
@@ -32,9 +32,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>AnnaCode 需要使用相机拍摄照片并作为附件上传。</string>
+	<string>Codevoke 需要使用相机拍摄照片并作为附件上传。</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>AnnaCode 需要访问本地网络，以连接你已授权的电脑端 AnnaCode。</string>
+	<string>Codevoke 需要访问本地网络，以连接你已授权的电脑端 Codevoke。</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>

@@ -2008,7 +2008,7 @@ final class AppState: ObservableObject {
         hasShownFolderPermissionOnboardingThisLaunch = true
         permissionPrompt = PermissionPrompt(
             title: "授权常用文件夹",
-            message: "你可以现在选择桌面、下载、文稿或常用工作目录。Acode 只会获得你在系统面板中明确选择的文件夹权限，之后打开这些位置的文件会减少重复授权。",
+            message: "你可以现在选择桌面、下载、文稿或常用工作目录。Codevoke 只会获得你在系统面板中明确选择的文件夹权限，之后打开这些位置的文件会减少重复授权。",
             primaryButtonTitle: "选择文件夹授权",
             secondaryButtonTitle: "稍后",
             action: .authorizeCommonFolders,
@@ -2028,8 +2028,8 @@ final class AppState: ObservableObject {
         panel.canCreateDirectories = false
         panel.prompt = "授权文件夹"
         panel.message = allowsMultipleSelection
-            ? "选择桌面、下载、文稿或常用工作目录后，Acode 会复用这些用户授权的文件夹权限。"
-            : "选择后，Acode 可复用该文件夹权限，减少再次打开其中文件时的授权弹窗。"
+            ? "选择桌面、下载、文稿或常用工作目录后，Codevoke 会复用这些用户授权的文件夹权限。"
+            : "选择后，Codevoke 可复用该文件夹权限，减少再次打开其中文件时的授权弹窗。"
         panel.begin { [weak self] response in
             guard response == .OK, !panel.urls.isEmpty else { return }
             Task { @MainActor [weak self] in
@@ -2325,7 +2325,7 @@ final class AppState: ObservableObject {
     private func showFileAccessPrompt(for fileURL: URL) {
         permissionPrompt = PermissionPrompt(
             title: "需要文件访问权限",
-            message: "macOS 拒绝读取“\(fileURL.lastPathComponent)”。可到系统设置里给 Acode 开启完整磁盘访问，之后切换项目和打开外部文件会少很多重复授权。",
+            message: "macOS 拒绝读取“\(fileURL.lastPathComponent)”。可到系统设置里给 Codevoke 开启完整磁盘访问，之后切换项目和打开外部文件会少很多重复授权。",
             primaryButtonTitle: "打开完整磁盘访问",
             secondaryButtonTitle: "知道了",
             action: .openFullDiskAccessSettings
@@ -2335,7 +2335,7 @@ final class AppState: ObservableObject {
     private func showFullDiskAccessPrompt() {
         permissionPrompt = PermissionPrompt(
             title: "需要完整磁盘访问",
-            message: "macOS 的完整磁盘访问必须由用户在系统设置中开启。开启后重启 Acode，项目切换、读取文件和打开外部文件会复用系统权限。",
+            message: "macOS 的完整磁盘访问必须由用户在系统设置中开启。开启后重启 Codevoke，项目切换、读取文件和打开外部文件会复用系统权限。",
             primaryButtonTitle: "打开系统设置",
             secondaryButtonTitle: "稍后",
             action: .openFullDiskAccessSettings

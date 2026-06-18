@@ -10,7 +10,7 @@ struct LoginView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     Spacer(minLength: 16)
-                    AuthHeaderView(title: "欢迎回来", subtitle: "登录 AnnaCode，继续连接你的远程工作区")
+                    AuthHeaderView(title: "欢迎回来", subtitle: "登录 Codevoke，继续连接你的远程工作区")
 
                     AuthLiquidCard {
                         VStack(spacing: 16) {
@@ -42,7 +42,7 @@ struct LoginView: View {
                                 Button("创建账号") { showRegister() }
                             }
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.acodeInk)
+                            .foregroundStyle(Color.codevokeInk)
                             .buttonStyle(.plain)
                         }
                         .padding(18)

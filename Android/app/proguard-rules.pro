@@ -1,1 +1,1 @@
--keep class com.acode.android.** { *; }
+-keep class com.codevoke.android.** { *; }

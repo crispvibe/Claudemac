@@ -27,19 +27,19 @@ struct DeviceListView: View {
                     }
                     .navigationTitle(L10n.key("远程设备"))
                     .toolbar {
-                        ToolbarItem(placement: .acodeTopBarTrailing) {
+                        ToolbarItem(placement: .codevokeTopBarTrailing) {
                             Button {
                                 Task { await listViewModel.load(session: authViewModel.currentSession) }
                             } label: {
                                 Image(systemName: "arrow.clockwise")
                                     .font(.system(size: 18, weight: .semibold))
-                                    .foregroundStyle(Color.acodeInk)
+                                    .foregroundStyle(Color.codevokeInk)
                                     .frame(width: 44, height: 44)
-                                    .acodeCircleGlass()
-                                    .overlay(Circle().stroke(Color.acodeGlassStroke, lineWidth: 1))
+                                    .codevokeCircleGlass()
+                                    .overlay(Circle().stroke(Color.codevokeGlassStroke, lineWidth: 1))
                                     .shadow(color: .black.opacity(0.06), radius: 14, x: 0, y: 7)
                             }
-                            .buttonStyle(.acodePress)
+                            .buttonStyle(.codevokePress)
                             .disabled(listViewModel.isLoading)
                         }
                     }
@@ -58,10 +58,10 @@ struct DeviceListView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(L10n.key("选择电脑"))
                 .font(.system(size: 28, weight: .bold))
-                .foregroundStyle(Color.acodeInk)
+                .foregroundStyle(Color.codevokeInk)
             Text(L10n.key("优先局域网直连，跨网时走 P2P 或公网端口映射。"))
                 .font(.system(size: 14))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
         }
     }
 
@@ -75,7 +75,7 @@ struct DeviceListView: View {
                 } else if listViewModel.devices.isEmpty {
                     Text(L10n.key("还没有远程设备。请先在电脑端登录并注册设备。"))
                         .font(.system(size: 13))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                 } else {
                     ForEach(listViewModel.devices) { device in
                         deviceRow(device)
@@ -84,7 +84,7 @@ struct DeviceListView: View {
                 if let message = listViewModel.message ?? connectViewModel.message {
                     Text(message)
                         .font(.system(size: 12))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                 }
                 if let diagnostics = RemoteUserFacingText.diagnostics(
                     connectionId: connectViewModel.latestConnectionId,
@@ -93,7 +93,7 @@ struct DeviceListView: View {
                 ) {
                     Text(diagnostics)
                         .font(.system(size: 11))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                 }
             }
             .padding(16)
@@ -113,14 +113,14 @@ struct DeviceListView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(L10n.key("输入设备码"))
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.acodeInk)
+                            .foregroundStyle(Color.codevokeInk)
                         Text(L10n.key("用电脑端显示的固定设备码发起连接。"))
                             .font(.system(size: 12))
-                            .foregroundStyle(Color.acodeMuted)
+                            .foregroundStyle(Color.codevokeMuted)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                 }
                 .padding(16)
             }
@@ -132,20 +132,20 @@ struct DeviceListView: View {
         HStack(spacing: 12) {
             Image(systemName: "desktopcomputer")
                 .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(Color.acodeInk)
+                .foregroundStyle(Color.codevokeInk)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(device.online ? Color.green : Color.acodeMuted.opacity(0.38))
+                        .fill(device.online ? Color.green : Color.codevokeMuted.opacity(0.38))
                         .frame(width: 7, height: 7)
                     Text(device.deviceName)
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.acodeInk)
+                        .foregroundStyle(Color.codevokeInk)
                         .lineLimit(2)
                 }
                 Text(deviceSubtitle(device))
                     .font(.system(size: 11))
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
                     .lineLimit(2)
             }
             Spacer()
@@ -163,7 +163,7 @@ struct DeviceListView: View {
             .background(Color.black, in: Capsule())
             .frame(minHeight: 44)
             .contentShape(Rectangle())
-            .buttonStyle(.acodePress)
+            .buttonStyle(.codevokePress)
             .disabled(connectViewModel.isConnecting || !device.remoteEnabled || device.status != "active")
             .fixedSize(horizontal: true, vertical: false)
         }

@@ -36,7 +36,7 @@ struct AccountAuthRootView: View {
                 }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("AnnaCode")
+                Text("Codevoke")
                     .font(.system(size: 15, weight: .semibold))
                 Text("登录以继续你的远程开发工作")
                     .font(.system(size: 12))

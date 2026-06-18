@@ -183,14 +183,14 @@ final class RemoteChatServerController {
     }
 
     /// Audit A-P1: best-effort cleanup of stale attachment tmp directories.
-    /// Each upload lives in `tmp/AcodeRemoteChatAttachments/<uuid>/<file>`.
+    /// Each upload lives in `tmp/CodevokeRemoteChatAttachments/<uuid>/<file>`.
     /// We delete any subdirectory whose modification date is older than the
     /// retention window. Called from `startIfNeeded` so it runs once per app
     /// launch — adding a recurring sweeper would be overkill for the volume
     /// we expect.
     private static func sweepStaleAttachments() {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AcodeRemoteChatAttachments", isDirectory: true)
+            .appendingPathComponent("CodevokeRemoteChatAttachments", isDirectory: true)
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: root,
             includingPropertiesForKeys: [.contentModificationDateKey],

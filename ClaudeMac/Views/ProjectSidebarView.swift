@@ -89,7 +89,7 @@ struct ProjectSidebarView: View {
                 projectToRemove = nil
             }
         } message: {
-            Text("只会从 Acode 的项目列表移除“\(projectToRemove?.name ?? "该项目")”，不会删除磁盘上的文件夹。")
+            Text("只会从 Codevoke 的项目列表移除“\(projectToRemove?.name ?? "该项目")”，不会删除磁盘上的文件夹。")
         }
         .alert("删除历史会话？", isPresented: Binding(
             get: { historyToRemove != nil },
@@ -393,7 +393,7 @@ struct ProjectSidebarView: View {
             HStack(spacing: 8) {
                 Image(systemName: "gearshape")
                     .font(.system(size: 14, weight: .medium))
-                Text("Acode 设置")
+                Text("Codevoke 设置")
                     .font(.system(size: 13, weight: .medium))
                 Spacer()
             }

@@ -2,7 +2,7 @@ import CryptoKit
 import Darwin
 import XCTest
 import ChatCore
-@testable import AnnaCode
+@testable import Codevoke
 
 final class AccountTokenStoreTests: XCTestCase {
     func testSessionCodecRoundTripsAndExpiry() throws {

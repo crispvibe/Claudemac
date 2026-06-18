@@ -61,12 +61,12 @@ struct ForgotPasswordView: View {
             } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                     .frame(width: 44, height: 44)
-                    .acodeAuthCircleGlass()
-                    .overlay(Circle().stroke(Color.acodeAuthGlassStroke, lineWidth: 1))
+                    .codevokeAuthCircleGlass()
+                    .overlay(Circle().stroke(Color.codevokeAuthGlassStroke, lineWidth: 1))
             }
-            .buttonStyle(.acodePress)
+            .buttonStyle(.codevokePress)
             Spacer()
         }
         .padding(.horizontal, 18)

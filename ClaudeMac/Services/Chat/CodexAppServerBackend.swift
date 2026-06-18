@@ -59,7 +59,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
               let profile = profiles.codexProfiles.first(where: { $0.id == id }) else {
             return []
         }
-        let providerID = "acode_custom"
+        let providerID = "codevoke_custom"
         func quoted(_ value: String) -> String { "\"\(value.replacingOccurrences(of: "\"", with: "\\\""))\"" }
         var overrides: [String] = []
         if let model = profile.model.nonEmptyTrimmed {
@@ -366,8 +366,8 @@ final class CodexAppServerBackend: ChatProcessBackend {
         locked {
             let id = sendRequest(method: "initialize", params: [
                 "clientInfo": [
-                    "name": "Acode",
-                    "title": "Acode",
+                    "name": "Codevoke",
+                    "title": "Codevoke",
                     "version": "1.0"
                 ],
                 "capabilities": [
@@ -385,7 +385,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
             "model": options.modelID,
             "approvalPolicy": options.permissionMode.codexApprovalPolicy,
             "sandbox": options.permissionMode.codexSandbox,
-            "serviceName": "Acode"
+            "serviceName": "Codevoke"
         ]
 
         let method: String
@@ -569,7 +569,7 @@ final class CodexAppServerBackend: ChatProcessBackend {
     }
 
     private func events(fromUnsupportedServerRequest object: [String: Any], id: Any, method: String) -> [ChatBackendEvent] {
-        let message = "Acode embedded Codex client does not support server request method: \(method)"
+        let message = "Codevoke embedded Codex client does not support server request method: \(method)"
         let didWrite = sendErrorResponse(id: id, code: -32601, message: message)
         return [.appendMessage(
             kind: .rawOutput,

@@ -42,8 +42,8 @@ struct InputBarView: View {
                     .zIndex(20)
             }
         }
-        .animation(.acodeSmooth(duration: 0.18), value: isAttachmentMenuPresented)
-        .acodeOnChange(of: isEnabled) { _, enabled in
+        .animation(.codevokeSmooth(duration: 0.18), value: isAttachmentMenuPresented)
+        .codevokeOnChange(of: isEnabled) { _, enabled in
             if !enabled {
                 isAttachmentMenuPresented = false
             }
@@ -80,7 +80,7 @@ struct AttachmentStripView: View {
                             .font(.system(size: 9, weight: .medium))
                             .lineLimit(1)
                     }
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
                     .frame(width: 52, height: 52)
                     .background(Color.white.opacity(0.36), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay {
@@ -107,10 +107,10 @@ struct AttachmentStripView: View {
                     VStack(spacing: 4) {
                         Image(systemName: attachment.fileIconName)
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Color.acodeInk.opacity(0.72))
+                            .foregroundStyle(Color.codevokeInk.opacity(0.72))
                         Text(attachment.filename)
                             .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(Color.acodeInk.opacity(0.78))
+                            .foregroundStyle(Color.codevokeInk.opacity(0.78))
                             .lineLimit(2)
                             .multilineTextAlignment(.center)
                             .truncationMode(.middle)
@@ -135,9 +135,9 @@ struct AttachmentStripView: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 15, weight: .semibold))
                     .symbolRenderingMode(.palette)
-                    .foregroundStyle(Color.acodeInk.opacity(0.72), Color.white.opacity(0.86))
+                    .foregroundStyle(Color.codevokeInk.opacity(0.72), Color.white.opacity(0.86))
             }
-            .buttonStyle(.acodePress)
+            .buttonStyle(.codevokePress)
             .offset(x: 5, y: -5)
         }
         .frame(width: 58, height: 58)
@@ -153,15 +153,15 @@ private extension InputBarView {
         } label: {
             Image(systemName: "paperclip")
                 .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
                 .frame(width: 52, height: 52)
-                .acodeGlass(cornerRadius: 26)
+                .codevokeGlass(cornerRadius: 26)
                 .overlay(
                     Circle().stroke(.white.opacity(0.72), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.08), radius: 18, x: 0, y: 10)
         }
-        .buttonStyle(.acodePress)
+        .buttonStyle(.codevokePress)
         .disabled(!isEnabled || isUploadingAttachment)
         .fixedSize()
     }
@@ -177,7 +177,7 @@ private extension InputBarView {
         .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.acodeGlassStroke, lineWidth: 1)
+                .stroke(Color.codevokeGlassStroke, lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.12), radius: 22, x: 0, y: 12)
     }
@@ -190,12 +190,12 @@ private extension InputBarView {
             HStack(spacing: 10) {
                 Image(systemName: systemImage)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                     .frame(width: 28, height: 28)
                     .background(Color.white.opacity(0.76), in: Circle())
                 Text(L10n.key(title))
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                 Spacer(minLength: 0)
             }
             .frame(width: 132)
@@ -203,7 +203,7 @@ private extension InputBarView {
             .padding(.vertical, 7)
             .background(Color.white.opacity(0.42), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .buttonStyle(.acodePress)
+        .buttonStyle(.codevokePress)
     }
 
     private var inputField: some View {
@@ -225,7 +225,7 @@ private extension InputBarView {
         .padding(.vertical, 0)
         .frame(minWidth: 0, maxWidth: .infinity)
         .layoutPriority(2)
-        .acodeGlass(cornerRadius: 26)
+        .codevokeGlass(cornerRadius: 26)
         .overlay(
             Capsule().stroke(.white.opacity(0.72), lineWidth: 1)
                 .allowsHitTesting(false)
@@ -244,14 +244,14 @@ private extension InputBarView {
         } label: {
             Image(systemName: shouldShowStopButton ? "stop.fill" : "arrow.up")
                 .font(.system(size: shouldShowStopButton ? 16 : 18, weight: .semibold))
-                .foregroundStyle(shouldShowStopButton ? .white : (canSend ? Color.acodeInk : Color.acodeMuted))
+                .foregroundStyle(shouldShowStopButton ? .white : (canSend ? Color.codevokeInk : Color.codevokeMuted))
                 .frame(width: 52, height: 52)
                 .background(
                     Group {
                         if shouldShowStopButton {
-                            Circle().fill(Color.acodeInk)
+                            Circle().fill(Color.codevokeInk)
                         } else {
-                            Color.clear.acodeGlass(cornerRadius: 26)
+                            Color.clear.codevokeGlass(cornerRadius: 26)
                         }
                     }
                 )
@@ -260,7 +260,7 @@ private extension InputBarView {
                 )
                 .shadow(color: .black.opacity(0.08), radius: 18, x: 0, y: 10)
         }
-        .buttonStyle(.acodePress)
+        .buttonStyle(.codevokePress)
         .disabled(!isSending && !canSend)
         .fixedSize()
     }
@@ -296,7 +296,7 @@ private struct SelectableMessageInputView: UIViewRepresentable {
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
         textView.font = .systemFont(ofSize: fontSize)
-        textView.textColor = UIColor(Color.acodeInk)
+        textView.textColor = UIColor(Color.codevokeInk)
         textView.tintColor = .black
         textView.isScrollEnabled = false
         textView.showsHorizontalScrollIndicator = false
@@ -325,7 +325,7 @@ private struct SelectableMessageInputView: UIViewRepresentable {
         }
         textView.isEditable = isEnabled
         textView.isSelectable = true
-        textView.textColor = UIColor(Color.acodeInk)
+        textView.textColor = UIColor(Color.codevokeInk)
         textView.font = .systemFont(ofSize: fontSize)
         textView.textContainer.widthTracksTextView = true
         textView.textContainer.heightTracksTextView = false
@@ -380,7 +380,7 @@ private struct SelectableMessageInputView: UIViewRepresentable {
         let label = UILabel()
         label.tag = 3917
         label.font = .systemFont(ofSize: fontSize)
-        label.textColor = UIColor(Color.acodeMuted).withAlphaComponent(0.48)
+        label.textColor = UIColor(Color.codevokeMuted).withAlphaComponent(0.48)
         label.translatesAutoresizingMaskIntoConstraints = false
         textView.addSubview(label)
         NSLayoutConstraint.activate([

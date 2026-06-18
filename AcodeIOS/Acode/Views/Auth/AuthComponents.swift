@@ -20,10 +20,10 @@ struct AuthHeaderView: View {
             VStack(spacing: 5) {
                 Text(L10n.key(title))
                     .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                 Text(L10n.key(subtitle))
                     .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
                     .multilineTextAlignment(.center)
             }
         }
@@ -39,10 +39,10 @@ struct AuthLiquidCard<Content: View>: View {
 
     var body: some View {
         content
-            .acodeAuthGlass(cornerRadius: 30)
+            .codevokeAuthGlass(cornerRadius: 30)
             .overlay {
                 RoundedRectangle(cornerRadius: 30, style: .continuous)
-                    .stroke(Color.acodeAuthGlassStroke, lineWidth: 0.8)
+                    .stroke(Color.codevokeAuthGlassStroke, lineWidth: 0.8)
             }
             .shadow(color: .black.opacity(0.06), radius: 22, x: 0, y: 12)
     }
@@ -60,15 +60,15 @@ struct AuthTextField: View {
         VStack(alignment: .leading, spacing: 7) {
             Text(L10n.key(title))
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
             HStack(spacing: 10) {
                 Image(systemName: systemImage)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
                     .frame(width: 18)
                 TextField(L10n.string(placeholder), text: $text)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                     .keyboardType(keyboardType)
                     .textContentType(textContentType)
                     .textInputAutocapitalization(.never)
@@ -79,7 +79,7 @@ struct AuthTextField: View {
             .background(.white.opacity(0.68), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.acodeAuthGlassStroke, lineWidth: 0.8)
+                    .stroke(Color.codevokeAuthGlassStroke, lineWidth: 0.8)
             }
             .shadow(color: .black.opacity(0.10), radius: 16, x: 0, y: 8)
         }
@@ -96,11 +96,11 @@ struct AuthSecureField: View {
         VStack(alignment: .leading, spacing: 7) {
             Text(L10n.key(title))
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
             HStack(spacing: 10) {
                 Image(systemName: "lock")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
                     .frame(width: 18)
                 Group {
                     if isSecured {
@@ -110,7 +110,7 @@ struct AuthSecureField: View {
                     }
                 }
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Color.acodeInk)
+                .foregroundStyle(Color.codevokeInk)
                 .textContentType(.password)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -120,16 +120,16 @@ struct AuthSecureField: View {
                 } label: {
                     Image(systemName: isSecured ? "eye" : "eye.slash")
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                 }
-                .buttonStyle(.acodePress)
+                .buttonStyle(.codevokePress)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 13)
             .background(.white.opacity(0.68), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.acodeAuthGlassStroke, lineWidth: 0.8)
+                    .stroke(Color.codevokeAuthGlassStroke, lineWidth: 0.8)
             }
             .shadow(color: .black.opacity(0.10), radius: 16, x: 0, y: 8)
         }
@@ -147,15 +147,15 @@ struct AuthCodeField: View {
         VStack(alignment: .leading, spacing: 7) {
             Text(L10n.key(title))
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
             HStack(spacing: 10) {
                 Image(systemName: "number")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
                     .frame(width: 18)
                 TextField(L10n.string("6 位验证码"), text: $code)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                     .keyboardType(.numberPad)
                     .textContentType(.oneTimeCode)
                 Button {
@@ -176,7 +176,7 @@ struct AuthCodeField: View {
                     .background(.white, in: Capsule())
                     .frame(minWidth: 66, minHeight: 44)
                 }
-                .buttonStyle(.acodePress)
+                .buttonStyle(.codevokePress)
                 .disabled(sending || cooldown > 0)
             }
             .padding(.horizontal, 14)
@@ -184,7 +184,7 @@ struct AuthCodeField: View {
             .background(.white.opacity(0.68), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.acodeAuthGlassStroke, lineWidth: 0.8)
+                    .stroke(Color.codevokeAuthGlassStroke, lineWidth: 0.8)
             }
             .shadow(color: .black.opacity(0.10), radius: 16, x: 0, y: 8)
         }
@@ -217,7 +217,7 @@ struct AuthPrimaryButton: View {
                 in: RoundedRectangle(cornerRadius: 26, style: .continuous)
             )
         }
-        .buttonStyle(.acodePress)
+        .buttonStyle(.codevokePress)
         .disabled(disabled)
     }
 }
@@ -240,29 +240,29 @@ struct AuthAgreementRow: View {
             } label: {
                 Image(systemName: agreed ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(agreed ? Color.acodeInk : Color.acodeMuted)
+                    .foregroundStyle(agreed ? Color.codevokeInk : Color.codevokeMuted)
             }
-            .buttonStyle(.acodePress)
+            .buttonStyle(.codevokePress)
             .padding(.top, stackedText ? 1 : 0)
 
             if stackedText {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(L10n.key("我已阅读并同意"))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                     HStack(spacing: 0) {
                         legalButton("用户协议", type: .userAgreement)
                         Text(L10n.key("和"))
-                            .foregroundStyle(Color.acodeMuted)
+                            .foregroundStyle(Color.codevokeMuted)
                         legalButton("隐私政策", type: .privacyPolicy)
                     }
                 }
             } else {
                 HStack(spacing: 0) {
                     Text(L10n.key("我已阅读并同意"))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                     legalButton("用户协议", type: .userAgreement)
                     Text(L10n.key("和"))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                     legalButton("隐私政策", type: .privacyPolicy)
                 }
             }
@@ -276,7 +276,7 @@ struct AuthAgreementRow: View {
             showDocument(type)
         }
         .font(.system(size: 12, weight: .medium))
-        .foregroundStyle(Color.acodeInk.opacity(0.82))
+        .foregroundStyle(Color.codevokeInk.opacity(0.82))
         .buttonStyle(.plain)
     }
 }
@@ -288,7 +288,7 @@ struct AuthMessageView: View {
         if let message, !message.isEmpty {
             Text(message)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(message.contains("已") ? Color.acodeMuted : Color.red.opacity(0.92))
+                .foregroundStyle(message.contains("已") ? Color.codevokeMuted : Color.red.opacity(0.92))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 2)
         }
@@ -302,11 +302,11 @@ struct AppFooterView: View {
         VStack(spacing: 5) {
             Text(footer.companyName)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.acodeInk.opacity(0.54))
+                .foregroundStyle(Color.codevokeInk.opacity(0.54))
             ForEach(Array(footer.displayLines.enumerated()), id: \.offset) { _, line in
                 Text(line)
                     .font(.system(size: 11, weight: .regular))
-                    .foregroundStyle(Color.acodeMuted.opacity(0.72))
+                    .foregroundStyle(Color.codevokeMuted.opacity(0.72))
                     .multilineTextAlignment(.center)
             }
         }
@@ -326,7 +326,7 @@ struct LegalDocumentSheet: View {
             ScrollView {
                 Text(document.content)
                     .font(.system(size: 14))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(18)
             }

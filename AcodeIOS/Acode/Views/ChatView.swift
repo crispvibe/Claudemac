@@ -95,12 +95,12 @@ struct ChatView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             resetKeyboardState(restoreBottomPosition: true)
         }
-        .acodeOnChange(of: inputFocused) { _, isFocused in
+        .codevokeOnChange(of: inputFocused) { _, isFocused in
             if !isFocused {
                 resetKeyboardState(restoreBottomPosition: true)
             }
         }
-        .acodeOnChange(of: scenePhase) { _, phase in
+        .codevokeOnChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
                 if isNearBottom {
@@ -123,7 +123,7 @@ struct ChatView: View {
         .fileImporter(isPresented: $isFileImporterPresented, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             handleFileImporterResult(result)
         }
-        .acodeOnChange(of: selectedPhotoItems) { _, items in
+        .codevokeOnChange(of: selectedPhotoItems) { _, items in
             guard !items.isEmpty else { return }
             Task { await uploadPhotos(items) }
         }
@@ -146,7 +146,7 @@ struct ChatView: View {
             .frame(maxWidth: .infinity)
             .background(Color.white)
         } else {
-            let chromeShape = AnnaCodeBottomRoundedRectangle(radius: 28)
+            let chromeShape = CodevokeBottomRoundedRectangle(radius: 28)
             VStack(spacing: 0) {
                 Color.clear
                     .frame(height: topInset)
@@ -161,7 +161,7 @@ struct ChatView: View {
             .background(Color.white.opacity(0.66), in: chromeShape)
             .overlay {
                 chromeShape
-                    .stroke(Color.acodeHairline, lineWidth: 1)
+                    .stroke(Color.codevokeHairline, lineWidth: 1)
             }
             .shadow(color: .black.opacity(0.06), radius: 18, x: 0, y: 8)
         }
@@ -219,7 +219,7 @@ struct ChatView: View {
         }
         .onPreferenceChange(InputChromeHeightPreferenceKey.self) { height in
             guard height.isFinite, height > 20 else { return }
-            let visibleHeight = windowSize.height > 1 ? windowSize.height : (UIApplication.shared.acodeActiveWindow?.bounds.height ?? 844)
+            let visibleHeight = windowSize.height > 1 ? windowSize.height : (UIApplication.shared.codevokeActiveWindow?.bounds.height ?? 844)
             let measuredHeight = min(max(height, 72), max(92, visibleHeight * 0.45))
             guard abs(inputChromeHeight - measuredHeight) > 0.5 else { return }
             inputChromeHeight = measuredHeight
@@ -278,7 +278,7 @@ struct ChatView: View {
             resetKeyboardState()
             return
         }
-        guard let window = UIApplication.shared.acodeActiveWindow else {
+        guard let window = UIApplication.shared.codevokeActiveWindow else {
             let fallbackOverlap = max(0, frame.height)
             keyboardOverlap = fallbackOverlap
             keyboardVisible = fallbackOverlap > 0
@@ -317,7 +317,7 @@ struct ChatView: View {
     }
 
     private var fallbackTopInset: CGFloat {
-        let statusBarHeight = UIApplication.shared.acodeStatusBarHeight
+        let statusBarHeight = UIApplication.shared.codevokeStatusBarHeight
         if UIDevice.current.userInterfaceIdiom == .phone {
             return max(statusBarHeight, 56)
         }
@@ -336,14 +336,14 @@ struct ChatView: View {
             VStack(alignment: .center, spacing: 1) {
                 Text(topBarProjectTitle)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                     .lineLimit(1)
                     .multilineTextAlignment(.center)
                 HStack(spacing: 5) {
                     connectionStatusDot
                     Text(topBarDetailText)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                         .lineLimit(1)
                 }
             }
@@ -405,11 +405,11 @@ struct ChatView: View {
                     }
                     .frame(height: visibleQueueMessagesHeight, alignment: .top)
                     .id(queueScrollResetID)
-                    .acodeOnChange(of: currentQueuedMessageCount) { _, _ in
+                    .codevokeOnChange(of: currentQueuedMessageCount) { _, _ in
                         proxy.scrollTo("queue-top", anchor: .top)
                         queueScrollResetID = UUID()
                     }
-                    .acodeOnChange(of: allMessages.first?.id) { _, _ in
+                    .codevokeOnChange(of: allMessages.first?.id) { _, _ in
                         proxy.scrollTo("queue-top", anchor: .top)
                         queueScrollResetID = UUID()
                     }
@@ -418,7 +418,7 @@ struct ChatView: View {
                 if overflowCount > 0 {
                     Text(L10n.format("+%d 条排队中", overflowCount))
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                         .padding(.trailing, 4)
                         .frame(height: queueOverflowTextHeight, alignment: .center)
                         .contextMenu {
@@ -460,7 +460,7 @@ struct ChatView: View {
         return HStack(alignment: .top, spacing: 9) {
             Image(systemName: "text.bubble.fill")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.acodeInk.opacity(isPlaceholder ? 0.45 : 0.78))
+                .foregroundStyle(Color.codevokeInk.opacity(isPlaceholder ? 0.45 : 0.78))
                 .frame(width: 20, height: 20)
                 .background(Color.white.opacity(0.82), in: Circle())
 
@@ -468,14 +468,14 @@ struct ChatView: View {
                 HStack(spacing: 6) {
                     Text(title)
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                     Text(L10n.key("长按操作"))
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.acodeMuted.opacity(0.72))
+                        .foregroundStyle(Color.codevokeMuted.opacity(0.72))
                 }
                 Text(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? L10n.string("空消息") : text)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
             }
@@ -488,7 +488,7 @@ struct ChatView: View {
         .background(Color.white, in: bubbleShape)
         .overlay {
             bubbleShape
-                .stroke(Color.acodeLine, lineWidth: 1)
+                .stroke(Color.codevokeLine, lineWidth: 1)
         }
         .clipShape(bubbleShape)
         .contentShape(bubbleShape)
@@ -595,7 +595,7 @@ struct ChatView: View {
                     shouldFollowBottom: keepBottomPinnedDuringRun || forceBottomOnNextMessages || isNearBottom
                 )
             )
-            .acodeScrollGeometry { snapshot in
+            .codevokeScrollGeometry { snapshot in
                 let distanceFromBottom = max(0, snapshot.contentHeight - snapshot.viewportHeight - snapshot.offsetY)
                 let nearBottom = distanceFromBottom < 160
                 let wasNearBottom = isNearBottom
@@ -612,7 +612,7 @@ struct ChatView: View {
                 }
 
             }
-            .acodeOnChange(of: viewModel.messageListUpdateSignal) { _, signal in
+            .codevokeOnChange(of: viewModel.messageListUpdateSignal) { _, signal in
                 if signal.lastMessageID != nil {
                     if keepBottomPinnedDuringRun || forceBottomOnNextMessages || isNearBottom {
                         forceBottomOnNextMessages = false
@@ -622,40 +622,40 @@ struct ChatView: View {
                     scheduleAutoScrollToBottom(proxy)
                 }
             }
-            .acodeOnChange(of: viewModel.streamingTextUpdateSignal) { _, _ in
+            .codevokeOnChange(of: viewModel.streamingTextUpdateSignal) { _, _ in
                 if keepBottomPinnedDuringRun || forceBottomOnNextMessages || isNearBottom {
                     scheduleAutoScrollToBottom(proxy)
                 }
             }
-            .acodeOnChange(of: viewModel.selectedSession?.id) { _, _ in
+            .codevokeOnChange(of: viewModel.selectedSession?.id) { _, _ in
                 forceBottomOnNextMessages = true
             }
-            .acodeOnChange(of: viewModel.scrollToBottomRequestID) { _, _ in
+            .codevokeOnChange(of: viewModel.scrollToBottomRequestID) { _, _ in
                 forceBottomOnNextMessages = false
                 keepBottomPinnedDuringRun = true
                 scrollToBottomAfterLayout(proxy)
             }
-            .acodeOnChange(of: inputChromeHeight) { oldHeight, newHeight in
+            .codevokeOnChange(of: inputChromeHeight) { oldHeight, newHeight in
                 guard abs(oldHeight - newHeight) > 0.5 else { return }
                 if keepBottomPinnedDuringRun || forceBottomOnNextMessages || isNearBottom {
                     scrollToBottomAfterLayout(proxy)
                 }
             }
-            .acodeOnChange(of: viewModel.isVisibleRunActive) { _, isActive in
+            .codevokeOnChange(of: viewModel.isVisibleRunActive) { _, isActive in
                 if !isActive {
                     keepBottomPinnedDuringRun = false
                 } else if isNearBottom {
                     keepBottomPinnedDuringRun = true
                 }
             }
-            .acodeOnChange(of: keyboardDismissScrollRequest) { _, _ in
+            .codevokeOnChange(of: keyboardDismissScrollRequest) { _, _ in
                 scrollToBottomAfterLayout(proxy)
             }
             .onAppear {
                 forceBottomOnNextMessages = true
                 scrollToBottomAfterLayout(proxy)
             }
-            .acodeOnChange(of: scenePhase) { _, phase in
+            .codevokeOnChange(of: scenePhase) { _, phase in
                 if phase == .active, forceBottomOnNextMessages || isNearBottom {
                     scrollToBottomAfterLayout(proxy)
                 }
@@ -710,7 +710,7 @@ struct ChatView: View {
             }
         }
         .font(.system(size: 12, weight: .medium))
-        .foregroundStyle(Color.acodeMuted)
+        .foregroundStyle(Color.codevokeMuted)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
         .task {
@@ -725,7 +725,7 @@ struct ChatView: View {
                     .controlSize(.small)
                 Text(L10n.key("加载会话消息中…"))
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
                 Spacer()
             }
             .padding(14)
@@ -737,14 +737,14 @@ struct ChatView: View {
             VStack(spacing: 10) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                 Text(L10n.key("准备开始远程对话"))
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Color.acodeInk)
-                Text(L10n.key("选择项目后，底部输入框会把消息发送到电脑端 AnnaCode。"))
+                    .foregroundStyle(Color.codevokeInk)
+                Text(L10n.key("选择项目后，底部输入框会把消息发送到电脑端 Codevoke。"))
                     .font(.system(size: 13))
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
                 Button {
                     Task { await viewModel.refresh() }
                 } label: {
@@ -755,7 +755,7 @@ struct ChatView: View {
                         .padding(.vertical, 9)
                         .background(Color.black, in: Capsule())
                 }
-                .buttonStyle(.acodePress)
+                .buttonStyle(.codevokePress)
                 .padding(.top, 8)
             }
             .padding(24)
@@ -782,20 +782,20 @@ struct ChatView: View {
         if let name = viewModel.selectedProject?.name, !name.isEmpty {
             return name
         }
-        return "AnnaCode"
+        return "Codevoke"
     }
 
     private func iconButton(_ systemName: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(Color.acodeInk)
+                .foregroundStyle(Color.codevokeInk)
                 .frame(width: 44, height: 44)
-                .acodeGlass(cornerRadius: 22)
+                .codevokeGlass(cornerRadius: 22)
                 .overlay(Circle().stroke(.white.opacity(0.72), lineWidth: 1))
                 .shadow(color: .black.opacity(0.06), radius: 14, x: 0, y: 8)
         }
-        .buttonStyle(.acodePress)
+        .buttonStyle(.codevokePress)
     }
 
     private func handleFileImporterResult(_ result: Result<[URL], Error>) {
@@ -1029,7 +1029,7 @@ final class SafeAreaProbeView: UIView {
 
 private extension View {
     @ViewBuilder
-    func acodeScrollGeometry(_ action: @escaping (ScrollGeometrySnapshot) -> Void) -> some View {
+    func codevokeScrollGeometry(_ action: @escaping (ScrollGeometrySnapshot) -> Void) -> some View {
         if #available(iOS 18.0, *) {
             self.onScrollGeometryChange(for: ScrollGeometrySnapshot.self) { geo in
                 ScrollGeometrySnapshot(
@@ -1225,7 +1225,7 @@ private final class LegacyScrollMetricsProbe: UIView {
 }
 
 extension UIApplication {
-    var acodeActiveWindow: UIWindow? {
+    var codevokeActiveWindow: UIWindow? {
         connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first(where: { $0.activationState == .foregroundActive })?
@@ -1233,7 +1233,7 @@ extension UIApplication {
             .first(where: { $0.isKeyWindow })
     }
 
-    var acodeStatusBarHeight: CGFloat {
+    var codevokeStatusBarHeight: CGFloat {
         connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first(where: { $0.activationState == .foregroundActive })?

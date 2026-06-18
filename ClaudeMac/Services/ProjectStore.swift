@@ -16,7 +16,7 @@ enum ProjectStoreError: LocalizedError {
 private final class FileTreeStatePersistenceQueue {
     static let shared = FileTreeStatePersistenceQueue()
 
-    private let queue = DispatchQueue(label: "vin.anna.acode.filetree-state-persist", qos: .utility)
+    private let queue = DispatchQueue(label: "vin.anna.codevoke.filetree-state-persist", qos: .utility)
     private let lock = NSLock()
     private var pending: [String: Set<String>] = [:]
     private var flushScheduled = false
@@ -77,9 +77,9 @@ struct ProjectStore {
             guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
                 throw ProjectStoreError.applicationSupportUnavailable
             }
-            let directory = base.appendingPathComponent("Acode", isDirectory: true)
+            let directory = base.appendingPathComponent("Codevoke", isDirectory: true)
             let legacyDirectory = base.appendingPathComponent("ClaudeMac", isDirectory: true)
-            let sandboxDirectory = sandboxAppSupportDirectory(named: "Acode")
+            let sandboxDirectory = sandboxAppSupportDirectory(named: "Codevoke")
                 ?? sandboxAppSupportDirectory(named: "ClaudeMac")
             if !FileManager.default.fileExists(atPath: directory.path) {
                 if let sandboxDirectory, FileManager.default.fileExists(atPath: sandboxDirectory.path) {

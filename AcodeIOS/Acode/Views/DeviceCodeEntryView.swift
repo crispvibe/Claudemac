@@ -14,10 +14,10 @@ struct DeviceCodeEntryView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(L10n.key("输入设备码"))
                             .font(.system(size: 28, weight: .bold))
-                            .foregroundStyle(Color.acodeInk)
+                            .foregroundStyle(Color.codevokeInk)
                         Text(L10n.key("设备码可在电脑端远程账号卡片中查看或重置。"))
                             .font(.system(size: 14))
-                            .foregroundStyle(Color.acodeMuted)
+                            .foregroundStyle(Color.codevokeMuted)
                     }
 
                     SettingsSectionCard {
@@ -27,23 +27,23 @@ struct DeviceCodeEntryView: View {
                                 Task { await connectViewModel.resolveDeviceCode(session: authViewModel.currentSession) }
                             }
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.acodeInk)
+                            .foregroundStyle(Color.codevokeInk)
                             .frame(maxWidth: .infinity)
                             .frame(minHeight: 44)
                             .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.black.opacity(0.06), lineWidth: 1))
-                            .buttonStyle(.acodePress)
+                            .buttonStyle(.codevokePress)
                             .disabled(connectViewModel.isResolvingCode)
 
                             if let resolved = connectViewModel.resolvedDevice {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(resolved.deviceName)
                                         .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(Color.acodeInk)
+                                        .foregroundStyle(Color.codevokeInk)
                                         .lineLimit(2)
                                     Text("\(resolved.platform) · \(L10n.string(resolved.requiresConfirm ? "需要电脑端确认" : "可直接连接"))")
                                         .font(.system(size: 12))
-                                        .foregroundStyle(Color.acodeMuted)
+                                        .foregroundStyle(Color.codevokeMuted)
                                     Button(L10n.string(connectViewModel.isConnecting ? "连接中…" : "连接这台电脑")) {
                                         Task {
                                             if let config = await connectViewModel.connect(deviceId: resolved.deviceId, session: authViewModel.currentSession) {
@@ -56,7 +56,7 @@ struct DeviceCodeEntryView: View {
                                     .frame(maxWidth: .infinity)
                                     .frame(minHeight: 48)
                                     .background(Color.black, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                                    .buttonStyle(.acodePress)
+                                    .buttonStyle(.codevokePress)
                                     .disabled(connectViewModel.isConnecting)
                                 }
                                 .padding(.top, 8)
@@ -65,7 +65,7 @@ struct DeviceCodeEntryView: View {
                             if let message = connectViewModel.message {
                                 Text(message)
                                     .font(.system(size: 12))
-                                    .foregroundStyle(Color.acodeMuted)
+                                    .foregroundStyle(Color.codevokeMuted)
                             }
                             if let diagnostics = RemoteUserFacingText.diagnostics(
                                 connectionId: connectViewModel.latestConnectionId,
@@ -74,7 +74,7 @@ struct DeviceCodeEntryView: View {
                             ) {
                                 Text(diagnostics)
                                     .font(.system(size: 11))
-                                    .foregroundStyle(Color.acodeMuted)
+                                    .foregroundStyle(Color.codevokeMuted)
                             }
                         }
                         .padding(16)

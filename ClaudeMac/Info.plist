@@ -13,7 +13,7 @@
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundleDisplayName</key>
-	<string>AnnaCode</string>
+	<string>Codevoke</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIconName</key>
@@ -33,21 +33,21 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>AnnaCode 需要控制“终端”，以便在外部终端中打开 AI 命令行会话。</string>
+	<string>Codevoke 需要控制“终端”，以便在外部终端中打开 AI 命令行会话。</string>
 	<key>NSDesktopFolderUsageDescription</key>
-	<string>AnnaCode 需要访问“桌面”文件夹，以便读取你让 AI 处理的项目和文件。</string>
+	<string>Codevoke 需要访问“桌面”文件夹，以便读取你让 AI 处理的项目和文件。</string>
 	<key>NSDocumentsFolderUsageDescription</key>
-	<string>AnnaCode 需要访问“文稿”文件夹，以便读取你让 AI 处理的项目和文件。</string>
+	<string>Codevoke 需要访问“文稿”文件夹，以便读取你让 AI 处理的项目和文件。</string>
 	<key>NSDownloadsFolderUsageDescription</key>
-	<string>AnnaCode 需要访问“下载”文件夹，以便读取你让 AI 处理的文件和图片。</string>
+	<string>Codevoke 需要访问“下载”文件夹，以便读取你让 AI 处理的文件和图片。</string>
 	<key>NSRemovableVolumesUsageDescription</key>
-	<string>AnnaCode 需要访问外接磁盘，以便读取你让 AI 处理的文件。</string>
+	<string>Codevoke 需要访问外接磁盘，以便读取你让 AI 处理的文件。</string>
 	<key>NSNetworkVolumesUsageDescription</key>
-	<string>AnnaCode 需要访问网络卷宗，以便读取你让 AI 处理的文件。</string>
+	<string>Codevoke 需要访问网络卷宗，以便读取你让 AI 处理的文件。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>AnnaCode 需要访问“照片”图库，以便让 AI 读取你选择的图片。</string>
+	<string>Codevoke 需要访问“照片”图库，以便让 AI 读取你选择的图片。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>AnnaCode 需要向“照片”图库写入由 AI 生成或保存的图片。</string>
+	<string>Codevoke 需要向“照片”图库写入由 AI 生成或保存的图片。</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>版权所有 © 2026。</string>
 	<key>NSAppTransportSecurity</key>

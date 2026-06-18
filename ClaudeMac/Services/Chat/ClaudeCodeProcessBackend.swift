@@ -377,7 +377,7 @@ final class ClaudeCodeProcessBackend: ChatProcessBackend {
                     }
                     // claude.exe 在 --input-format stream-json 模式下是 long-lived 的:
                     // 输出完一轮 turn (result success) 之后并不会自己退出,而是继续等
-                    // stdin 上的下一条 user message。Acode 每次 send 都是新的 Process,
+                    // stdin 上的下一条 user message。Codevoke 每次 send 都是新的 Process,
                     // 不复用同一个 claude 进程做多轮,所以 turn 结束后要主动关闭 stdin
                     // 通知 claude EOF。自动压缩是例外: result 行会先短暂等 UI 根据
                     // tokenUsage 调用 sendCompact(), 成功写入 /compact 时就等压缩结果后再 EOF。

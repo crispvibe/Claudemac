@@ -62,7 +62,7 @@ struct SidebarView: View, Equatable {
     }
 
     private var sidebarTopPadding: CGFloat {
-        let statusBarHeight = UIApplication.shared.acodeStatusBarHeight
+        let statusBarHeight = UIApplication.shared.codevokeStatusBarHeight
         let observedTopInset = max(safeAreaInsets.top, statusBarHeight)
         let fallback = UIDevice.current.userInterfaceIdiom == .phone ? CGFloat(56) : CGFloat(0)
         let measuredPadding = max(0, (observedTopInset > 0 ? observedTopInset : fallback) - 6) + 12
@@ -109,12 +109,12 @@ struct SidebarView: View, Equatable {
             Button(action: startNewChat) {
                 quickActionLabel("新对话", icon: "plus")
             }
-            .buttonStyle(.acodePress)
+            .buttonStyle(.codevokePress)
 
             Button(action: refresh) {
                 quickActionLabel(state.isRefreshing ? "刷新中" : "刷新", icon: "arrow.clockwise")
             }
-            .buttonStyle(.acodePress)
+            .buttonStyle(.codevokePress)
             .disabled(state.isRefreshing)
         }
     }
@@ -137,7 +137,7 @@ struct SidebarView: View, Equatable {
                             selected: project.id == state.selectedProjectID
                         )
                     }
-                    .buttonStyle(.acodePress)
+                    .buttonStyle(.codevokePress)
                 }
             }
         }
@@ -159,7 +159,7 @@ struct SidebarView: View, Equatable {
                         selected: false
                     )
                 }
-                .buttonStyle(.acodePress)
+                .buttonStyle(.codevokePress)
 
                 if isModelPickerPresented {
                     VStack(spacing: 6) {
@@ -170,7 +170,7 @@ struct SidebarView: View, Equatable {
                             } label: {
                                 modelPickerRow(model)
                             }
-                            .buttonStyle(.acodePress)
+                            .buttonStyle(.codevokePress)
                         }
                     }
                     .padding(8)
@@ -178,7 +178,7 @@ struct SidebarView: View, Equatable {
                     .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(Color.acodeGlassStroke, lineWidth: 1)
+                            .stroke(Color.codevokeGlassStroke, lineWidth: 1)
                     }
                     .shadow(color: .black.opacity(0.08), radius: 16, x: 0, y: 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -199,11 +199,11 @@ struct SidebarView: View, Equatable {
                 Button(action: startNewChat) {
                     Image(systemName: "plus")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.acodeInk)
+                        .foregroundStyle(Color.codevokeInk)
                         .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.acodePress)
+                .buttonStyle(.codevokePress)
                 .accessibilityLabel(L10n.string("新对话"))
             }
             .frame(maxWidth: .infinity)
@@ -222,7 +222,7 @@ struct SidebarView: View, Equatable {
                             selected: session.id == state.selectedSessionID
                         )
                     }
-                    .buttonStyle(.acodePress)
+                    .buttonStyle(.codevokePress)
                 }
             }
         }
@@ -262,7 +262,7 @@ struct SidebarView: View, Equatable {
                 Button(action: openParentDirectory) {
                     sidebarRow(title: "..", subtitle: "上一级", icon: "arrow.up", selected: false)
                 }
-                .buttonStyle(.acodePress)
+                .buttonStyle(.codevokePress)
             }
             if state.fileEntries.isEmpty && !state.isLoadingFiles {
                 placeholderRow("空文件夹", icon: "folder", subtitle: "此目录没有可显示的内容")
@@ -282,7 +282,7 @@ struct SidebarView: View, Equatable {
                             selected: false
                         )
                     }
-                    .buttonStyle(.acodePress)
+                    .buttonStyle(.codevokePress)
                     .contextMenu {
                         if entry.isDirectory {
                             Button {
@@ -305,7 +305,7 @@ struct SidebarView: View, Equatable {
     private func sectionTitle(_ title: String) -> some View {
         Text(L10n.key(title))
             .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Color.acodeMuted)
+            .foregroundStyle(Color.codevokeMuted)
     }
 
     private func quickActionLabel(_ title: String, icon: String) -> some View {
@@ -314,7 +314,7 @@ struct SidebarView: View, Equatable {
             Text(L10n.key(title))
         }
         .font(.system(size: 13, weight: .semibold))
-        .foregroundStyle(Color.acodeInk)
+        .foregroundStyle(Color.codevokeInk)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
         .background(.white.opacity(0.58), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -330,7 +330,7 @@ struct SidebarView: View, Equatable {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .medium))
                 .frame(width: 22)
-                .foregroundStyle(selected ? Color.white : Color.acodeMuted)
+                .foregroundStyle(selected ? Color.white : Color.codevokeMuted)
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.key(title))
                     .font(.system(size: 14, weight: .semibold))
@@ -342,7 +342,7 @@ struct SidebarView: View, Equatable {
             }
             Spacer(minLength: 0)
         }
-        .foregroundStyle(selected ? Color.white : Color.acodeInk)
+        .foregroundStyle(selected ? Color.white : Color.codevokeInk)
         .padding(.horizontal, 10)
         .padding(.vertical, 10)
         .background(selected ? Color.black : Color.white.opacity(0.42), in: RoundedRectangle(cornerRadius: selected ? 20 : 18, style: .continuous))
@@ -353,7 +353,7 @@ struct SidebarView: View, Equatable {
         return HStack(spacing: 10) {
             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(selected ? Color.white : Color.acodeMuted)
+                .foregroundStyle(selected ? Color.white : Color.codevokeMuted)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.title.isEmpty ? model.id : model.title)
@@ -366,7 +366,7 @@ struct SidebarView: View, Equatable {
             }
             Spacer(minLength: 0)
         }
-        .foregroundStyle(selected ? Color.white : Color.acodeInk)
+        .foregroundStyle(selected ? Color.white : Color.codevokeInk)
         .padding(.horizontal, 10)
         .padding(.vertical, 10)
         .background(selected ? Color.black : Color.white.opacity(0.42), in: RoundedRectangle(cornerRadius: 18, style: .continuous))

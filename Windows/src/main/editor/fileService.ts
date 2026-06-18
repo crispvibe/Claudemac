@@ -124,7 +124,7 @@ export class EditorFileService {
         throw new EditorFileError("file_modified_externally", "文件已被外部修改，保存已取消。");
       }
 
-      const temporaryPath = `${filePath}.acode-${process.pid}-${Date.now()}.tmp`;
+      const temporaryPath = `${filePath}.codevoke-${process.pid}-${Date.now()}.tmp`;
       try {
         await writeFile(temporaryPath, newContent, { encoding: "utf8", mode: 0o666 });
         await rename(temporaryPath, filePath);

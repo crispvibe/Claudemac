@@ -103,7 +103,7 @@ struct RemoteCredentialFileStorage: RemoteCredentialStorage, @unchecked Sendable
             throw RemoteCredentialStoreError.storage(CocoaError(.fileNoSuchFile))
         }
         return base
-            .appendingPathComponent("Acode", isDirectory: true)
+            .appendingPathComponent("Codevoke", isDirectory: true)
             .appendingPathComponent("Credentials", isDirectory: true)
     }
 
@@ -253,11 +253,11 @@ struct RemoteSystemCredentialKeychainStorage: RemoteCredentialStorage {
 actor RemoteCredentialStore {
     static let shared = RemoteCredentialStore(storage: RemoteCredentialStore.makeDefaultStorage())
 
-    static let blobService = "com.anna.vin.acode.remote.credentials"
+    static let blobService = "com.anna.vin.codevoke.remote.credentials"
     static let blobAccount = "blob"
-    static let legacyAccountService = "com.anna.vin.acode.remote.account"
+    static let legacyAccountService = "com.anna.vin.codevoke.remote.account"
     static let legacySessionAccount = "session"
-    static let legacyDeviceService = "com.anna.vin.acode.remote.device"
+    static let legacyDeviceService = "com.anna.vin.codevoke.remote.device"
     static let legacyIdentityAccount = "identity"
     static let legacyPrivateKeyAccount = "curve25519.signing.privateKey"
     static let legacyDeviceCodeAccount = "deviceCode"

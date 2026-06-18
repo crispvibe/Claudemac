@@ -79,7 +79,7 @@ struct SettingsView: View {
                                     SettingsMenuRow(title: "在线更新", subtitle: appVersionText, icon: "arrow.down.circle")
                                 }
                                 SettingsDivider()
-                                SettingsMenuRow(title: "关于 AnnaCode", subtitle: appVersionText, icon: "info.circle", showsChevron: false)
+                                SettingsMenuRow(title: "关于 Codevoke", subtitle: appVersionText, icon: "info.circle", showsChevron: false)
                             }
                         }
 
@@ -101,20 +101,20 @@ struct SettingsView: View {
                 destination(for: route)
             }
             .toolbar {
-                ToolbarItem(placement: .acodeTopBarLeading) {
+                ToolbarItem(placement: .codevokeTopBarLeading) {
                     Button {
                         close()
                     } label: {
                         SettingsCloseButtonLabel()
                     }
-                    .buttonStyle(.acodePress)
+                    .buttonStyle(.codevokePress)
                     .accessibilityLabel(L10n.string("关闭设置"))
                 }
             }
         }
         .sheet(item: legalDocumentBinding) { document in
             LegalDocumentSheet(document: document)
-                .acodePresentationCornerRadius(28)
+                .codevokePresentationCornerRadius(28)
         }
     }
 
@@ -190,7 +190,7 @@ private struct SettingsAppUpdatePage: View {
                     if !message.isEmpty {
                         Text(message)
                             .font(.system(size: 13))
-                            .foregroundStyle(Color.acodeMuted)
+                            .foregroundStyle(Color.codevokeMuted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     HStack(spacing: 10) {
@@ -202,9 +202,9 @@ private struct SettingsAppUpdatePage: View {
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .background(Color.acodeInk, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .background(Color.codevokeInk, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         }
-                        .buttonStyle(.acodePress)
+                        .buttonStyle(.codevokePress)
                         .disabled(isChecking)
                         if let updateURL {
                             Button {
@@ -212,13 +212,13 @@ private struct SettingsAppUpdatePage: View {
                             } label: {
                                 Text(L10n.key("前往商店"))
                                     .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(Color.acodeInk)
+                                    .foregroundStyle(Color.codevokeInk)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
                                     .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.acodeHairline, lineWidth: 1))
+                                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.codevokeHairline, lineWidth: 1))
                             }
-                            .buttonStyle(.acodePress)
+                            .buttonStyle(.codevokePress)
                         }
                     }
                 }
@@ -254,16 +254,16 @@ private struct SettingsCloseButtonLabel: View {
         if #available(iOS 26.0, *) {
             Image(systemName: "chevron.backward")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Color.acodeInk)
+                .foregroundStyle(Color.codevokeInk)
                 .frame(width: 36, height: 44)
                 .contentShape(Rectangle())
         } else {
             Image(systemName: "chevron.backward")
                 .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(Color.acodeInk)
+                .foregroundStyle(Color.codevokeInk)
                 .frame(width: 44, height: 44)
-                .acodeCircleGlass()
-                .overlay(Circle().stroke(Color.acodeGlassStroke, lineWidth: 1))
+                .codevokeCircleGlass()
+                .overlay(Circle().stroke(Color.codevokeGlassStroke, lineWidth: 1))
                 .shadow(color: .black.opacity(0.06), radius: 14, x: 0, y: 7)
         }
     }
@@ -276,18 +276,18 @@ private struct SettingsAccountPage: View {
         SettingsPageContainer(title: "账号与安全") {
             SettingsSectionCard {
                 VStack(alignment: .leading, spacing: 14) {
-                    SettingsCardTitle("当前账号", subtitle: "AnnaCode 远程账号")
+                    SettingsCardTitle("当前账号", subtitle: "Codevoke 远程账号")
                     HStack(spacing: 12) {
                         Image(systemName: "person.crop.circle.fill")
                             .font(.system(size: 28, weight: .semibold))
-                            .foregroundStyle(Color.acodeInk)
+                            .foregroundStyle(Color.codevokeInk)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(authViewModel.currentSession?.user.displayAccount ?? L10n.string("已登录"))
                                 .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(Color.acodeInk)
+                                .foregroundStyle(Color.codevokeInk)
                             Text(L10n.key("状态正常"))
                                 .font(.system(size: 12))
-                                .foregroundStyle(Color.acodeMuted)
+                                .foregroundStyle(Color.codevokeMuted)
                         }
                         Spacer(minLength: 0)
                     }
@@ -380,7 +380,7 @@ private struct AccountDeletionPage: View {
                                 .padding(.vertical, 13)
                                 .background(Color.red, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
                             }
-                            .buttonStyle(.acodePress)
+                            .buttonStyle(.codevokePress)
                             .disabled(!canSubmit || authViewModel.accountDeletionSubmitting)
                         }
                         .padding(16)
@@ -394,9 +394,9 @@ private struct AccountDeletionPage: View {
         .navigationTitle(L10n.key("注销账号"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .acodeTopBarLeading) {
+            ToolbarItem(placement: .codevokeTopBarLeading) {
                 Button(L10n.string("取消")) { close() }
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
             }
         }
     }
@@ -424,7 +424,7 @@ private struct AccountDeletionPage: View {
                 .padding(.top, 2)
             Text(L10n.key(text))
                 .font(.system(size: 12))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -452,7 +452,7 @@ private struct SettingsChangePasswordPage: View {
                             .padding(.vertical, 13)
                             .background(Color.black, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
                     }
-                    .buttonStyle(.acodePress)
+                    .buttonStyle(.codevokePress)
                     .disabled(!authViewModel.canSubmitChangePassword)
                 }
                 .padding(16)
@@ -492,10 +492,10 @@ private struct SettingsConnectionPage: View {
         VStack(alignment: .leading, spacing: 7) {
                 Text(L10n.key(mode == .devices ? "选择电脑" : "输入设备码"))
                 .font(.system(size: 28, weight: .bold))
-                .foregroundStyle(Color.acodeInk)
+                .foregroundStyle(Color.codevokeInk)
             Text(L10n.key(mode == .devices ? "连接已登录账号的远程设备，或输入设备码。" : "设备码在电脑端远程账号卡片中查看。"))
                 .font(.system(size: 13))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 4)
@@ -512,12 +512,12 @@ private struct SettingsConnectionPage: View {
                         Task { await authViewModel.loadRemoteDevices() }
                     }
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(.white.opacity(0.72), in: Capsule())
                     .overlay(Capsule().stroke(Color.black.opacity(0.06), lineWidth: 1))
-                    .buttonStyle(.acodePress)
+                    .buttonStyle(.codevokePress)
                     .disabled(authViewModel.remoteDevicesLoading)
                 }
 
@@ -545,21 +545,21 @@ private struct SettingsConnectionPage: View {
                 HStack(spacing: 12) {
                     Image(systemName: "number.square")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Color.acodeInk)
+                        .foregroundStyle(Color.codevokeInk)
                         .frame(width: 42, height: 42)
-                        .background(Color.acodeSoft, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                        .background(Color.codevokeSoft, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
                     VStack(alignment: .leading, spacing: 4) {
                         Text(L10n.key("输入设备码"))
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.acodeInk)
+                            .foregroundStyle(Color.codevokeInk)
                         Text(L10n.key("用电脑端显示的固定设备码连接"))
                             .font(.system(size: 12))
-                            .foregroundStyle(Color.acodeMuted)
+                            .foregroundStyle(Color.codevokeMuted)
                     }
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.acodeMuted.opacity(0.6))
+                        .foregroundStyle(Color.codevokeMuted.opacity(0.6))
                 }
                 .padding(16)
             }
@@ -577,12 +577,12 @@ private struct SettingsConnectionPage: View {
                         Task { await connectViewModel.resolveDeviceCode(session: authViewModel.currentSession) }
                     }
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 13)
                     .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.black.opacity(0.06), lineWidth: 1))
-                    .buttonStyle(.acodePress)
+                    .buttonStyle(.codevokePress)
                     .disabled(connectViewModel.isResolvingCode)
 
                     Button(L10n.string(connectViewModel.isConnecting ? "连接中…" : "连接")) {
@@ -595,12 +595,12 @@ private struct SettingsConnectionPage: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 13)
                     .background(Color.black, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .buttonStyle(.acodePress)
+                    .buttonStyle(.codevokePress)
                     .disabled(connectViewModel.resolvedDevice == nil || connectViewModel.isConnecting)
                 }
                 Text(L10n.key("解析成功后显示设备名称和确认状态。"))
                     .font(.system(size: 12))
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
             }
             .padding(16)
         }
@@ -616,17 +616,17 @@ private struct SettingsConnectionPage: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(resolved.deviceName)
                                 .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Color.acodeInk)
+                                .foregroundStyle(Color.codevokeInk)
                             Text("\(platformName(resolved.platform)) · \(L10n.string(resolved.requiresConfirm ? "需要电脑端确认" : "可直接连接"))")
                                 .font(.system(size: 12))
-                                .foregroundStyle(Color.acodeMuted)
+                                .foregroundStyle(Color.codevokeMuted)
                         }
                         Spacer(minLength: 0)
                     }
                     Divider().opacity(0.32)
                     Text(L10n.key("等待确认时保留在本页，不跳转、不遮挡主聊天页。"))
                         .font(.system(size: 12))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                     Button {
                         Task { await connect(deviceId: resolved.deviceId) }
                     } label: {
@@ -637,7 +637,7 @@ private struct SettingsConnectionPage: View {
                             .padding(.vertical, 14)
                             .background(Color.black, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     }
-                    .buttonStyle(.acodePress)
+                    .buttonStyle(.codevokePress)
                     .disabled(connectViewModel.isConnecting)
                 }
                 .padding(16)
@@ -651,16 +651,16 @@ private struct SettingsConnectionPage: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(device.online ? Color.green : Color.acodeMuted.opacity(0.38))
+                        .fill(device.online ? Color.green : Color.codevokeMuted.opacity(0.38))
                         .frame(width: 7, height: 7)
                     Text(device.deviceName)
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.acodeInk)
+                        .foregroundStyle(Color.codevokeInk)
                         .lineLimit(2)
                 }
                 Text(deviceSubtitle(device))
                     .font(.system(size: 12))
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
                     .lineLimit(2)
             }
             Spacer(minLength: 0)
@@ -674,7 +674,7 @@ private struct SettingsConnectionPage: View {
             .background(Color.black, in: Capsule())
             .frame(minHeight: 44)
             .contentShape(Rectangle())
-            .buttonStyle(.acodePress)
+            .buttonStyle(.codevokePress)
             .disabled(connectViewModel.isConnecting || !device.remoteEnabled || device.status != "active")
             .fixedSize(horizontal: true, vertical: false)
         }
@@ -697,12 +697,12 @@ private struct SettingsConnectionPage: View {
                     if let message = connectViewModel.message {
                         Text(message)
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(message.contains("失败") || message.contains("超时") ? .red.opacity(0.85) : Color.acodeMuted)
+                            .foregroundStyle(message.contains("失败") || message.contains("超时") ? .red.opacity(0.85) : Color.codevokeMuted)
                     }
                     if let diagnostics {
                         Text(diagnostics)
                             .font(.system(size: 11))
-                            .foregroundStyle(Color.acodeMuted)
+                            .foregroundStyle(Color.codevokeMuted)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -756,12 +756,12 @@ private struct RemoteConnectionModePicker: View {
                 } label: {
                     Text(mode.title)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(selection == mode ? .white : Color.acodeMuted)
+                        .foregroundStyle(selection == mode ? .white : Color.codevokeMuted)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
                         .background(selection == mode ? Color.black : .clear, in: Capsule())
                 }
-                .buttonStyle(.acodePress)
+                .buttonStyle(.codevokePress)
             }
         }
         .padding(5)
@@ -777,9 +777,9 @@ private struct RemoteDeviceIcon: View {
     var body: some View {
         Image(systemName: iconName)
             .font(.system(size: 17, weight: .semibold))
-            .foregroundStyle(enabled ? Color.acodeInk : Color.acodeMuted.opacity(0.48))
+            .foregroundStyle(enabled ? Color.codevokeInk : Color.codevokeMuted.opacity(0.48))
             .frame(width: 38, height: 38)
-            .background(Color.acodeSoft.opacity(enabled ? 1 : 0.7), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(Color.codevokeSoft.opacity(enabled ? 1 : 0.7), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var iconName: String {
@@ -816,7 +816,7 @@ private struct SettingsCLIPage: View {
                         Spacer()
                         Button(L10n.string("收起")) { viewModel.lastError = nil }
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Color.acodeInk)
+                            .foregroundStyle(Color.codevokeInk)
                     }
                     .padding(12)
                 }
@@ -905,11 +905,11 @@ struct SettingsSectionCard<Content: View>: View {
 
     var body: some View {
         content
-            .acodeGlass(cornerRadius: 26)
+            .codevokeGlass(cornerRadius: 26)
             .background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .stroke(Color.acodeHairline, lineWidth: 1)
+                    .stroke(Color.codevokeHairline, lineWidth: 1)
             }
             .shadow(color: .black.opacity(0.055), radius: 16, x: 0, y: 8)
     }
@@ -917,7 +917,7 @@ struct SettingsSectionCard<Content: View>: View {
 
 private struct SettingsPlainIcon: View {
     let systemName: String
-    var tint: Color = Color.acodeInk.opacity(0.58)
+    var tint: Color = Color.codevokeInk.opacity(0.58)
     var size: CGFloat = 16
     var weight: Font.Weight = .semibold
     var frame: CGFloat = 31
@@ -943,17 +943,17 @@ private struct SettingsMenuRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.key(title))
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Color.acodeInk)
+                    .foregroundStyle(Color.codevokeInk)
                 Text(L10n.key(subtitle))
                     .font(.system(size: 12))
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
             if showsChevron {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.acodeMuted.opacity(0.55))
+                    .foregroundStyle(Color.codevokeMuted.opacity(0.55))
             }
         }
         .padding(.horizontal, 14)
@@ -966,7 +966,7 @@ private struct SettingsActionRow: View {
     let title: String
     let subtitle: String
     let icon: String
-    var tint: Color = Color.acodeInk
+    var tint: Color = Color.codevokeInk
 
     var body: some View {
         HStack(spacing: 12) {
@@ -980,7 +980,7 @@ private struct SettingsActionRow: View {
                     .foregroundStyle(tint)
                 Text(L10n.key(subtitle))
                     .font(.system(size: 12))
-                    .foregroundStyle(Color.acodeMuted)
+                    .foregroundStyle(Color.codevokeMuted)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -1004,10 +1004,10 @@ struct SettingsCardTitle: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(L10n.key(title))
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Color.acodeInk)
+                .foregroundStyle(Color.codevokeInk)
             Text(L10n.key(subtitle))
                 .font(.system(size: 11))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1028,15 +1028,15 @@ struct SettingsTextField: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(L10n.key(title))
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
             TextField(L10n.string(placeholder), text: $text)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .font(.system(size: 15))
                 .padding(11)
-                .acodeGlass(cornerRadius: 16)
+                .codevokeGlass(cornerRadius: 16)
                 .background(.white.opacity(0.56), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.acodeGlassStroke, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.codevokeGlassStroke, lineWidth: 1))
         }
     }
 }
@@ -1056,15 +1056,15 @@ private struct SettingsSecureField: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(L10n.key(title))
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
             SecureField(L10n.string(placeholder), text: $text)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .font(.system(size: 15))
                 .padding(11)
-                .acodeGlass(cornerRadius: 16)
+                .codevokeGlass(cornerRadius: 16)
                 .background(.white.opacity(0.56), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.acodeGlassStroke, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.codevokeGlassStroke, lineWidth: 1))
         }
     }
 }
@@ -1081,25 +1081,25 @@ private struct SettingsOptionRow: View {
             HStack(spacing: 10) {
                 SettingsPlainIcon(
                     systemName: icon,
-                    tint: Color.acodeInk.opacity(selected ? 0.78 : 0.5),
+                    tint: Color.codevokeInk.opacity(selected ? 0.78 : 0.5),
                     size: 13,
                     frame: 24
                 )
                 VStack(alignment: .leading, spacing: 1) {
                     Text(L10n.key(title))
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.acodeInk)
+                        .foregroundStyle(Color.codevokeInk)
                         .lineLimit(1)
                     Text(L10n.key(subtitle))
                         .font(.system(size: 10))
-                        .foregroundStyle(Color.acodeMuted)
+                        .foregroundStyle(Color.codevokeMuted)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 if selected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Color.acodeInk)
+                        .foregroundStyle(Color.codevokeInk)
                 }
             }
             .padding(.horizontal, 12)
@@ -1107,7 +1107,7 @@ private struct SettingsOptionRow: View {
             .background(selected ? Color.white.opacity(0.85) : Color.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(selected ? Color.black.opacity(0.18) : .white.opacity(0.6), lineWidth: 1))
         }
-        .buttonStyle(.acodePress)
+        .buttonStyle(.codevokePress)
     }
 }
 
@@ -1118,10 +1118,10 @@ private struct SettingsEmptyRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
             Text(L10n.key(text))
                 .font(.system(size: 12))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
             Spacer(minLength: 0)
         }
         .padding(.vertical, 6)
@@ -1156,7 +1156,7 @@ private struct SettingsMessageView: View {
         if let message, !message.isEmpty {
             Text(message)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(message.contains("成功") || message.contains("已") ? Color.acodeMuted : .red.opacity(0.85))
+                .foregroundStyle(message.contains("成功") || message.contains("已") ? Color.codevokeMuted : .red.opacity(0.85))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 2)
         }

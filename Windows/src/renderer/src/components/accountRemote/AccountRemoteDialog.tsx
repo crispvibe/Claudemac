@@ -68,7 +68,7 @@ export function AccountRemoteDialog({ dismissible = true, onClose, open }: Accou
               <AppLogo />
             </div>
             <div>
-              <h2>{isAuthenticated ? "账号与设备" : "Acode"}</h2>
+              <h2>{isAuthenticated ? "账号与设备" : "Codevoke"}</h2>
               <p>{isAuthenticated ? "管理当前账号、本机设备、设备码和信令连接。" : "登录以继续你的远程开发工作"}</p>
             </div>
           </div>
@@ -127,7 +127,7 @@ export function AccountRemoteControlPanel({ embedded = false }: AccountRemoteCon
   };
 
   function requireBridge() {
-    const bridge = window.acode?.accountRemote;
+    const bridge = window.codevoke?.accountRemote;
     if (!bridge) {
       throw new Error("Account API is not available.");
     }
@@ -210,7 +210,7 @@ function AccountAuthPanel() {
     let cancelled = false;
 
     async function loadLegalDocuments() {
-      const bridge = window.acode?.accountRemote;
+      const bridge = window.codevoke?.accountRemote;
       if (!bridge) {
         setLegalError("协议服务不可用。");
         return;
@@ -242,7 +242,7 @@ function AccountAuthPanel() {
   }, []);
 
   function requireBridge() {
-    const bridge = window.acode?.accountRemote;
+    const bridge = window.codevoke?.accountRemote;
     if (!bridge) {
       throw new Error("Account API is not available.");
     }

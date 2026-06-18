@@ -56,7 +56,7 @@ final class DeviceConnectViewModel: ObservableObject {
     func connect(deviceId: Int, session: RemoteAuthSession?, device: RemoteDevice? = nil) async -> RemoteChatConfig? {
         guard let session, !isConnecting else {
 #if DEBUG
-            print("[AnnaCodeConnect] connect skipped deviceId=\(deviceId) hasSession=\(session != nil) isConnecting=\(isConnecting)")
+            print("[CodevokeConnect] connect skipped deviceId=\(deviceId) hasSession=\(session != nil) isConnecting=\(isConnecting)")
 #endif
             return nil
         }
@@ -69,7 +69,7 @@ final class DeviceConnectViewModel: ObservableObject {
 
         do {
 #if DEBUG
-            print("[AnnaCodeConnect] connect start deviceId=\(deviceId)")
+            print("[CodevokeConnect] connect start deviceId=\(deviceId)")
 #endif
             var latestDevice = try? await client.device(deviceId: deviceId, accessToken: session.accessToken)
             if LanNetworkSelector.isOnWifi(),
@@ -84,7 +84,7 @@ final class DeviceConnectViewModel: ObservableObject {
             var connection = try await client.connect(deviceId: deviceId, accessToken: session.accessToken)
             updateLatestConnection(connection)
 #if DEBUG
-            print("[AnnaCodeConnect] initial status=\(connection.status) connectionId=\(connection.connectionId ?? connection.id) transport=\(connection.transport ?? "nil") reason=\(connection.reason ?? "nil") endpoint=\(connection.endpoint?.ip ?? "nil"):\(connection.endpoint?.port ?? -1)")
+            print("[CodevokeConnect] initial status=\(connection.status) connectionId=\(connection.connectionId ?? connection.id) transport=\(connection.transport ?? "nil") reason=\(connection.reason ?? "nil") endpoint=\(connection.endpoint?.ip ?? "nil"):\(connection.endpoint?.port ?? -1)")
 #endif
             if connection.status == "pending" {
                 let connectionId = connection.connectionId ?? connection.id
@@ -93,13 +93,13 @@ final class DeviceConnectViewModel: ObservableObject {
                 connection = try await waitForDecision(connectionId: connectionId, accessToken: session.accessToken)
                 updateLatestConnection(connection)
 #if DEBUG
-                print("[AnnaCodeConnect] resolved status=\(connection.status) connectionId=\(connection.connectionId ?? connection.id) transport=\(connection.transport ?? "nil") reason=\(connection.reason ?? "nil") endpoint=\(connection.endpoint?.ip ?? "nil"):\(connection.endpoint?.port ?? -1)")
+                print("[CodevokeConnect] resolved status=\(connection.status) connectionId=\(connection.connectionId ?? connection.id) transport=\(connection.transport ?? "nil") reason=\(connection.reason ?? "nil") endpoint=\(connection.endpoint?.ip ?? "nil"):\(connection.endpoint?.port ?? -1)")
 #endif
             }
             guard connection.status == "accepted" else {
                 message = message(for: connection)
 #if DEBUG
-                print("[AnnaCodeConnect] rejected status=\(connection.status) message=\(message ?? "nil")")
+                print("[CodevokeConnect] rejected status=\(connection.status) message=\(message ?? "nil")")
 #endif
                 return nil
             }
@@ -108,7 +108,7 @@ final class DeviceConnectViewModel: ObservableObject {
                shouldBlockAcceptedConnection(reason) {
                 message = mappedMessage
 #if DEBUG
-                print("[AnnaCodeConnect] blocked reason=\(reason) message=\(mappedMessage)")
+                print("[CodevokeConnect] blocked reason=\(reason) message=\(mappedMessage)")
 #endif
                 return nil
             }
@@ -135,7 +135,7 @@ final class DeviceConnectViewModel: ObservableObject {
                 } catch {
                     if lanFailure == nil { lanFailure = error }
 #if DEBUG
-                    print("[AnnaCodeConnect] lan failed connectionId=\(connectionId): \(error.localizedDescription)")
+                    print("[CodevokeConnect] lan failed connectionId=\(connectionId): \(error.localizedDescription)")
 #endif
                     return nil
                 }
@@ -177,19 +177,19 @@ final class DeviceConnectViewModel: ObservableObject {
         } catch is PendingApprovalTimeoutError {
             message = L10n.string("等待电脑端确认超时，请确认设备在线后重试。")
 #if DEBUG
-            print("[AnnaCodeConnect] pending approval timeout")
+            print("[CodevokeConnect] pending approval timeout")
 #endif
             return nil
         } catch is CancellationError {
             message = L10n.string("连接请求已取消。")
 #if DEBUG
-            print("[AnnaCodeConnect] cancelled")
+            print("[CodevokeConnect] cancelled")
 #endif
             return nil
         } catch {
             message = authErrorMessage(error, fallback: "连接请求失败。")
 #if DEBUG
-            print("[AnnaCodeConnect] failed: \(error.localizedDescription)")
+            print("[CodevokeConnect] failed: \(error.localizedDescription)")
 #endif
             return nil
         }
@@ -221,7 +221,7 @@ final class DeviceConnectViewModel: ObservableObject {
         } catch {
             crossNetworkFailure = error
 #if DEBUG
-            print("[AnnaCodeConnect] tunnel failed connectionId=\(connectionId): \(error.localizedDescription)")
+            print("[CodevokeConnect] tunnel failed connectionId=\(connectionId): \(error.localizedDescription)")
 #endif
         }
 
@@ -236,7 +236,7 @@ final class DeviceConnectViewModel: ObservableObject {
         } catch {
             crossNetworkFailure = error
 #if DEBUG
-            print("[AnnaCodeConnect] p2p failed connectionId=\(connectionId): \(error.localizedDescription)")
+            print("[CodevokeConnect] p2p failed connectionId=\(connectionId): \(error.localizedDescription)")
 #endif
         }
 
@@ -255,7 +255,7 @@ final class DeviceConnectViewModel: ObservableObject {
                 let prefix = lanFailure == nil ? "直连未建立成功。" : "局域网和远程连接都未建立成功。"
                 message = L10n.string("\(prefix)请确认电脑端在线，并检查是否在同一 Wi‑Fi、已配置路由器端口映射，或稍后重试。")
 #if DEBUG
-                print("[AnnaCodeConnect] public direct failed connectionId=\(connectionId): \(error.localizedDescription)")
+                print("[CodevokeConnect] public direct failed connectionId=\(connectionId): \(error.localizedDescription)")
 #endif
                 return nil
             }
@@ -549,7 +549,7 @@ final class DeviceConnectViewModel: ObservableObject {
         let icePolicy = RemoteICEPolicy.summary(from: ice.iceServers)
         let iceServers = RemoteICEPolicy.relayCapableServers(from: ice.iceServers)
 #if DEBUG
-        print("[AnnaCodeConnect] p2p ice \(icePolicy.logDescription) connectionId=\(connectionId)")
+        print("[CodevokeConnect] p2p ice \(icePolicy.logDescription) connectionId=\(connectionId)")
 #endif
         let transport = RemoteWebRTCTransport(
             connectionId: connectionId,

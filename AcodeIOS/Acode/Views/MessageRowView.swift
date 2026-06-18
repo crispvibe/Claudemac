@@ -164,24 +164,24 @@ private struct CompactFileChangeToolRow: View {
         HStack(spacing: 6) {
             Image(systemName: "chevron.right")
                 .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(Color.acodeMuted.opacity(0.5))
+                .foregroundStyle(Color.codevokeMuted.opacity(0.5))
                 .frame(width: 8)
 
             Image(systemName: "pencil.line")
                 .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(Color.acodeMuted.opacity(0.72))
+                .foregroundStyle(Color.codevokeMuted.opacity(0.72))
                 .frame(width: 12, height: 12)
 
             Text(summary.displayPath)
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(Color.acodeMuted)
+                .foregroundStyle(Color.codevokeMuted)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .layoutPriority(2)
 
             Text("已更新")
                 .font(.system(size: 10, weight: .regular, design: .monospaced))
-                .foregroundStyle(Color.acodeMuted.opacity(0.7))
+                .foregroundStyle(Color.codevokeMuted.opacity(0.7))
                 .lineLimit(1)
         }
         .padding(.horizontal, 2)

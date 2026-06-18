@@ -81,7 +81,7 @@ class RemoteHostBridge {
   private requestByUuid = new Map<string, string>();
 
   install(): () => void {
-    const remoteHost = window.acode?.remoteHost;
+    const remoteHost = window.codevoke?.remoteHost;
     if (!remoteHost) {
       return () => undefined;
     }
@@ -129,7 +129,7 @@ class RemoteHostBridge {
   }
 
   private async pushSnapshotNow(): Promise<void> {
-    const remoteHost = window.acode?.remoteHost;
+    const remoteHost = window.codevoke?.remoteHost;
     if (!remoteHost) return;
     const snapshot = this.buildSnapshot();
     if (!snapshot) return;
@@ -273,7 +273,7 @@ class RemoteHostBridge {
   // MARK: - 命令应用
 
   private async handleApplyCommand(payload: RemoteHostApplyCommandRequest): Promise<void> {
-    const remoteHost = window.acode?.remoteHost;
+    const remoteHost = window.codevoke?.remoteHost;
     if (!remoteHost) return;
     let outcome: CommandOutcome;
     try {

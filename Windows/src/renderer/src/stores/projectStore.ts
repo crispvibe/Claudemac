@@ -17,7 +17,7 @@ import {
   type ScanFileTreeRequest
 } from "@shared/fileTree";
 
-type AcodeProjectsApi = NonNullable<Window["acode"]> & {
+type CodevokeProjectsApi = NonNullable<Window["codevoke"]> & {
   projects?: ProjectBridge;
   files?: FileTreeBridge;
 };
@@ -56,8 +56,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown project error";
 }
 
-function getAcodeBridge(): AcodeProjectsApi {
-  const bridge = window.acode as AcodeProjectsApi | undefined;
+function getCodevokeBridge(): CodevokeProjectsApi {
+  const bridge = window.codevoke as CodevokeProjectsApi | undefined;
   if (!bridge?.projects || !bridge.files) {
     throw new Error("Project API is not available yet");
   }
@@ -80,7 +80,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   async refreshProjects() {
     set({ isLoadingProjects: true, projectError: null });
     try {
-      const result = projectListResponseSchema.parse(await getAcodeBridge().projects?.list());
+      const result = projectListResponseSchema.parse(await getCodevokeBridge().projects?.list());
       set({
         projects: result.projects,
         selectedProjectId: result.selectedProjectId ?? result.projects[0]?.id ?? null,
@@ -94,7 +94,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
 
   async addProject(request) {
     try {
-      const project = projectSchema.parse(await getAcodeBridge().projects?.add(request));
+      const project = projectSchema.parse(await getCodevokeBridge().projects?.add(request));
       await get().refreshProjects();
       return project;
     } catch (error) {
@@ -105,7 +105,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
 
   async removeProject(request) {
     try {
-      const result = projectListResponseSchema.parse(await getAcodeBridge().projects?.remove(request));
+      const result = projectListResponseSchema.parse(await getCodevokeBridge().projects?.remove(request));
       set({
         projects: result.projects,
         selectedProjectId: result.selectedProjectId ?? result.projects[0]?.id ?? null,
@@ -118,7 +118,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
 
   async touchProject(request) {
     try {
-      const project = projectSchema.parse(await getAcodeBridge().projects?.touch(request));
+      const project = projectSchema.parse(await getCodevokeBridge().projects?.touch(request));
       await get().refreshProjects();
       return project;
     } catch (error) {
@@ -129,7 +129,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
 
   async selectProject(request) {
     try {
-      const result = projectListResponseSchema.parse(await getAcodeBridge().projects?.select(request));
+      const result = projectListResponseSchema.parse(await getCodevokeBridge().projects?.select(request));
       set({
         projects: result.projects,
         selectedProjectId: result.selectedProjectId ?? result.projects[0]?.id ?? null,
@@ -168,7 +168,7 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
     }));
 
     try {
-      const result = scanFileTreeResponseSchema.parse(await getAcodeBridge().files?.scan(parsedRequest));
+      const result = scanFileTreeResponseSchema.parse(await getCodevokeBridge().files?.scan(parsedRequest));
       const resultKey = directoryKey(result.projectId, result.relativePath);
       set((state) => ({
         directories: {

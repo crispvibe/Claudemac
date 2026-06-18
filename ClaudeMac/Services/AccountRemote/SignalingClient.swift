@@ -107,7 +107,7 @@ final class SignalingClient {
         isConnected = false
         connectEpoch &+= 1
         let epoch = connectEpoch
-        print("[AcodeSignalingMac] connect epoch=\(epoch) host=\(url.host ?? "nil")")
+        print("[CodevokeSignalingMac] connect epoch=\(epoch) host=\(url.host ?? "nil")")
         let wsTask = session.webSocketTask(with: url)
         task = wsTask
         wsTask.resume()
@@ -133,7 +133,7 @@ final class SignalingClient {
                         isConnected = true
                         reconnectDelay = 1
                     } else if event.type == "error" {
-                        print("[AcodeSignalingMac] error control frame message=\(event.message ?? "nil")")
+                        print("[CodevokeSignalingMac] error control frame message=\(event.message ?? "nil")")
                     }
                     onEvent?(event)
                 }
@@ -141,7 +141,7 @@ final class SignalingClient {
                 // 只有当前 epoch 的 receive 失败才安排重连；老 task 被新 connect()
                 // 顶掉后落到这里的话，直接退出即可。
                 if connectEpoch == epoch {
-                    print("[AcodeSignalingMac] receive failed epoch=\(epoch): \(error.localizedDescription)")
+                    print("[CodevokeSignalingMac] receive failed epoch=\(epoch): \(error.localizedDescription)")
                     markDisconnected()
                     scheduleReconnect()
                 }
@@ -161,7 +161,7 @@ final class SignalingClient {
         connectEpoch &+= 1
         let delay = reconnectDelay
         reconnectDelay = min(reconnectDelay * 2, 30)
-        print("[AcodeSignalingMac] reconnect scheduled delay=\(delay)s nextEpoch=\(connectEpoch + 1)")
+        print("[CodevokeSignalingMac] reconnect scheduled delay=\(delay)s nextEpoch=\(connectEpoch + 1)")
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
             await MainActor.run { self?.connect() }
@@ -192,7 +192,7 @@ final class SignalingClient {
             guard error != nil else { return }
             Task { @MainActor [weak self] in
                 guard self?.task === task, self?.connectEpoch == epoch else { return }
-                print("[AcodeSignalingMac] ping failed epoch=\(epoch)")
+                print("[CodevokeSignalingMac] ping failed epoch=\(epoch)")
                 self?.markDisconnected()
                 self?.scheduleReconnect()
             }
@@ -213,7 +213,7 @@ final class SignalingClient {
             Task { @MainActor [weak self] in
                 guard self?.task === task else { return }
                 let logType = type == "relay" ? "signaling relay" : (type ?? "nil")
-                print("[AcodeSignalingMac] send failed type=\(logType)")
+                print("[CodevokeSignalingMac] send failed type=\(logType)")
                 self?.markDisconnected()
                 self?.scheduleReconnect()
             }
@@ -232,7 +232,7 @@ final class SignalingClient {
     private func signalingURL(token: String) -> URL? {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         components?.scheme = baseURL.scheme == "http" ? "ws" : "wss"
-        if let host = UserDefaults.standard.string(forKey: "AcodeRemoteSignalingHost")?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty {
+        if let host = UserDefaults.standard.string(forKey: "CodevokeRemoteSignalingHost")?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty {
             components?.host = host
         }
         components?.path = "/remote/signaling/ws"

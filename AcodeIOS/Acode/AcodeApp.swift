@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct AnnaCodeApp: App {
+struct CodevokeApp: App {
     var body: some Scene {
         WindowGroup {
             AppRootView()

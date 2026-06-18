@@ -32,7 +32,7 @@ enum LocalDeviceIdentityStoreError: LocalizedError {
 actor DeviceIdentityStore {
     static let shared = DeviceIdentityStore()
 
-    private let service = "vin.anna.AnnaCodeMobile.remote.device"
+    private let service = "vin.anna.CodevokeMobile.remote.device"
     private let identityAccount = "identity"
     private let privateKeyAccount = "curve25519.signing.privateKey"
     private let encoder = JSONEncoder()
@@ -56,7 +56,7 @@ actor DeviceIdentityStore {
         let identity = LocalDeviceIdentity(
             deviceUID: UUID().uuidString,
             deviceID: nil,
-            deviceName: "AnnaCode iPhone",
+            deviceName: "Codevoke iPhone",
             devicePublicKey: privateKey.publicKey.rawRepresentation.base64EncodedString()
         )
         try saveIdentity(identity)
