@@ -19,12 +19,10 @@ import com.codevoke.android.ui.state.AuthGateState
 private enum class CodevokeScreen {
     Login,
     Register,
-    Forgot,
     Chat,
     Devices,
     Settings,
     Account,
-    ChangePassword,
     DeleteAccount,
     Legal,
 }
@@ -95,16 +93,18 @@ fun CodevokeApp() {
     when (screen) {
         CodevokeScreen.Login -> if (vm.auth.gateState == AuthGateState.Checking) AuthCheckingScreen() else LoginScreen(
             email = vm.auth.email,
-            password = vm.auth.password,
+            verificationCode = vm.auth.verificationCode,
             agreed = vm.auth.agreed,
             submitting = vm.auth.submitting,
             message = vm.auth.message,
             onEmailChange = vm::updateEmail,
-            onPasswordChange = vm::updatePassword,
+            onVerificationCodeChange = vm::updateVerificationCode,
             toggleAgreement = vm::toggleAgreement,
             openRegister = { navigateTo(CodevokeScreen.Register) },
-            openForgot = { navigateTo(CodevokeScreen.Forgot) },
+            requestCode = vm::requestLoginCode,
             login = { vm.requestLogin { replaceScreen(CodevokeScreen.Chat) } },
+            codeSending = vm.auth.loginCodeSending,
+            codeCooldownSeconds = vm.auth.loginCodeCooldown,
             openUserAgreement = {
                 vm.presentLegal("user_agreement")
                 navigateTo(CodevokeScreen.Legal)
@@ -116,15 +116,11 @@ fun CodevokeApp() {
         )
         CodevokeScreen.Register -> RegisterScreen(
             email = vm.auth.email,
-            password = vm.auth.password,
-            confirmPassword = vm.auth.confirmPassword,
             verificationCode = vm.auth.verificationCode,
             agreed = vm.auth.agreed,
             submitting = vm.auth.submitting,
             message = vm.auth.message,
             onEmailChange = vm::updateEmail,
-            onPasswordChange = vm::updatePassword,
-            onConfirmPasswordChange = vm::updateConfirmPassword,
             onVerificationCodeChange = vm::updateVerificationCode,
             toggleAgreement = vm::toggleAgreement,
             requestCode = vm::requestRegisterCode,
@@ -140,23 +136,6 @@ fun CodevokeApp() {
                 vm.presentLegal("privacy_policy")
                 navigateTo(CodevokeScreen.Legal)
             },
-        )
-        CodevokeScreen.Forgot -> ForgotPasswordScreen(
-            email = vm.auth.email,
-            verificationCode = vm.auth.verificationCode,
-            password = vm.auth.forgotPassword,
-            confirmPassword = vm.auth.forgotConfirmPassword,
-            submitting = vm.auth.submitting,
-            message = vm.auth.message,
-            onEmailChange = vm::updateEmail,
-            onVerificationCodeChange = vm::updateVerificationCode,
-            onPasswordChange = vm::updateForgotPassword,
-            onConfirmPasswordChange = vm::updateForgotConfirmPassword,
-            requestCode = vm::requestPasswordResetCode,
-            goBack = { navigateBack(CodevokeScreen.Login) },
-            resetPassword = { vm.requestPasswordReset { replaceScreen(CodevokeScreen.Login) } },
-            codeSending = vm.auth.passwordResetCodeSending,
-            codeCooldownSeconds = vm.auth.passwordResetCodeCooldown,
         )
         CodevokeScreen.Chat -> ChatScreen(
             connectionStatus = vm.chat.connectionStatus,
@@ -239,24 +218,11 @@ fun CodevokeApp() {
             account = vm.auth.account,
             message = vm.auth.message,
             goBack = { navigateBack(CodevokeScreen.Settings) },
-            openChangePassword = { navigateTo(CodevokeScreen.ChangePassword) },
             openDeleteAccount = { navigateTo(CodevokeScreen.DeleteAccount) },
             logout = {
                 vm.logout()
                 replaceScreen(CodevokeScreen.Login)
             },
-        )
-        CodevokeScreen.ChangePassword -> ChangePasswordScreen(
-            currentPassword = vm.auth.currentPassword,
-            newPassword = vm.auth.newPassword,
-            confirmPassword = vm.auth.newPasswordConfirm,
-            submitting = vm.auth.submitting,
-            message = vm.auth.message,
-            onCurrentChange = vm::updateCurrentPassword,
-            onNewChange = vm::updateNewPassword,
-            onConfirmChange = vm::updateNewPasswordConfirm,
-            submit = { vm.changePassword { replaceScreen(CodevokeScreen.Login) } },
-            goBack = { navigateBack(CodevokeScreen.Account) },
         )
         CodevokeScreen.DeleteAccount -> AccountDeletionScreen(
             confirmAccount = vm.auth.deletionConfirmAccount,

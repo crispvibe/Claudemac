@@ -36,9 +36,11 @@ const (
 	remoteConnectionAccepted   = "accepted"
 	remoteConnectionRejected   = "rejected"
 	remoteAuthPurposeRegister  = "register_code"
+	remoteAuthPurposeLogin     = "login_code"
 	remoteAuthPurposePassword  = "password_reset"
 	remoteAuthCodeValidity     = 10 * time.Minute
 	remoteAuthCodeDigits       = 6
+	remoteRegisterTrialDuration = 24 * time.Hour
 	remoteLanTransport         = "lan"
 	remoteP2PTransport         = "p2p"
 	remoteTunnelTransport      = "tunnel"
@@ -53,9 +55,37 @@ const (
 
 var remoteSendAuthCodeEmail = sendRemoteAuthCodeEmail
 
+// remoteRegisterEmailDomains 限定注册仅支持 QQ / 163 邮箱，避免一次性邮箱薅免费试用。
+var remoteRegisterEmailDomains = map[string]struct{}{
+	"qq.com":  {},
+	"163.com": {},
+}
+
+// assertRegisterableEmail 校验邮箱是否允许注册：仅限 QQ/163 主域名，且不接受带 "+" 的别名地址。
+func assertRegisterableEmail(email string) error {
+	at := strings.LastIndex(email, "@")
+	if at <= 0 || at >= len(email)-1 {
+		return errors.New("请输入正确的邮箱地址。")
+	}
+	local := email[:at]
+	domain := email[at+1:]
+	if _, ok := remoteRegisterEmailDomains[domain]; !ok {
+		return errors.New("仅支持 QQ 邮箱（@qq.com）或 163 邮箱（@163.com）注册。")
+	}
+	if strings.Contains(local, "+") {
+		return errors.New("不支持别名邮箱，请使用真实的 QQ 或 163 邮箱注册。")
+	}
+	return nil
+}
+
+// RequestRegisterCode 发送注册邮箱验证码。仅允许 QQ/163 邮箱、且未注册过的邮箱，
+// 以此结合验证码防止恶意批量注册薅免费试用。
 func (s *RemoteService) RequestRegisterCode(req bizReq.RemoteVerificationCodeRequest) (bizRes.RemoteVerificationCodeResponse, error) {
 	identity, isEmail, err := normalizeRemoteIdentity(req.Email, req.Phone)
 	if err != nil {
+		return bizRes.RemoteVerificationCodeResponse{}, err
+	}
+	if err := assertRegisterableEmail(identity); err != nil {
 		return bizRes.RemoteVerificationCodeResponse{}, err
 	}
 	var existing modelBiz.RemoteUser
@@ -72,10 +102,12 @@ func (s *RemoteService) Register(req bizReq.RemoteAuthRequest) (bizRes.RemoteAut
 	if err != nil {
 		return bizRes.RemoteAuthResponse{}, err
 	}
-	password := strings.TrimSpace(req.Password)
+	if err := assertRegisterableEmail(identity); err != nil {
+		return bizRes.RemoteAuthResponse{}, err
+	}
 	code := strings.TrimSpace(req.VerificationCode)
-	if password == "" || code == "" {
-		return bizRes.RemoteAuthResponse{}, errors.New("请完整填写邮箱、验证码和密码。")
+	if code == "" {
+		return bizRes.RemoteAuthResponse{}, errors.New("请填写邮箱和验证码。")
 	}
 	var existing modelBiz.RemoteUser
 	if err := remoteUserIdentityQuery(identity, isEmail).First(&existing).Error; err == nil {
@@ -83,7 +115,8 @@ func (s *RemoteService) Register(req bizReq.RemoteAuthRequest) (bizRes.RemoteAut
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return bizRes.RemoteAuthResponse{}, err
 	}
-	user := modelBiz.RemoteUser{PasswordHash: utils.BcryptHash(password), Status: remoteStatusActive}
+	// 账号体系改为「邮箱 + 验证码」登录，不再使用密码，PasswordHash 字段保留但置空（已弃用）。
+	user := modelBiz.RemoteUser{Status: remoteStatusActive}
 	if isEmail {
 		user.Email = identity
 		user.Phone = remoteEmailPhonePlaceholder(identity)
@@ -94,26 +127,58 @@ func (s *RemoteService) Register(req bizReq.RemoteAuthRequest) (bizRes.RemoteAut
 		if err := s.consumeAuthCodeWithDB(tx, identity, isEmail, remoteAuthPurposeRegister, code); err != nil {
 			return err
 		}
-		return tx.Create(&user).Error
+		if err := tx.Create(&user).Error; err != nil {
+			return err
+		}
+		// 免费注册即赠送 1 天免费试用权益。
+		return grantRegistrationTrial(tx, user.ID)
 	}); err != nil {
 		return bizRes.RemoteAuthResponse{}, err
 	}
 	return s.issueTokens(user)
 }
 
+// RequestLoginCode 向已注册邮箱发送登录验证码。
+func (s *RemoteService) RequestLoginCode(req bizReq.RemoteVerificationCodeRequest) (bizRes.RemoteVerificationCodeResponse, error) {
+	identity, isEmail, err := normalizeRemoteIdentity(req.Email, req.Phone)
+	if err != nil {
+		return bizRes.RemoteVerificationCodeResponse{}, err
+	}
+	var user modelBiz.RemoteUser
+	if err := remoteUserIdentityQuery(identity, isEmail).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return bizRes.RemoteVerificationCodeResponse{}, errors.New("这个邮箱还没有注册，请先注册。")
+		}
+		return bizRes.RemoteVerificationCodeResponse{}, err
+	}
+	if user.Status != remoteStatusActive {
+		return bizRes.RemoteVerificationCodeResponse{}, errors.New("账号已禁用，请联系管理员。")
+	}
+	return s.issueAuthCode(identity, isEmail, remoteAuthPurposeLogin)
+}
+
+// Login 改为「邮箱 + 验证码」登录，不再校验密码。
 func (s *RemoteService) Login(req bizReq.RemoteAuthRequest, clientIP, userAgent string) (bizRes.RemoteAuthResponse, error) {
 	identity, isEmail, err := normalizeRemoteIdentity(req.Email, req.Phone)
 	if err != nil {
 		return bizRes.RemoteAuthResponse{}, err
 	}
+	code := strings.TrimSpace(req.VerificationCode)
+	if code == "" {
+		return bizRes.RemoteAuthResponse{}, errors.New("请填写邮箱和验证码。")
+	}
 	var user modelBiz.RemoteUser
 	if err := remoteUserIdentityQuery(identity, isEmail).First(&user).Error; err != nil {
-		RecordRemoteAudit(nil, nil, nil, "remote.login", "failed", "invalid credentials", clientIP, userAgent)
-		return bizRes.RemoteAuthResponse{}, errors.New("邮箱或密码错误")
+		RecordRemoteAudit(nil, nil, nil, "remote.login", "failed", "user not found", clientIP, userAgent)
+		return bizRes.RemoteAuthResponse{}, errors.New("这个邮箱还没有注册，请先注册。")
 	}
-	if user.Status != remoteStatusActive || !utils.BcryptCheck(req.Password, user.PasswordHash) {
-		RecordRemoteAudit(&user.ID, nil, nil, "remote.login", "failed", "invalid credentials", clientIP, userAgent)
-		return bizRes.RemoteAuthResponse{}, errors.New("邮箱或密码错误")
+	if user.Status != remoteStatusActive {
+		RecordRemoteAudit(&user.ID, nil, nil, "remote.login", "failed", "user disabled", clientIP, userAgent)
+		return bizRes.RemoteAuthResponse{}, errors.New("账号已禁用，请联系管理员。")
+	}
+	if err := s.consumeAuthCode(identity, isEmail, remoteAuthPurposeLogin, code); err != nil {
+		RecordRemoteAudit(&user.ID, nil, nil, "remote.login", "failed", "invalid code", clientIP, userAgent)
+		return bizRes.RemoteAuthResponse{}, err
 	}
 	now := time.Now()
 	global.AppDB.Model(&user).Update("last_login_at", now)
@@ -156,73 +221,6 @@ func (s *RemoteService) Refresh(req bizReq.RemoteRefreshRequest, clientIP, userA
 	}
 	RecordRemoteAudit(&user.ID, nil, nil, "remote.refresh", "success", "refresh succeeded", clientIP, userAgent)
 	return response, nil
-}
-
-func (s *RemoteService) RequestPasswordResetCode(req bizReq.RemoteVerificationCodeRequest) (bizRes.RemoteVerificationCodeResponse, error) {
-	identity, isEmail, err := normalizeRemoteIdentity(req.Email, req.Phone)
-	if err != nil {
-		return bizRes.RemoteVerificationCodeResponse{}, err
-	}
-	var user modelBiz.RemoteUser
-	if err := remoteUserIdentityQuery(identity, isEmail).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return bizRes.RemoteVerificationCodeResponse{}, errors.New("这个邮箱还没有注册。")
-		}
-		return bizRes.RemoteVerificationCodeResponse{}, err
-	}
-	return s.issueAuthCode(identity, isEmail, remoteAuthPurposePassword)
-}
-
-func (s *RemoteService) ResetPassword(req bizReq.RemotePasswordResetRequest) (bizRes.RemoteAuthResponse, error) {
-	identity, isEmail, err := normalizeRemoteIdentity(req.Email, req.Phone)
-	if err != nil {
-		return bizRes.RemoteAuthResponse{}, err
-	}
-	password := strings.TrimSpace(req.Password)
-	code := strings.TrimSpace(req.VerificationCode)
-	if password == "" || code == "" {
-		return bizRes.RemoteAuthResponse{}, errors.New("请完整填写邮箱、验证码和新密码。")
-	}
-	var user modelBiz.RemoteUser
-	if err := remoteUserIdentityQuery(identity, isEmail).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return bizRes.RemoteAuthResponse{}, errors.New("这个邮箱还没有注册。")
-		}
-		return bizRes.RemoteAuthResponse{}, err
-	}
-	now := time.Now()
-	if err := global.AppDB.Transaction(func(tx *gorm.DB) error {
-		if err := s.consumeAuthCodeWithDB(tx, identity, isEmail, remoteAuthPurposePassword, code); err != nil {
-			return err
-		}
-		if err := tx.Model(&user).Updates(map[string]any{"password_hash": utils.BcryptHash(password), "token_version": gorm.Expr("token_version + ?", 1), "updated_at": now}).Error; err != nil {
-			return err
-		}
-		return tx.Model(&modelBiz.RemoteUserToken{}).Where("user_id = ? AND token_type = ? AND revoked_at IS NULL", user.ID, "refresh").Updates(map[string]any{"revoked_at": now, "updated_at": now}).Error
-	}); err != nil {
-		return bizRes.RemoteAuthResponse{}, err
-	}
-	return bizRes.RemoteAuthResponse{}, nil
-}
-
-func (s *RemoteService) ChangePassword(userID uint, req bizReq.RemoteChangePasswordRequest) error {
-	currentPassword := strings.TrimSpace(req.CurrentPassword)
-	newPassword := strings.TrimSpace(req.NewPassword)
-	if currentPassword == "" || newPassword == "" {
-		return errors.New("当前密码和新密码不能为空")
-	}
-	var user modelBiz.RemoteUser
-	if err := global.AppDB.First(&user, userID).Error; err != nil {
-		return err
-	}
-	if user.Status != remoteStatusActive || !utils.BcryptCheck(currentPassword, user.PasswordHash) {
-		return errors.New("当前密码错误")
-	}
-	now := time.Now()
-	if err := global.AppDB.Model(&user).Updates(map[string]any{"password_hash": utils.BcryptHash(newPassword), "token_version": gorm.Expr("token_version + ?", 1), "updated_at": now}).Error; err != nil {
-		return err
-	}
-	return global.AppDB.Model(&modelBiz.RemoteUserToken{}).Where("user_id = ? AND token_type = ? AND revoked_at IS NULL", user.ID, "refresh").Updates(map[string]any{"revoked_at": now, "updated_at": now}).Error
 }
 
 func (s *RemoteService) DeleteAccount(userID uint, req bizReq.RemoteAccountDeletionRequest, clientIP, userAgent string) (bizRes.RemoteAccountDeletionResponse, error) {
@@ -1175,7 +1173,10 @@ func sendRemoteAuthCodeEmail(to, purpose, code string, expiresAt time.Time) erro
 
 	subject := "AnnaCode 邮箱验证码"
 	scene := "注册账号"
-	if purpose == remoteAuthPurposePassword {
+	switch purpose {
+	case remoteAuthPurposeLogin:
+		scene = "登录"
+	case remoteAuthPurposePassword:
 		scene = "重置密码"
 	}
 	body := fmt.Sprintf("你的 AnnaCode %s验证码是：%s\n\n验证码将在 %s 过期。若不是你本人操作，请忽略这封邮件。", scene, code, expiresAt.Format("2006-01-02 15:04:05"))

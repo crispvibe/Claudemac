@@ -67,20 +67,22 @@ import com.codevoke.android.ui.theme.CodevokeColor
 @Composable
 fun LoginScreen(
     email: String,
-    password: String,
+    verificationCode: String,
     agreed: Boolean,
     submitting: Boolean,
     message: String?,
     onEmailChange: (String) -> Unit,
-    onPasswordChange: (String) -> Unit,
+    onVerificationCodeChange: (String) -> Unit,
     toggleAgreement: () -> Unit,
     openRegister: () -> Unit,
-    openForgot: () -> Unit,
+    requestCode: () -> Unit,
     login: () -> Unit,
+    codeSending: Boolean = false,
+    codeCooldownSeconds: Int = 0,
     openUserAgreement: () -> Unit = {},
     openPrivacyPolicy: () -> Unit = {},
 ) {
-    val canSubmit = agreed && email.trim().isNotEmpty() && password.isNotEmpty() && !submitting
+    val canSubmit = agreed && email.trim().isNotEmpty() && verificationCode.trim().length >= 4 && !submitting
     AuthPageScaffold {
         Spacer(Modifier.weight(0.52f))
         AuthHeader(title = "欢迎回来", subtitle = "登录 Codevoke，继续连接你的远程工作区")
@@ -92,14 +94,17 @@ fun LoginScreen(
                 placeholder = "请输入邮箱",
                 icon = Icons.Rounded.Email,
             )
-            AuthLabel("密码", modifier = Modifier.padding(top = 16.dp))
+            AuthLabel("邮箱验证码", modifier = Modifier.padding(top = 16.dp))
             AuthInput(
-                value = password,
-                onValueChange = onPasswordChange,
-                placeholder = "请输入密码",
-                icon = Icons.Rounded.Lock,
-                trailingIcon = Icons.Rounded.Visibility,
-                password = true,
+                value = verificationCode,
+                onValueChange = onVerificationCodeChange,
+                placeholder = "6 位验证码",
+                icon = Icons.Rounded.Code,
+                keyboardType = KeyboardType.Number,
+                trailingText = codeButtonText(codeCooldownSeconds),
+                trailingLoading = codeSending,
+                trailingEnabled = !codeSending && codeCooldownSeconds <= 0,
+                trailingAction = requestCode,
             )
             AgreementRow(
                 checked = agreed,
@@ -126,10 +131,9 @@ fun LoginScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 20.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AuthTextButton("忘记密码", onClick = openForgot)
                 AuthTextButton("创建账号", onClick = openRegister)
             }
         }
@@ -152,116 +156,13 @@ fun AuthCheckingScreen() {
 }
 
 @Composable
-fun ForgotPasswordScreen(
-    email: String,
-    verificationCode: String,
-    password: String,
-    confirmPassword: String,
-    submitting: Boolean,
-    message: String?,
-    onEmailChange: (String) -> Unit,
-    onVerificationCodeChange: (String) -> Unit,
-    onPasswordChange: (String) -> Unit,
-    onConfirmPasswordChange: (String) -> Unit,
-    requestCode: () -> Unit,
-    goBack: () -> Unit,
-    resetPassword: () -> Unit,
-    codeSending: Boolean = false,
-    codeCooldownSeconds: Int = 0,
-) {
-    val canSubmit = email.trim().isNotEmpty() &&
-        verificationCode.trim().length >= 4 &&
-        password.length >= 6 &&
-        password == confirmPassword &&
-        !submitting
-    Box(Modifier.fillMaxSize()) {
-        AuthPageScaffold {
-            Spacer(Modifier.height(96.dp))
-            AuthHeader(title = "忘记密码", subtitle = "通过邮箱验证码重置登录密码")
-            AuthLiquidCard {
-                AuthLabel("邮箱")
-                AuthInput(
-                    value = email,
-                    onValueChange = onEmailChange,
-                    placeholder = "请输入注册邮箱",
-                    icon = Icons.Rounded.Email,
-                )
-                AuthLabel("邮箱验证码", modifier = Modifier.padding(top = 16.dp))
-                AuthInput(
-                    value = verificationCode,
-                    onValueChange = onVerificationCodeChange,
-                    placeholder = "6 位验证码",
-                    icon = Icons.Rounded.Code,
-                    keyboardType = KeyboardType.Number,
-                    trailingText = codeButtonText(codeCooldownSeconds),
-                    trailingLoading = codeSending,
-                    trailingEnabled = !codeSending && codeCooldownSeconds <= 0,
-                    trailingAction = requestCode,
-                )
-                AuthLabel("新密码", modifier = Modifier.padding(top = 16.dp))
-                AuthInput(
-                    value = password,
-                    onValueChange = onPasswordChange,
-                    placeholder = "设置新的登录密码",
-                    icon = Icons.Rounded.Lock,
-                    trailingIcon = Icons.Rounded.Visibility,
-                    password = true,
-                )
-                AuthLabel("确认新密码", modifier = Modifier.padding(top = 16.dp))
-                AuthInput(
-                    value = confirmPassword,
-                    onValueChange = onConfirmPasswordChange,
-                    placeholder = "再次输入新密码",
-                    icon = Icons.Rounded.Lock,
-                    trailingIcon = Icons.Rounded.Visibility,
-                    password = true,
-                )
-                if (!message.isNullOrBlank()) {
-                    Text(
-                        text = message,
-                        color = authMessageColor(message),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(top = 18.dp, bottom = 10.dp),
-                    )
-                } else {
-                    Spacer(Modifier.height(18.dp))
-                }
-                AuthPrimaryButton(
-                    text = if (submitting) "重置中..." else "重置密码",
-                    loading = submitting,
-                    enabled = canSubmit,
-                    onClick = resetPassword,
-                )
-            }
-            Spacer(Modifier.weight(1f))
-        }
-        CodevokeIconButton(
-            imageVector = Icons.Rounded.ChevronLeft,
-            contentDescription = "返回",
-            size = 44.dp,
-            iconSize = 22.dp,
-            modifier = Modifier
-                .statusBarsPadding()
-                .padding(start = 18.dp, top = 18.dp)
-                .align(Alignment.TopStart),
-            onClick = goBack,
-        )
-    }
-}
-
-@Composable
 fun RegisterScreen(
     email: String,
-    password: String,
-    confirmPassword: String,
     verificationCode: String,
     agreed: Boolean,
     submitting: Boolean,
     message: String?,
     onEmailChange: (String) -> Unit,
-    onPasswordChange: (String) -> Unit,
-    onConfirmPasswordChange: (String) -> Unit,
     onVerificationCodeChange: (String) -> Unit,
     toggleAgreement: () -> Unit,
     requestCode: () -> Unit,
@@ -275,8 +176,6 @@ fun RegisterScreen(
     val canSubmit = agreed &&
         email.trim().isNotEmpty() &&
         verificationCode.trim().length >= 4 &&
-        password.length >= 6 &&
-        password == confirmPassword &&
         !submitting
     Box(Modifier.fillMaxSize()) {
         AuthPageScaffold {
@@ -301,24 +200,6 @@ fun RegisterScreen(
                     trailingLoading = codeSending,
                     trailingEnabled = !codeSending && codeCooldownSeconds <= 0,
                     trailingAction = requestCode,
-                )
-                AuthLabel("密码", modifier = Modifier.padding(top = 16.dp))
-                AuthInput(
-                    value = password,
-                    onValueChange = onPasswordChange,
-                    placeholder = "设置登录密码",
-                    icon = Icons.Rounded.Lock,
-                    trailingIcon = Icons.Rounded.Visibility,
-                    password = true,
-                )
-                AuthLabel("确认密码", modifier = Modifier.padding(top = 16.dp))
-                AuthInput(
-                    value = confirmPassword,
-                    onValueChange = onConfirmPasswordChange,
-                    placeholder = "再次输入密码",
-                    icon = Icons.Rounded.Lock,
-                    trailingIcon = Icons.Rounded.Visibility,
-                    password = true,
                 )
                 AgreementRow(
                     checked = agreed,

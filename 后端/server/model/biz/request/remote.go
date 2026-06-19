@@ -1,27 +1,15 @@
 package request
 
+// RemoteAuthRequest 远程账号注册/登录请求，统一改为「邮箱 + 验证码」，不再使用密码。
 type RemoteAuthRequest struct {
 	Phone            string `json:"phone"`
 	Email            string `json:"email"`
-	Password         string `json:"password"`
-	VerificationCode string `json:"verificationCode,omitempty"`
+	VerificationCode string `json:"verificationCode"`
 }
 
 type RemoteVerificationCodeRequest struct {
 	Phone string `json:"phone"`
 	Email string `json:"email"`
-}
-
-type RemotePasswordResetRequest struct {
-	Phone            string `json:"phone"`
-	Email            string `json:"email"`
-	Password         string `json:"password"`
-	VerificationCode string `json:"verificationCode"`
-}
-
-type RemoteChangePasswordRequest struct {
-	CurrentPassword string `json:"currentPassword"`
-	NewPassword     string `json:"newPassword"`
 }
 
 type RemoteAccountDeletionRequest struct {

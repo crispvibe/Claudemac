@@ -29,7 +29,9 @@ export const accountSessionSummarySchema = z.object({
 export type AccountSessionSummary = z.infer<typeof accountSessionSummarySchema>;
 
 export const localDeviceIdentitySchema = z.object({
-  deviceUID: z.string().uuid(),
+  // 设备标识改为硬件指纹派生（如 windows-<hash>），不再强制 UUID 格式，
+  // 以便同一台物理设备在重装/升级后复用同一个 deviceUID，避免重复设备。
+  deviceUID: z.string().min(1),
   deviceID: z.number().int().positive().nullable(),
   deviceName: z.string().min(1),
   devicePublicKey: z.string().min(1),
@@ -39,7 +41,7 @@ export const localDeviceIdentitySchema = z.object({
 export type LocalDeviceIdentity = z.infer<typeof localDeviceIdentitySchema>;
 
 export const deviceSummarySchema = z.object({
-  deviceUID: z.string().uuid(),
+  deviceUID: z.string().min(1),
   deviceID: z.number().int().positive().nullable(),
   deviceName: z.string(),
   devicePublicKey: z.string(),
@@ -171,12 +173,10 @@ export type AccountRemoteDeviceUpdateInput = z.infer<typeof accountRemoteDeviceU
 export interface AccountRemoteBridge {
   getState: () => Promise<AccountRemoteState>;
   requestRegisterCode: (email: string) => Promise<AccountVerificationCodeResponse>;
-  register: (email: string, password: string, verificationCode: string) => Promise<AccountRemoteState>;
-  login: (email: string, password: string) => Promise<AccountRemoteState>;
-  requestPasswordResetCode: (email: string) => Promise<AccountVerificationCodeResponse>;
-  resetPassword: (email: string, password: string, verificationCode: string) => Promise<boolean>;
+  register: (email: string, verificationCode: string) => Promise<AccountRemoteState>;
+  requestLoginCode: (email: string) => Promise<AccountVerificationCodeResponse>;
+  login: (email: string, verificationCode: string) => Promise<AccountRemoteState>;
   logout: () => Promise<AccountRemoteState>;
-  changePassword: (currentPassword: string, newPassword: string) => Promise<AccountRemoteState>;
   deleteAccount: (confirmAccount: string, confirmDestroy: string, confirmWaiveRights: string, reason: string) => Promise<AccountRemoteState>;
   refreshDevices: () => Promise<AccountRemoteState>;
   registerDevice: () => Promise<AccountRemoteState>;

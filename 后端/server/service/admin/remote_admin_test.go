@@ -10,9 +10,6 @@ import (
 	"heyu/server/global"
 	adminReq "heyu/server/model/admin/request"
 	modelBiz "heyu/server/model/biz"
-	bizReq "heyu/server/model/biz/request"
-	bizService "heyu/server/service/biz"
-	"heyu/server/utils"
 )
 
 func setupRemoteAdminServiceTest(t *testing.T) {
@@ -41,25 +38,23 @@ func setupRemoteAdminServiceTest(t *testing.T) {
 	global.AppConfig.JWT.SigningKey = "test-signing-key"
 }
 
-func TestSaveUserPasswordCanLoginWithNewPassword(t *testing.T) {
+func TestSaveUserCreatesUserWithoutPassword(t *testing.T) {
 	setupRemoteAdminServiceTest(t)
 
 	adminSvc := &RemoteAdminService{}
-	remoteSvc := &bizService.RemoteService{}
 
+	// 账号已改为「邮箱 + 验证码」登录，新增远程用户不再强制设置密码。
 	user, err := adminSvc.SaveUser(adminReq.RemoteUserSave{
-		Email:    "user@example.com",
-		Password: "oldpass123",
-		Status:   "active",
+		Email:  "user@example.com",
+		Status: "active",
 	})
 	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(user.PasswordHash, "$2"))
-	require.NotEqual(t, "oldpass123", user.PasswordHash)
-	require.True(t, utils.BcryptCheck("oldpass123", user.PasswordHash))
+	require.NotZero(t, user.ID)
+	require.Equal(t, "user@example.com", user.Email)
+	require.Empty(t, user.PasswordHash)
+	require.True(t, strings.HasPrefix(user.Phone, "email:"))
 
-	_, err = remoteSvc.Login(bizReq.RemoteAuthRequest{Email: "user@example.com", Password: "oldpass123"}, "127.0.0.1", "test")
-	require.NoError(t, err)
-
+	// 兼容：仍允许后台为弃用的密码字段写值（不影响验证码登录）。
 	updated, err := adminSvc.SaveUser(adminReq.RemoteUserSave{
 		ID:       user.ID,
 		Email:    "user@example.com",
@@ -68,14 +63,6 @@ func TestSaveUserPasswordCanLoginWithNewPassword(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(updated.PasswordHash, "$2"))
-	require.NotEqual(t, "123456", updated.PasswordHash)
-	require.True(t, utils.BcryptCheck("123456", updated.PasswordHash))
-
-	_, err = remoteSvc.Login(bizReq.RemoteAuthRequest{Email: "user@example.com", Password: "oldpass123"}, "127.0.0.1", "test")
-	require.Error(t, err)
-
-	_, err = remoteSvc.Login(bizReq.RemoteAuthRequest{Email: "user@example.com", Password: "123456"}, "127.0.0.1", "test")
-	require.NoError(t, err)
 }
 
 func TestDeleteUserRemovesRemoteDataAndKeepsAdminDeletionRecord(t *testing.T) {

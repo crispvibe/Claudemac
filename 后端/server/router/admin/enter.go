@@ -7,6 +7,7 @@ type RouterPack struct {
 	JwtRouter
 	BaseRouter
 	CaptchaConfigRouter
+	EmailConfigRouter
 	MenuRouter
 	UserRouter
 	CasbinRouter
@@ -23,6 +24,7 @@ type RouterPack struct {
 var (
 	jwtApi                   = api.APIs.Admin.JwtApi
 	baseApi                  = api.APIs.Admin.BaseApi
+	emailConfigApi           = api.APIs.Admin.EmailConfigApi
 	casbinApi                = api.APIs.Admin.CasbinApi
 	roleApi                  = api.APIs.Admin.RoleApi
 	apiRouterApi             = api.APIs.Admin.APICatalogApi

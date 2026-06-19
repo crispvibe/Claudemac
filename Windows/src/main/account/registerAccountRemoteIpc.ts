@@ -7,7 +7,6 @@ import {
   type RemoteDevice
 } from "../../shared/account.js";
 import {
-  accountRemoteChangePasswordRequestSchema,
   accountRemoteConnectDeviceRequestSchema,
   accountRemoteDeleteAccountRequestSchema,
   accountRemoteDeviceUpdateRequestSchema,
@@ -15,7 +14,6 @@ import {
   accountRemoteLegalConsentRequestSchema,
   accountRemoteLegalDocumentRequestSchema,
   accountRemoteLoginRequestSchema,
-  accountRemotePasswordResetRequestSchema,
   accountRemoteRegisterRequestSchema,
   ipcChannels
 } from "../../shared/ipc.js";
@@ -165,35 +163,29 @@ export function registerAccountRemoteIpcHandlers({
 
   ipcMain.handle(ipcChannels.accountRemoteRegister, async (_event, rawRequest: unknown) => {
     const request = accountRemoteRegisterRequestSchema.parse(rawRequest);
-    const session = await accountClient.register(request.email, request.password, request.verificationCode);
+    const session = await accountClient.register(request.email, request.verificationCode);
     await accountSessionStore.saveSession(session);
     await submitLegalConsents(session).catch((error: unknown) => {
       console.warn("[account-remote] failed to submit legal consent", error);
     });
     await bootstrapAfterAuth().catch(() => undefined);
     return publishCurrentState();
+  });
+
+  ipcMain.handle(ipcChannels.accountRemoteLoginCode, async (_event, rawRequest: unknown) => {
+    const request = accountRemoteEmailRequestSchema.parse(rawRequest);
+    return accountClient.requestLoginCode(request.email);
   });
 
   ipcMain.handle(ipcChannels.accountRemoteLogin, async (_event, rawRequest: unknown) => {
     const request = accountRemoteLoginRequestSchema.parse(rawRequest);
-    const session = await accountClient.login(request.email, request.password);
+    const session = await accountClient.login(request.email, request.verificationCode);
     await accountSessionStore.saveSession(session);
     await submitLegalConsents(session).catch((error: unknown) => {
       console.warn("[account-remote] failed to submit legal consent", error);
     });
     await bootstrapAfterAuth().catch(() => undefined);
     return publishCurrentState();
-  });
-
-  ipcMain.handle(ipcChannels.accountRemotePasswordResetCode, async (_event, rawRequest: unknown) => {
-    const request = accountRemoteEmailRequestSchema.parse(rawRequest);
-    return accountClient.requestPasswordResetCode(request.email);
-  });
-
-  ipcMain.handle(ipcChannels.accountRemotePasswordReset, async (_event, rawRequest: unknown) => {
-    const request = accountRemotePasswordResetRequestSchema.parse(rawRequest);
-    await accountClient.resetPassword(request.email, request.password, request.verificationCode);
-    return true;
   });
 
   ipcMain.handle(ipcChannels.accountRemoteLogout, async () => {
@@ -205,16 +197,6 @@ export function registerAccountRemoteIpcHandlers({
         await accountClient.logout(session.accessToken).catch(() => undefined);
       }
     }
-    return clearAccountAndDeviceState(false);
-  });
-
-  ipcMain.handle(ipcChannels.accountRemoteChangePassword, async (_event, rawRequest: unknown) => {
-    const request = accountRemoteChangePasswordRequestSchema.parse(rawRequest);
-    await accountClient.changePassword(
-      request.currentPassword,
-      request.newPassword,
-      await accountSessionStore.requireAccessToken()
-    );
     return clearAccountAndDeviceState(false);
   });
 

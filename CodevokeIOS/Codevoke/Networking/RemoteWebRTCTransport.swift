@@ -492,11 +492,6 @@ final class RemoteWebRTCTransport: RemoteTransport {
     }
 
     private func sendText(_ text: String) async throws {
-        if !Thread.isMainThread {
-            return try await MainActor.run {
-                try self.sendTextOnCurrentThread(text)
-            }
-        }
         try sendTextOnCurrentThread(text)
     }
 

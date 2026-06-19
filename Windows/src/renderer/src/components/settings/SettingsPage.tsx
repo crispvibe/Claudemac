@@ -317,9 +317,6 @@ function AccountSecuritySettings({ onOpenAccountDialog }: { onOpenAccountDialog?
   const account = useAccountRemoteStore((state) => state.account);
   const hydrateRemoteState = useAccountRemoteStore((state) => state.hydrateRemoteState);
   const setConnectionStatus = useAccountRemoteStore((state) => state.setConnectionStatus);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [deleteConfirmAccount, setDeleteConfirmAccount] = useState("");
   const [deleteConfirmDestroy, setDeleteConfirmDestroy] = useState("");
   const [deleteConfirmWaiveRights, setDeleteConfirmWaiveRights] = useState("");
@@ -328,12 +325,7 @@ function AccountSecuritySettings({ onOpenAccountDialog }: { onOpenAccountDialog?
   const [accountMessage, setAccountMessage] = useState<{ kind: "info" | "success" | "error"; text: string } | null>(null);
   const hasAccount = account.status === "authenticated" || account.status === "expired";
   const accountTitle = account.displayAccount ?? "未登录";
-  const statusText = hasAccount ? `账号状态：${account.userStatus ?? account.status}` : "登录后可以管理密码、退出登录和注销账号。";
-  const canChangePassword = account.status === "authenticated"
-    && currentPassword.length > 0
-    && newPassword.length > 0
-    && newPassword === confirmPassword
-    && !accountAction;
+  const statusText = hasAccount ? `账号状态：${account.userStatus ?? account.status}` : "登录后可以退出登录和注销账号。";
   const canDeleteAccount = account.status === "authenticated"
     && deleteConfirmAccount.trim() === "我确认注销账号"
     && deleteConfirmDestroy.trim() === "确认销毁"
@@ -365,19 +357,6 @@ function AccountSecuritySettings({ onOpenAccountDialog }: { onOpenAccountDialog?
       return false;
     } finally {
       setAccountAction(null);
-    }
-  }
-
-  async function changePassword() {
-    const ok = await runAccountAction(
-      "修改密码",
-      () => requireBridge().changePassword(currentPassword, newPassword),
-      "密码已修改，请重新登录。"
-    );
-    if (ok) {
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
     }
   }
 
@@ -421,13 +400,6 @@ function AccountSecuritySettings({ onOpenAccountDialog }: { onOpenAccountDialog?
         {accountMessage ? <p className={`account-message ${accountMessage.kind}`}>{accountMessage.text}</p> : null}
         {accountAction ? <p className="settings-hint">正在执行：{accountAction}</p> : null}
         <div className="settings-grid">
-          <SettingsPanel title="修改密码" subtitle="修改成功后会清除本机登录状态，需要重新登录。">
-            <input className="settings-input" placeholder="当前密码" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.currentTarget.value)} />
-            <input className="settings-input" placeholder="新密码" type="password" value={newPassword} onChange={(event) => setNewPassword(event.currentTarget.value)} />
-            <input className="settings-input" placeholder="确认新密码" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.currentTarget.value)} />
-            {newPassword && confirmPassword && newPassword !== confirmPassword ? <p className="account-message error">两次密码不一致。</p> : null}
-            <button className="settings-primary-button" type="button" disabled={!canChangePassword} onClick={() => void changePassword()}>确认修改</button>
-          </SettingsPanel>
           <SettingsPanel title="注销账号" subtitle="注销会删除远程账号主数据，操作不可恢复。">
             <input className="settings-input" placeholder="输入：我确认注销账号" value={deleteConfirmAccount} onChange={(event) => setDeleteConfirmAccount(event.currentTarget.value)} />
             <input className="settings-input" placeholder="输入：确认销毁" value={deleteConfirmDestroy} onChange={(event) => setDeleteConfirmDestroy(event.currentTarget.value)} />

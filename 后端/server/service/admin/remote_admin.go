@@ -87,9 +87,7 @@ func (s *RemoteAdminService) SaveUser(req adminReq.RemoteUserSave) (modelBiz.Rem
 	if phone == "" {
 		phone = remoteAdminEmailPhonePlaceholder(email)
 	}
-	if req.ID == 0 && password == "" {
-		return modelBiz.RemoteUser{}, errors.New("新增远程用户必须设置初始密码。")
-	}
+	// 账号已改为「邮箱 + 验证码」登录，密码字段保留但弃用：可不填；填了也仅做兼容存储。
 	if password != "" && len(password) < 6 {
 		return modelBiz.RemoteUser{}, errors.New("密码至少 6 位。")
 	}
@@ -98,7 +96,10 @@ func (s *RemoteAdminService) SaveUser(req adminReq.RemoteUserSave) (modelBiz.Rem
 	user := modelBiz.RemoteUser{}
 	err := global.AppDB.Transaction(func(tx *gorm.DB) error {
 		if req.ID == 0 {
-			user = modelBiz.RemoteUser{Phone: phone, Email: email, PasswordHash: utils.BcryptHash(password), Status: status}
+			user = modelBiz.RemoteUser{Phone: phone, Email: email, Status: status}
+			if password != "" {
+				user.PasswordHash = utils.BcryptHash(password)
+			}
 			if err := tx.Create(&user).Error; err != nil {
 				return err
 			}

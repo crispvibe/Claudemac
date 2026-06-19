@@ -14,10 +14,9 @@ func (r *RemoteRouter) InitRemoteRouter(publicGroup *gin.RouterGroup) {
 		{
 			authRouter.POST("register-code", remoteApi.RequestRegisterCode)
 			authRouter.POST("register", remoteApi.Register)
+			authRouter.POST("login-code", remoteApi.RequestLoginCode)
 			authRouter.POST("login", remoteApi.Login)
 			authRouter.POST("refresh", remoteApi.Refresh)
-			authRouter.POST("password-reset-code", remoteApi.RequestPasswordResetCode)
-			authRouter.POST("reset-password", remoteApi.ResetPassword)
 		}
 		remoteRouter.GET("legal-documents", remoteApi.GetLegalDocument)
 		remoteRouter.GET("app-footer", remoteApi.GetAppFooter)
@@ -27,7 +26,6 @@ func (r *RemoteRouter) InitRemoteRouter(publicGroup *gin.RouterGroup) {
 
 		privateRouter := remoteRouter.Group("").Use(middleware.RemoteJWTAuth())
 		{
-			privateRouter.POST("auth/change-password", remoteApi.ChangePassword)
 			privateRouter.POST("account/deletion", remoteApi.DeleteAccount)
 			privateRouter.POST("devices/register", remoteApi.RegisterDevice)
 			privateRouter.GET("devices", remoteApi.ListDevices)

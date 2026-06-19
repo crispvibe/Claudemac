@@ -28,40 +28,30 @@ class RemoteApiClient(
         body = JSONObject().put("email", email.trim().lowercase()),
     )
 
-    suspend fun register(email: String, password: String, verificationCode: String): RemoteAuthSession =
+    suspend fun register(email: String, verificationCode: String): RemoteAuthSession =
         post(
             path = "remote/auth/register",
             body = JSONObject()
                 .put("email", email.trim().lowercase())
-                .put("password", password)
                 .put("verificationCode", verificationCode.trim()),
         ).toAuthSession()
 
-    suspend fun login(email: String, password: String): RemoteAuthSession =
+    suspend fun requestLoginCode(email: String): JSONObject = post(
+        path = "remote/auth/login-code",
+        body = JSONObject().put("email", email.trim().lowercase()),
+    )
+
+    suspend fun login(email: String, verificationCode: String): RemoteAuthSession =
         post(
             path = "remote/auth/login",
             body = JSONObject()
                 .put("email", email.trim().lowercase())
-                .put("password", password),
+                .put("verificationCode", verificationCode.trim()),
         ).toAuthSession()
 
     suspend fun refresh(refreshToken: String): RemoteAuthSession =
         post("remote/auth/refresh", JSONObject().put("refreshToken", refreshToken)).toAuthSession()
 
-    suspend fun requestPasswordResetCode(email: String): JSONObject = post(
-        path = "remote/auth/password-reset-code",
-        body = JSONObject().put("email", email.trim().lowercase()),
-    )
-
-    suspend fun resetPassword(email: String, password: String, verificationCode: String) {
-        post(
-            path = "remote/auth/reset-password",
-            body = JSONObject()
-                .put("email", email.trim().lowercase())
-                .put("password", password)
-                .put("verificationCode", verificationCode.trim()),
-        )
-    }
 
     suspend fun legalDocument(type: String, platform: String = "android"): RemoteLegalDocument =
         get("remote/legal-documents?type=$type&platform=$platform").toLegalDocument()
@@ -151,15 +141,6 @@ class RemoteApiClient(
             accessToken = accessToken,
         ).toConnectionAttempt()
 
-    suspend fun changePassword(currentPassword: String, newPassword: String, accessToken: String) {
-        post(
-            path = "remote/auth/change-password",
-            body = JSONObject()
-                .put("currentPassword", currentPassword)
-                .put("newPassword", newPassword),
-            accessToken = accessToken,
-        )
-    }
 
     suspend fun deleteAccount(
         confirmAccount: String,

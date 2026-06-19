@@ -68,14 +68,26 @@ func captureRemoteAuthCodeEmails(t *testing.T) map[string]string {
 	return sent
 }
 
-func registerRemoteTestUser(t *testing.T, svc *RemoteService, email, password string) bizRes.RemoteAuthResponse {
+func registerRemoteTestUser(t *testing.T, svc *RemoteService, email, _ string) bizRes.RemoteAuthResponse {
 	t.Helper()
 	sent := captureRemoteAuthCodeEmails(t)
 	_, err := svc.RequestRegisterCode(bizReq.RemoteVerificationCodeRequest{Email: email})
 	require.NoError(t, err)
 	code := sent[strings.ToLower(email)+":"+remoteAuthPurposeRegister]
 	require.NotEmpty(t, code)
-	session, err := svc.Register(bizReq.RemoteAuthRequest{Email: email, Password: password, VerificationCode: code})
+	session, err := svc.Register(bizReq.RemoteAuthRequest{Email: email, VerificationCode: code})
+	require.NoError(t, err)
+	return session
+}
+
+func loginRemoteTestUser(t *testing.T, svc *RemoteService, email string) bizRes.RemoteAuthResponse {
+	t.Helper()
+	sent := captureRemoteAuthCodeEmails(t)
+	_, err := svc.RequestLoginCode(bizReq.RemoteVerificationCodeRequest{Email: email})
+	require.NoError(t, err)
+	code := sent[strings.ToLower(email)+":"+remoteAuthPurposeLogin]
+	require.NotEmpty(t, code)
+	session, err := svc.Login(bizReq.RemoteAuthRequest{Email: email, VerificationCode: code}, "127.0.0.1", "test")
 	require.NoError(t, err)
 	return session
 }
@@ -278,59 +290,84 @@ func TestEmailRegisterAndLogin(t *testing.T) {
 	setupRemoteServiceTest(t)
 	svc := &RemoteService{}
 
-	registered := registerRemoteTestUser(t, svc, "USER@example.com", "secret123")
-	require.Equal(t, "user@example.com", registered.User.Email)
+	registered := registerRemoteTestUser(t, svc, "USER@qq.com", "secret123")
+	require.Equal(t, "user@qq.com", registered.User.Email)
 	require.Empty(t, registered.User.Phone)
 
 	var stored modelBiz.RemoteUser
 	require.NoError(t, global.AppDB.First(&stored, registered.User.ID).Error)
-	require.Equal(t, "user@example.com", stored.Email)
+	require.Equal(t, "user@qq.com", stored.Email)
 	require.True(t, strings.HasPrefix(stored.Phone, "email:"))
 
-	loggedIn, err := svc.Login(bizReq.RemoteAuthRequest{Email: "user@example.com", Password: "secret123"}, "127.0.0.1", "test")
-	require.NoError(t, err)
+	// 免费注册即赠送 1 天试用订阅。
+	var sub modelBiz.RemoteSubscription
+	require.NoError(t, global.AppDB.Where("user_id = ?", registered.User.ID).First(&sub).Error)
+	require.Equal(t, remoteSubscriptionTrial, sub.Status)
+	require.NotNil(t, sub.ExpiresAt)
+	require.True(t, sub.ExpiresAt.After(time.Now()))
+
+	loggedIn := loginRemoteTestUser(t, svc, "user@qq.com")
 	require.Equal(t, registered.User.ID, loggedIn.User.ID)
 }
 
-func TestRegisterRequiresEmailVerificationCode(t *testing.T) {
+func TestRegisterRejectsUnsupportedEmailDomainAndAlias(t *testing.T) {
 	setupRemoteServiceTest(t)
 	svc := &RemoteService{}
 
-	_, err := svc.Register(bizReq.RemoteAuthRequest{Email: "new@example.com", Password: "secret123"})
+	_, err := svc.Register(bizReq.RemoteAuthRequest{Email: "someone@gmail.com"})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "验证码")
+	require.Contains(t, err.Error(), "QQ")
+
+	_, err = svc.Register(bizReq.RemoteAuthRequest{Email: "someone@foxmail.com"})
+	require.Error(t, err)
+
+	_, err = svc.Register(bizReq.RemoteAuthRequest{Email: "abc+promo@qq.com"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "别名")
 }
 
-func TestPasswordResetUsesEmailedVerificationCode(t *testing.T) {
+func TestLoginUsesEmailedVerificationCode(t *testing.T) {
 	setupRemoteServiceTest(t)
 	svc := &RemoteService{}
-	registered := registerRemoteTestUser(t, svc, "reset@example.com", "oldpass123")
+	registered := registerRemoteTestUser(t, svc, "login@163.com", "")
 	sent := captureRemoteAuthCodeEmails(t)
 
-	_, err := svc.RequestPasswordResetCode(bizReq.RemoteVerificationCodeRequest{Email: "reset@example.com"})
+	_, err := svc.RequestLoginCode(bizReq.RemoteVerificationCodeRequest{Email: "login@163.com"})
 	require.NoError(t, err)
-	code := sent["reset@example.com:"+remoteAuthPurposePassword]
+	code := sent["login@163.com:"+remoteAuthPurposeLogin]
 	require.NotEmpty(t, code)
 
-	_, err = svc.ResetPassword(bizReq.RemotePasswordResetRequest{Email: "reset@example.com", Password: "newpass123", VerificationCode: code})
-	require.NoError(t, err)
-
-	_, err = svc.Login(bizReq.RemoteAuthRequest{Email: "reset@example.com", Password: "oldpass123"}, "127.0.0.1", "test")
+	// 错误验证码无法登录。
+	_, err = svc.Login(bizReq.RemoteAuthRequest{Email: "login@163.com", VerificationCode: "000000"}, "127.0.0.1", "test")
 	require.Error(t, err)
-	loggedIn, err := svc.Login(bizReq.RemoteAuthRequest{Email: "reset@example.com", Password: "newpass123"}, "127.0.0.1", "test")
+
+	loggedIn, err := svc.Login(bizReq.RemoteAuthRequest{Email: "login@163.com", VerificationCode: code}, "127.0.0.1", "test")
 	require.NoError(t, err)
 	require.Equal(t, registered.User.ID, loggedIn.User.ID)
+
+	// 验证码一次性，重复使用应失败。
+	_, err = svc.Login(bizReq.RemoteAuthRequest{Email: "login@163.com", VerificationCode: code}, "127.0.0.1", "test")
+	require.Error(t, err)
+}
+
+func TestLoginUnregisteredEmailIsRejected(t *testing.T) {
+	setupRemoteServiceTest(t)
+	svc := &RemoteService{}
+
+	_, err := svc.RequestLoginCode(bizReq.RemoteVerificationCodeRequest{Email: "nobody@qq.com"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "注册")
 }
 
 func TestPhoneOnlyIdentityIsRejected(t *testing.T) {
 	setupRemoteServiceTest(t)
 	svc := &RemoteService{}
 
-	_, err := svc.Register(bizReq.RemoteAuthRequest{Phone: "13800138000", Password: "secret123"})
+	_, err := svc.Register(bizReq.RemoteAuthRequest{Phone: "13800138000"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "邮箱")
 
-	_, err = svc.Login(bizReq.RemoteAuthRequest{Phone: "13800138000", Password: "secret123"}, "127.0.0.1", "test")
+	_, err = svc.Login(bizReq.RemoteAuthRequest{Phone: "13800138000"}, "127.0.0.1", "test")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "邮箱")
 }
@@ -339,7 +376,7 @@ func TestDeleteAccountRemovesUserDataAndKeepsSnapshot(t *testing.T) {
 	setupRemoteServiceTest(t)
 	svc := &RemoteService{}
 
-	session := registerRemoteTestUser(t, svc, "delete@example.com", "secret123")
+	session := registerRemoteTestUser(t, svc, "delete@qq.com", "secret123")
 	userID := session.User.ID
 	require.NoError(t, global.AppDB.Create(&modelBiz.RemoteDevice{UserID: userID, DeviceUID: "ios-1", DeviceType: "ios", Platform: "ios", DeviceName: "iPhone", DevicePublicKey: "pk", Status: remoteStatusActive}).Error)
 	require.NoError(t, global.AppDB.Create(&modelBiz.RemoteSubscription{UserID: userID, PlanCode: "year", Status: remoteSubscriptionActive}).Error)
@@ -364,16 +401,17 @@ func TestDeleteAccountRemovesUserDataAndKeepsSnapshot(t *testing.T) {
 	var record modelBiz.RemoteAccountDeletionRecord
 	require.NoError(t, global.AppDB.First(&record, res.RecordID).Error)
 	require.Equal(t, userID, record.UserID)
-	require.Equal(t, "d***e@example.com", record.EmailMasked)
+	require.Equal(t, "d***e@qq.com", record.EmailMasked)
 	require.EqualValues(t, 1, record.OrderSnapshot["count"])
-	require.EqualValues(t, 1, record.SubscriptionSnapshot["count"])
+	// 注册时自动赠送的 1 天试用订阅 + 测试手动创建的年度订阅，共 2 条。
+	require.EqualValues(t, 2, record.SubscriptionSnapshot["count"])
 }
 
 func TestSignalingWebSocketAllowsNativeClientWithoutOrigin(t *testing.T) {
 	setupRemoteServiceTest(t)
 	svc := &RemoteService{}
 
-	session := registerRemoteTestUser(t, svc, "user@example.com", "secret123")
+	session := registerRemoteTestUser(t, svc, "user@qq.com", "secret123")
 	device := modelBiz.RemoteDevice{
 		UserID:          session.User.ID,
 		DeviceUID:       "mac-1",

@@ -19,7 +19,6 @@ private enum SettingsRoute: Hashable {
     case legal
     case connection
     case cli
-    case changePassword
     case accountDeletion
     case appUpdate
 }
@@ -136,8 +135,6 @@ struct SettingsView: View {
             SettingsConnectionPage(viewModel: chatViewModel, authViewModel: authViewModel, close: close)
         case .cli:
             SettingsCLIPage(viewModel: chatViewModel)
-        case .changePassword:
-            SettingsChangePasswordPage(authViewModel: authViewModel)
         case .accountDeletion:
             AccountDeletionPage(authViewModel: authViewModel) {
                 if !navigationPath.isEmpty {
@@ -297,10 +294,6 @@ private struct SettingsAccountPage: View {
 
             SettingsSectionCard {
                 VStack(spacing: 0) {
-                    NavigationLink(value: SettingsRoute.changePassword) {
-                        SettingsMenuRow(title: "修改密码", subtitle: "使用当前密码验证", icon: "lock.rotation")
-                    }
-                    SettingsDivider()
                     Button {
                         Task { await authViewModel.clearSession() }
                     } label: {
@@ -426,37 +419,6 @@ private struct AccountDeletionPage: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Color.codevokeMuted)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-private struct SettingsChangePasswordPage: View {
-    @ObservedObject var authViewModel: AuthViewModel
-
-    var body: some View {
-        SettingsPageContainer(title: "修改密码") {
-            SettingsSectionCard {
-                VStack(alignment: .leading, spacing: 12) {
-                    SettingsCardTitle("账号安全", subtitle: "修改成功后需要重新登录")
-                    SettingsSecureField("当前密码", text: $authViewModel.changePasswordCurrent, placeholder: "请输入当前密码")
-                    SettingsSecureField("新密码", text: $authViewModel.changePasswordNew, placeholder: "请输入新密码")
-                    SettingsSecureField("确认新密码", text: $authViewModel.changePasswordConfirm, placeholder: "再次输入新密码")
-                    SettingsMessageView(message: authViewModel.changePasswordMessage)
-                    Button {
-                        Task { await authViewModel.requestChangePassword() }
-                    } label: {
-                        Text(L10n.key(authViewModel.changePasswordSubmitting ? "修改中" : "确认修改"))
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 13)
-                            .background(Color.black, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-                    }
-                    .buttonStyle(.codevokePress)
-                    .disabled(!authViewModel.canSubmitChangePassword)
-                }
-                .padding(16)
-            }
         }
     }
 }

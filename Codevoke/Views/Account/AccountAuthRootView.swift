@@ -5,7 +5,6 @@ struct AccountAuthRootView: View {
     private enum Mode {
         case login
         case register
-        case forgot
     }
 
     @EnvironmentObject private var accountAuth: AccountAuthViewModel
@@ -50,13 +49,10 @@ struct AccountAuthRootView: View {
         switch mode {
         case .login:
             LoginView(
-                onRegister: { setMode(.register) },
-                onForgotPassword: { setMode(.forgot) }
+                onRegister: { setMode(.register) }
             )
         case .register:
             RegisterView(onLogin: { setMode(.login) })
-        case .forgot:
-            ForgotPasswordView(onLogin: { setMode(.login) })
         }
     }
 

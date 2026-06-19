@@ -203,20 +203,17 @@ final class AccountTokenStoreTests: XCTestCase {
     func testRemoteAuthRequestsUseEmailOnlyPayloads() throws {
         let encoder = JSONEncoder()
 
-        let login = try jsonObject(from: encoder.encode(RemoteAuthLoginRequest(email: "User@Example.COM", password: "pw")))
+        let login = try jsonObject(from: encoder.encode(RemoteAuthLoginRequest(email: "User@Example.COM", verificationCode: "112233")))
         XCTAssertEqual(login["email"] as? String, "user@example.com")
-        XCTAssertEqual(login["password"] as? String, "pw")
+        XCTAssertEqual(login["verificationCode"] as? String, "112233")
+        XCTAssertNil(login["password"])
         XCTAssertNil(login["phone"])
 
-        let register = try jsonObject(from: encoder.encode(RemoteAuthRegisterRequest(email: "New@Example.COM", password: "pw", verificationCode: "654321")))
+        let register = try jsonObject(from: encoder.encode(RemoteAuthRegisterRequest(email: "New@Example.COM", verificationCode: "654321")))
         XCTAssertEqual(register["email"] as? String, "new@example.com")
         XCTAssertEqual(register["verificationCode"] as? String, "654321")
+        XCTAssertNil(register["password"])
         XCTAssertNil(register["phone"])
-
-        let reset = try jsonObject(from: encoder.encode(RemotePasswordResetRequest(email: "Reset@Example.COM", password: "pw", verificationCode: "123456")))
-        XCTAssertEqual(reset["email"] as? String, "reset@example.com")
-        XCTAssertEqual(reset["verificationCode"] as? String, "123456")
-        XCTAssertNil(reset["phone"])
     }
 
     func testLoginErrorDoesNotShowExpiredSessionMessage() {

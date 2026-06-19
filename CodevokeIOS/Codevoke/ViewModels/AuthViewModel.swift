@@ -15,33 +15,19 @@ final class AuthViewModel: ObservableObject {
     @Published private(set) var legalDocumentsLoading = false
     @Published private(set) var loginCodeSending = false
     @Published private(set) var registerCodeSending = false
-    @Published private(set) var forgotCodeSending = false
     @Published private(set) var loginSubmitting = false
     @Published private(set) var registerSubmitting = false
-    @Published private(set) var forgotSubmitting = false
     @Published private(set) var loginCooldown = 0
     @Published private(set) var registerCooldown = 0
-    @Published private(set) var forgotCooldown = 0
     @Published private(set) var selectedLegalDocument: RemoteLegalDocument?
     @Published var loginEmail = ""
-    @Published var loginPassword = ""
+    @Published var loginVerificationCode = ""
     @Published var loginAgreed = false
     @Published var loginMessage: String?
     @Published var registerEmail = ""
     @Published var registerVerificationCode = ""
-    @Published var registerPassword = ""
-    @Published var registerConfirmPassword = ""
     @Published var registerAgreed = false
     @Published var registerMessage: String?
-    @Published var forgotEmail = ""
-    @Published var forgotVerificationCode = ""
-    @Published var forgotPassword = ""
-    @Published var forgotConfirmPassword = ""
-    @Published var forgotMessage: String?
-    @Published var changePasswordCurrent = ""
-    @Published var changePasswordNew = ""
-    @Published var changePasswordConfirm = ""
-    @Published private(set) var changePasswordSubmitting = false
     @Published private(set) var accountDeletionSubmitting = false
     @Published var accountDeletionMessage: String?
     @Published private(set) var remoteDevices: [RemoteDevice] = []
@@ -51,7 +37,6 @@ final class AuthViewModel: ObservableObject {
     @Published private(set) var resolvedDevice: RemoteDeviceResolveResponse?
     @Published var deviceCodeInput = ""
     @Published var remoteConnectionMessage: String?
-    @Published var changePasswordMessage: String?
     @Published var documentMessage: String?
 
     private let authClient: RemoteAuthClient
@@ -64,7 +49,7 @@ final class AuthViewModel: ObservableObject {
     private var legalDocumentsTask: Task<Void, Never>?
     private var didLoadAppFooter = false
     private var registerCooldownTask: Task<Void, Never>?
-    private var forgotCooldownTask: Task<Void, Never>?
+    private var loginCooldownTask: Task<Void, Never>?
 
     init(
         authClient: RemoteAuthClient = RemoteAuthClient(),
@@ -168,11 +153,30 @@ final class AuthViewModel: ObservableObject {
         selectedLegalDocument = nil
     }
 
+    func requestLoginCode() async {
+        let email = loginEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !email.isEmpty else {
+            loginMessage = L10n.string("请输入邮箱。")
+            return
+        }
+        loginCodeSending = true
+        loginMessage = nil
+        defer { loginCodeSending = false }
+
+        do {
+            _ = try await authClient.requestLoginCode(email: email)
+            startCooldown(kind: .login, seconds: 60)
+            loginMessage = L10n.string("验证码已发送。")
+        } catch {
+            loginMessage = authErrorMessage(error, fallback: "验证码发送失败，请稍后重试。")
+        }
+    }
+
     func requestLogin() async {
         let email = loginEmail.trimmingCharacters(in: .whitespacesAndNewlines)
-        let password = loginPassword
-        guard !email.isEmpty, !password.isEmpty else {
-            loginMessage = L10n.string("请输入邮箱和密码。")
+        let code = loginVerificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !email.isEmpty, !code.isEmpty else {
+            loginMessage = L10n.string("请输入邮箱和验证码。")
             return
         }
         guard loginAgreed else {
@@ -184,13 +188,13 @@ final class AuthViewModel: ObservableObject {
         defer { loginSubmitting = false }
 
         do {
-            let session = try await authClient.login(email: email, password: password)
+            let session = try await authClient.login(email: email, verificationCode: code)
             try await persistSession(session)
             Task { [weak self] in
                 await self?.submitLegalConsentsIfNeeded(for: session)
             }
         } catch {
-            loginMessage = authErrorMessage(error, fallback: "账号不存在或密码错误。")
+            loginMessage = authErrorMessage(error, fallback: "登录失败，请检查邮箱和验证码。")
         }
     }
 
@@ -198,6 +202,10 @@ final class AuthViewModel: ObservableObject {
         let email = registerEmail.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !email.isEmpty else {
             registerMessage = L10n.string("请输入邮箱。")
+            return
+        }
+        guard Self.isSupportedRegisterEmail(email) else {
+            registerMessage = L10n.string("仅支持 QQ 邮箱（@qq.com）或 163 邮箱（@163.com）注册。")
             return
         }
         registerCodeSending = true
@@ -215,15 +223,13 @@ final class AuthViewModel: ObservableObject {
 
     func requestRegister() async {
         let email = registerEmail.trimmingCharacters(in: .whitespacesAndNewlines)
-        let password = registerPassword
-        let confirmation = registerConfirmPassword
         let code = registerVerificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !email.isEmpty, !password.isEmpty, !code.isEmpty else {
-            registerMessage = L10n.string("请完整填写邮箱、验证码和密码。")
+        guard !email.isEmpty, !code.isEmpty else {
+            registerMessage = L10n.string("请填写邮箱和验证码。")
             return
         }
-        guard password == confirmation else {
-            registerMessage = L10n.string("两次密码不一致。")
+        guard Self.isSupportedRegisterEmail(email) else {
+            registerMessage = L10n.string("仅支持 QQ 邮箱（@qq.com）或 163 邮箱（@163.com）注册。")
             return
         }
         guard registerAgreed else {
@@ -235,7 +241,7 @@ final class AuthViewModel: ObservableObject {
         defer { registerSubmitting = false }
 
         do {
-            let session = try await authClient.register(email: email, password: password, verificationCode: code)
+            let session = try await authClient.register(email: email, verificationCode: code)
             try await persistSession(session)
             Task { [weak self] in
                 await self?.submitLegalConsentsIfNeeded(for: session)
@@ -245,83 +251,13 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
-    func requestForgotPasswordCode() async {
-        let email = forgotEmail.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !email.isEmpty else {
-            forgotMessage = L10n.string("请输入邮箱。")
-            return
-        }
-        forgotCodeSending = true
-        forgotMessage = nil
-        defer { forgotCodeSending = false }
-
-        do {
-            _ = try await authClient.requestPasswordResetCode(email: email)
-            startCooldown(kind: .forgot, seconds: 60)
-            forgotMessage = L10n.string("验证码已发送。")
-        } catch {
-            forgotMessage = error.localizedDescription
-        }
-    }
-
-    func requestPasswordReset() async {
-        let email = forgotEmail.trimmingCharacters(in: .whitespacesAndNewlines)
-        let password = forgotPassword
-        let confirmation = forgotConfirmPassword
-        let code = forgotVerificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !email.isEmpty, !password.isEmpty, !code.isEmpty else {
-            forgotMessage = L10n.string("请完整填写邮箱、验证码和新密码。")
-            return
-        }
-        guard password == confirmation else {
-            forgotMessage = L10n.string("两次密码不一致。")
-            return
-        }
-        forgotSubmitting = true
-        forgotMessage = nil
-        defer { forgotSubmitting = false }
-
-        do {
-            try await authClient.resetPassword(email: email, password: password, verificationCode: code)
-            forgotMessage = L10n.string("密码已重置，请返回登录。")
-            loginPassword = ""
-            loginAgreed = false
-        } catch {
-            forgotMessage = error.localizedDescription
-        }
-    }
-
-    func requestChangePassword() async {
-        let current = changePasswordCurrent
-        let newPassword = changePasswordNew
-        let confirmation = changePasswordConfirm
-        guard let session = currentSession else {
-            changePasswordMessage = L10n.string("登录状态已失效，请重新登录。")
-            await clearSession()
-            return
-        }
-        guard !current.isEmpty, !newPassword.isEmpty else {
-            changePasswordMessage = L10n.string("请填写当前密码和新密码。")
-            return
-        }
-        guard newPassword == confirmation else {
-            changePasswordMessage = L10n.string("两次密码不一致。")
-            return
-        }
-        changePasswordSubmitting = true
-        changePasswordMessage = nil
-        defer { changePasswordSubmitting = false }
-
-        do {
-            try await authClient.changePassword(currentPassword: current, newPassword: newPassword, accessToken: session.accessToken)
-            changePasswordCurrent = ""
-            changePasswordNew = ""
-            changePasswordConfirm = ""
-            changePasswordMessage = L10n.string("密码已修改，请重新登录。")
-            await clearSession()
-        } catch {
-            changePasswordMessage = authErrorMessage(error, fallback: "密码修改失败。")
-        }
+    static func isSupportedRegisterEmail(_ email: String) -> Bool {
+        let lowered = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let at = lowered.lastIndex(of: "@"), at != lowered.startIndex else { return false }
+        let local = lowered[lowered.startIndex..<at]
+        let domain = String(lowered[lowered.index(after: at)...])
+        if local.isEmpty || local.contains("+") { return false }
+        return domain == "qq.com" || domain == "163.com"
     }
 
     func requestAccountDeletion(confirmAccount: String, confirmDestroy: String, confirmWaiveRights: String, reason: String) async -> Bool {
@@ -488,7 +424,7 @@ final class AuthViewModel: ObservableObject {
 
     private enum CooldownKind {
         case register
-        case forgot
+        case login
     }
 
     private func startCooldown(kind: CooldownKind, seconds: Int) {
@@ -506,16 +442,16 @@ final class AuthViewModel: ObservableObject {
                     }
                 }
             }
-        case .forgot:
-            forgotCooldownTask?.cancel()
-            forgotCooldown = seconds
-            forgotCooldownTask = Task { [weak self] in
+        case .login:
+            loginCooldownTask?.cancel()
+            loginCooldown = seconds
+            loginCooldownTask = Task { [weak self] in
                 guard let self else { return }
-                while !Task.isCancelled && self.forgotCooldown > 0 {
+                while !Task.isCancelled && self.loginCooldown > 0 {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard !Task.isCancelled else { break }
                     await MainActor.run {
-                        self.forgotCooldown -= 1
+                        self.loginCooldown -= 1
                     }
                 }
             }
@@ -523,18 +459,10 @@ final class AuthViewModel: ObservableObject {
     }
 
     var canSubmitLogin: Bool {
-        !loginSubmitting && !loginEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !loginPassword.isEmpty && loginAgreed
+        !loginSubmitting && !loginEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !loginVerificationCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && loginAgreed
     }
 
     var canSubmitRegister: Bool {
-        !registerSubmitting && !registerEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !registerVerificationCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !registerPassword.isEmpty && registerPassword == registerConfirmPassword && registerAgreed
-    }
-
-    var canSubmitForgotPassword: Bool {
-        !forgotSubmitting && !forgotEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !forgotPassword.isEmpty && forgotPassword == forgotConfirmPassword && !forgotVerificationCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var canSubmitChangePassword: Bool {
-        !changePasswordSubmitting && !changePasswordCurrent.isEmpty && !changePasswordNew.isEmpty && changePasswordNew == changePasswordConfirm
+        !registerSubmitting && !registerEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !registerVerificationCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && registerAgreed
     }
 }

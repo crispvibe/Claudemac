@@ -30,11 +30,9 @@ export const ipcChannels = {
   accountRemoteGetState: "account-remote:get-state",
   accountRemoteRegisterCode: "account-remote:register-code",
   accountRemoteRegister: "account-remote:register",
+  accountRemoteLoginCode: "account-remote:login-code",
   accountRemoteLogin: "account-remote:login",
-  accountRemotePasswordResetCode: "account-remote:password-reset-code",
-  accountRemotePasswordReset: "account-remote:password-reset",
   accountRemoteLogout: "account-remote:logout",
-  accountRemoteChangePassword: "account-remote:change-password",
   accountRemoteDeleteAccount: "account-remote:delete-account",
   accountRemoteRefreshDevices: "account-remote:refresh-devices",
   accountRemoteRegisterDevice: "account-remote:register-device",
@@ -142,7 +140,7 @@ export const settingsAuthorizedFolderRemoveRequestSchema = z.object({
 
 export const accountRemoteLoginRequestSchema = z.object({
   email: z.string().min(1),
-  password: z.string().min(1)
+  verificationCode: z.string().min(1)
 });
 
 export const accountRemoteEmailRequestSchema = z.object({
@@ -151,15 +149,7 @@ export const accountRemoteEmailRequestSchema = z.object({
 
 export const accountRemoteRegisterRequestSchema = z.object({
   email: z.string().min(1),
-  password: z.string().min(1),
   verificationCode: z.string().min(1)
-});
-
-export const accountRemotePasswordResetRequestSchema = accountRemoteRegisterRequestSchema;
-
-export const accountRemoteChangePasswordRequestSchema = z.object({
-  currentPassword: z.string().min(1),
-  newPassword: z.string().min(1)
 });
 
 export const accountRemoteDeleteAccountRequestSchema = z.object({
@@ -192,8 +182,6 @@ export type SettingsAuthorizedFolderRemoveRequest = z.infer<typeof settingsAutho
 export type AccountRemoteLoginRequest = z.infer<typeof accountRemoteLoginRequestSchema>;
 export type AccountRemoteEmailRequest = z.infer<typeof accountRemoteEmailRequestSchema>;
 export type AccountRemoteRegisterRequest = z.infer<typeof accountRemoteRegisterRequestSchema>;
-export type AccountRemotePasswordResetRequest = z.infer<typeof accountRemotePasswordResetRequestSchema>;
-export type AccountRemoteChangePasswordRequest = z.infer<typeof accountRemoteChangePasswordRequestSchema>;
 export type AccountRemoteDeleteAccountRequest = z.infer<typeof accountRemoteDeleteAccountRequestSchema>;
 export type AccountRemoteLegalDocumentRequest = z.infer<typeof accountRemoteLegalDocumentRequestSchema>;
 export type AccountRemoteLegalConsentRequest = z.infer<typeof accountRemoteLegalConsentRequestSchema>;

@@ -5,6 +5,7 @@ import "heyu/server/service"
 type APIPack struct {
 	JwtApi
 	BaseApi
+	EmailConfigApi
 	CasbinApi
 	APICatalogApi
 	RoleApi
@@ -20,6 +21,7 @@ type APIPack struct {
 
 var (
 	captchaConfigService         = service.Services.Admin.CaptchaConfigService
+	emailConfigService           = service.Services.Admin.EmailConfigService
 	apiService                   = service.Services.Admin.ApiService
 	jwtService                   = service.Services.Admin.JwtService
 	menuService                  = service.Services.Admin.MenuService

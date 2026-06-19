@@ -100,10 +100,24 @@ func (a *RemoteApi) Register(c *gin.Context) {
 	}
 	data, err := remoteService.Register(req)
 	if err != nil {
-		remoteError(c, err, "注册失败，请检查邮箱和密码后重试。")
+		remoteError(c, err, "注册失败，请检查邮箱和验证码后重试。")
 		return
 	}
 	response.SuccessPayload(data, "注册成功", c)
+}
+
+func (a *RemoteApi) RequestLoginCode(c *gin.Context) {
+	var req bizReq.RemoteVerificationCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.ErrorMessage("参数错误", c)
+		return
+	}
+	data, err := remoteService.RequestLoginCode(req)
+	if err != nil {
+		remoteError(c, err, "验证码发送失败，请稍后重试。")
+		return
+	}
+	response.SuccessPayload(data, "验证码已发送", c)
 }
 
 func (a *RemoteApi) Login(c *gin.Context) {
@@ -114,7 +128,7 @@ func (a *RemoteApi) Login(c *gin.Context) {
 	}
 	data, err := remoteService.Login(req, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
-		remoteError(c, err, "登录失败，请检查邮箱和密码。")
+		remoteError(c, err, "登录失败，请检查邮箱和验证码。")
 		return
 	}
 	response.SuccessPayload(data, "登录成功", c)
@@ -132,47 +146,6 @@ func (a *RemoteApi) Refresh(c *gin.Context) {
 		return
 	}
 	response.SuccessPayload(data, "刷新成功", c)
-}
-
-func (a *RemoteApi) RequestPasswordResetCode(c *gin.Context) {
-	var req bizReq.RemoteVerificationCodeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.ErrorMessage("参数错误", c)
-		return
-	}
-	data, err := remoteService.RequestPasswordResetCode(req)
-	if err != nil {
-		remoteError(c, err, "验证码发送失败，请稍后重试。")
-		return
-	}
-	response.SuccessPayload(data, "验证码已发送", c)
-}
-
-func (a *RemoteApi) ResetPassword(c *gin.Context) {
-	var req bizReq.RemotePasswordResetRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.ErrorMessage("参数错误", c)
-		return
-	}
-	data, err := remoteService.ResetPassword(req)
-	if err != nil {
-		remoteError(c, err, "密码重置失败，请检查验证码后重试。")
-		return
-	}
-	response.SuccessPayload(data, "重置成功", c)
-}
-
-func (a *RemoteApi) ChangePassword(c *gin.Context) {
-	var req bizReq.RemoteChangePasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.ErrorMessage("参数错误", c)
-		return
-	}
-	if err := remoteService.ChangePassword(utils.GetRemoteUserID(c), req); err != nil {
-		remoteError(c, err, "密码修改失败，请检查原密码后重试。")
-		return
-	}
-	response.SuccessMessage("修改成功", c)
 }
 
 func (a *RemoteApi) DeleteAccount(c *gin.Context) {

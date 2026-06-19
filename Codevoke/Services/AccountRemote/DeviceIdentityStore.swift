@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import IOKit
 import Security
 
 struct DeviceIdentity: Codable, Hashable {
@@ -60,7 +61,12 @@ actor DeviceIdentityStore {
         do {
             try await credentialStore.update { blob in
                 if var identity = blob.deviceIdentity {
-                    identity.deviceUID = UUID().uuidString
+                    // 解绑后仍按硬件指纹复用同一标识：同一台 Mac 始终对应同一个
+                    // deviceUID，重新登记时后端会更新原设备而不是新增设备。
+                    if let privateKeyData = blob.deviceSigningPrivateKey,
+                       let restoredPrivateKey = try? Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData) {
+                        identity.deviceUID = Self.deviceUID(for: restoredPrivateKey.publicKey)
+                    }
                     identity.deviceID = nil
                     blob.deviceIdentity = identity
                 }
@@ -113,10 +119,37 @@ actor DeviceIdentityStore {
         try await saveIdentity(identity)
     }
 
+    // deviceUID 优先基于硬件 IOPlatformUUID 派生，保证同一台 Mac 在应用重装、
+    // 钥匙串/凭据被清空后仍得到相同的 deviceUID，避免后端重复登记新设备。
+    // 读取硬件标识失败时回退到基于签名公钥的旧逻辑，保证可用性。
     private static func deviceUID(for publicKey: Curve25519.Signing.PublicKey) -> String {
-        let digest = SHA256.hash(data: publicKey.rawRepresentation)
+        if let hardwareUUID = hardwarePlatformUUID(), !hardwareUUID.isEmpty {
+            return stableDeviceUID(seed: "macos:platform-uuid:\(hardwareUUID)")
+        }
+        return stableDeviceUID(seed: publicKey.rawRepresentation.base64EncodedString())
+    }
+
+    private static func stableDeviceUID(seed: String) -> String {
+        let digest = SHA256.hash(data: Data(seed.utf8))
         let hex = digest.map { String(format: "%02x", $0) }.joined()
         return "macos-\(hex.prefix(32))"
+    }
+
+    // hardwarePlatformUUID 通过 IOKit 读取主板级别的 IOPlatformUUID，
+    // 它在系统重装前保持不变，是 Mac 最稳定的单机标识来源。
+    private static func hardwarePlatformUUID() -> String? {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
+        guard service != 0 else { return nil }
+        defer { IOObjectRelease(service) }
+        guard let property = IORegistryEntryCreateCFProperty(
+            service,
+            kIOPlatformUUIDKey as CFString,
+            kCFAllocatorDefault,
+            0
+        ) else {
+            return nil
+        }
+        return (property.takeRetainedValue() as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func loadDeviceCode() async throws -> String? {

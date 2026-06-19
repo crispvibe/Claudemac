@@ -1,5 +1,6 @@
 import { hostname } from "node:os";
-import { createPrivateKey, generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { createHash, createPrivateKey, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import {
   localDeviceIdentitySchema,
   summarizeDeviceIdentity,
@@ -34,7 +35,7 @@ export class DeviceIdentityStore {
       privateKeyEncoding: { type: "pkcs8", format: "der" }
     });
     const identity = localDeviceIdentitySchema.parse({
-      deviceUID: randomUUID(),
+      deviceUID: stableDeviceUID(),
       deviceID: null,
       deviceName,
       devicePublicKey: keyPair.publicKey.toString("base64"),
@@ -83,9 +84,11 @@ export class DeviceIdentityStore {
 
   async clearProvisionedDevice(): Promise<DeviceSummary> {
     const identity = await this.loadOrCreateIdentity();
+    // 解绑后仍按硬件指纹复用同一标识：同一台 PC 始终对应同一个 deviceUID，
+    // 重新登记时后端会更新原设备而不是新增设备。
     const nextIdentity = localDeviceIdentitySchema.parse({
       ...identity,
-      deviceUID: randomUUID(),
+      deviceUID: stableDeviceUID(),
       deviceID: null
     });
     await this.saveIdentity(nextIdentity);
@@ -123,6 +126,42 @@ export class DeviceIdentityStore {
     await this.saveIdentity(nextIdentity);
     return nextIdentity;
   }
+}
+
+// stableDeviceUID 基于设备硬件指纹生成稳定标识，保证同一台物理机在应用
+// 重装/升级、凭据存储被清空后仍得到相同的 deviceUID，从而避免在后端反复
+// 生成新的“幽灵设备”。读取硬件信息失败时回退到随机 UUID，保证可用性。
+function stableDeviceUID(): string {
+  const fingerprint = readHardwareFingerprint();
+  if (fingerprint) {
+    const hash = createHash("sha256").update(fingerprint).digest("hex");
+    return `windows-${hash.slice(0, 32)}`;
+  }
+  return randomUUID();
+}
+
+// readHardwareFingerprint 读取 Windows 的 MachineGuid（位于注册表
+// HKLM\SOFTWARE\Microsoft\Cryptography），它在系统重装前保持不变，是
+// 最稳定的单机标识来源。非 Windows 平台或读取失败时返回 null。
+function readHardwareFingerprint(): string | null {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  try {
+    const output = execFileSync(
+      "reg",
+      ["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid", "/reg:64"],
+      { encoding: "utf8", timeout: 4000, windowsHide: true }
+    );
+    const match = output.match(/MachineGuid\s+REG_SZ\s+([0-9a-fA-F-]+)/);
+    const guid = match?.[1]?.trim().toLowerCase();
+    if (guid) {
+      return `win:machine-guid:${guid}`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 export function defaultDeviceName(): string {

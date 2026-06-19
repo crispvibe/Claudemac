@@ -317,7 +317,7 @@ final class DeviceConnectViewModel: ObservableObject {
         return await withCheckedContinuation { continuation in
             var completed = false
 
-            func finish(_ config: RemoteChatConfig?) {
+            @MainActor func finish(_ config: RemoteChatConfig?) {
                 guard !completed else { return }
                 completed = true
                 signalingClient.removeTunnelHandler(connectionId: connectionId)
@@ -459,7 +459,12 @@ final class DeviceConnectViewModel: ObservableObject {
             return connectionConfig
         }
 
-        let resolvedDevice = device ?? (try? await client.device(deviceId: deviceId, accessToken: session.accessToken))
+        let resolvedDevice: RemoteDevice?
+        if let device {
+            resolvedDevice = device
+        } else {
+            resolvedDevice = try? await client.device(deviceId: deviceId, accessToken: session.accessToken)
+        }
         guard let endpoint = resolvedDevice?.lanEndpoint,
               let token = resolvedDevice?.transientToken?.trimmingCharacters(in: .whitespacesAndNewlines),
               !token.isEmpty else {

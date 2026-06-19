@@ -53,14 +53,7 @@ enum class AuthGateState {
 data class AuthUiState(
     val gateState: AuthGateState = AuthGateState.Checking,
     val email: String = "",
-    val password: String = "",
-    val confirmPassword: String = "",
     val verificationCode: String = "",
-    val forgotPassword: String = "",
-    val forgotConfirmPassword: String = "",
-    val currentPassword: String = "",
-    val newPassword: String = "",
-    val newPasswordConfirm: String = "",
     val deletionConfirmAccount: String = "",
     val deletionConfirmDestroy: String = "",
     val deletionConfirmWaiveRights: String = "",
@@ -69,8 +62,8 @@ data class AuthUiState(
     val submitting: Boolean = false,
     val registerCodeSending: Boolean = false,
     val registerCodeCooldown: Int = 0,
-    val passwordResetCodeSending: Boolean = false,
-    val passwordResetCodeCooldown: Int = 0,
+    val loginCodeSending: Boolean = false,
+    val loginCodeCooldown: Int = 0,
     val message: String? = null,
     val account: String = "",
     val legalDocuments: Map<String, RemoteLegalDocument> = emptyMap(),
@@ -161,7 +154,7 @@ class CodevokeViewModel(application: Application) : AndroidViewModel(application
     private var pendingProjectFocusJob: Job? = null
     private var pendingSessionFocusJob: Job? = null
     private var registerCodeCooldownJob: Job? = null
-    private var passwordResetCodeCooldownJob: Job? = null
+    private var loginCodeCooldownJob: Job? = null
     private var currentConnectStartedAtMs: Long? = null
     private var didReportFirstPanelStateLatency = false
     private var pendingAttachmentUploadCount = 0
@@ -200,36 +193,8 @@ class CodevokeViewModel(application: Application) : AndroidViewModel(application
         auth = auth.copy(email = value, message = null)
     }
 
-    fun updatePassword(value: String) {
-        auth = auth.copy(password = value, message = null)
-    }
-
-    fun updateConfirmPassword(value: String) {
-        auth = auth.copy(confirmPassword = value, message = null)
-    }
-
     fun updateVerificationCode(value: String) {
         auth = auth.copy(verificationCode = value, message = null)
-    }
-
-    fun updateForgotPassword(value: String) {
-        auth = auth.copy(forgotPassword = value, message = null)
-    }
-
-    fun updateForgotConfirmPassword(value: String) {
-        auth = auth.copy(forgotConfirmPassword = value, message = null)
-    }
-
-    fun updateCurrentPassword(value: String) {
-        auth = auth.copy(currentPassword = value, message = null)
-    }
-
-    fun updateNewPassword(value: String) {
-        auth = auth.copy(newPassword = value, message = null)
-    }
-
-    fun updateNewPasswordConfirm(value: String) {
-        auth = auth.copy(newPasswordConfirm = value, message = null)
     }
 
     fun updateDeletionConfirmAccount(value: String) {
@@ -252,11 +217,29 @@ class CodevokeViewModel(application: Application) : AndroidViewModel(application
         auth = auth.copy(agreed = !auth.agreed)
     }
 
+    fun requestLoginCode() {
+        val email = auth.email.trim()
+        if (auth.loginCodeSending || auth.loginCodeCooldown > 0) return
+        if (email.isBlank()) {
+            auth = auth.copy(message = "请输入邮箱。")
+            return
+        }
+        viewModelScope.launch {
+            auth = auth.copy(loginCodeSending = true, message = null)
+            runCatching { api.requestLoginCode(email) }
+                .onSuccess {
+                    auth = auth.copy(loginCodeSending = false, message = "验证码已发送。")
+                    startLoginCodeCooldown()
+                }
+                .onFailure { auth = auth.copy(loginCodeSending = false, message = userMessage(it)) }
+        }
+    }
+
     fun requestLogin(onSuccess: () -> Unit) {
         val email = auth.email.trim()
-        val password = auth.password
-        if (email.isBlank() || password.isBlank()) {
-            auth = auth.copy(message = "请输入邮箱和密码。")
+        val code = auth.verificationCode.trim()
+        if (email.isBlank() || code.isBlank()) {
+            auth = auth.copy(message = "请输入邮箱和验证码。")
             return
         }
         if (!auth.agreed) {
@@ -265,7 +248,7 @@ class CodevokeViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             auth = auth.copy(submitting = true, message = null)
-            runCatching { api.login(email, password) }
+            runCatching { api.login(email, code) }
                 .onSuccess { session ->
                     sessionStore.save(session)
                     registerLocalDevice(session.accessToken)
@@ -273,13 +256,13 @@ class CodevokeViewModel(application: Application) : AndroidViewModel(application
                     auth = auth.copy(
                         gateState = AuthGateState.Authenticated,
                         submitting = false,
-                        password = "",
+                        verificationCode = "",
                         account = session.user.displayAccount,
                     )
                     loadRemoteDevices()
                     onSuccess()
                 }
-                .onFailure { auth = auth.copy(submitting = false, message = userMessage(it, "账号不存在或密码错误。")) }
+                .onFailure { auth = auth.copy(submitting = false, message = userMessage(it, "登录失败，请检查邮箱和验证码。")) }
         }
     }
 
@@ -303,12 +286,8 @@ class CodevokeViewModel(application: Application) : AndroidViewModel(application
 
     fun requestRegister(onSuccess: () -> Unit) {
         val email = auth.email.trim()
-        if (email.isBlank() || auth.password.isBlank() || auth.verificationCode.isBlank()) {
-            auth = auth.copy(message = "请完整填写邮箱、验证码和密码。")
-            return
-        }
-        if (auth.password != auth.confirmPassword) {
-            auth = auth.copy(message = "两次密码不一致。")
+        if (email.isBlank() || auth.verificationCode.isBlank()) {
+            auth = auth.copy(message = "请填写邮箱和验证码。")
             return
         }
         if (!auth.agreed) {
@@ -317,55 +296,16 @@ class CodevokeViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             auth = auth.copy(submitting = true, message = null)
-            runCatching { api.register(email, auth.password, auth.verificationCode) }
+            runCatching { api.register(email, auth.verificationCode) }
                 .onSuccess { session ->
                     sessionStore.save(session)
                     registerLocalDevice(session.accessToken)
                     submitLegalConsents(session.accessToken)
-                    auth = auth.copy(gateState = AuthGateState.Authenticated, submitting = false, account = session.user.displayAccount)
+                    auth = auth.copy(gateState = AuthGateState.Authenticated, submitting = false, verificationCode = "", account = session.user.displayAccount)
                     loadRemoteDevices()
                     onSuccess()
                 }
                 .onFailure { auth = auth.copy(submitting = false, message = userMessage(it, "账号创建失败，请检查邮箱。")) }
-        }
-    }
-
-    fun requestPasswordResetCode() {
-        val email = auth.email.trim()
-        if (auth.passwordResetCodeSending || auth.passwordResetCodeCooldown > 0) return
-        if (email.isBlank()) {
-            auth = auth.copy(message = "请输入邮箱。")
-            return
-        }
-        viewModelScope.launch {
-            auth = auth.copy(passwordResetCodeSending = true, message = null)
-            runCatching { api.requestPasswordResetCode(email) }
-                .onSuccess {
-                    auth = auth.copy(passwordResetCodeSending = false, message = "验证码已发送。")
-                    startPasswordResetCodeCooldown()
-                }
-                .onFailure { auth = auth.copy(passwordResetCodeSending = false, message = userMessage(it)) }
-        }
-    }
-
-    fun requestPasswordReset(onSuccess: () -> Unit) {
-        val email = auth.email.trim()
-        if (email.isBlank() || auth.forgotPassword.isBlank() || auth.verificationCode.isBlank()) {
-            auth = auth.copy(message = "请完整填写邮箱、验证码和新密码。")
-            return
-        }
-        if (auth.forgotPassword != auth.forgotConfirmPassword) {
-            auth = auth.copy(message = "两次密码不一致。")
-            return
-        }
-        viewModelScope.launch {
-            auth = auth.copy(submitting = true, message = null)
-            runCatching { api.resetPassword(email, auth.forgotPassword, auth.verificationCode) }
-                .onSuccess {
-                    auth = auth.copy(submitting = false, message = "密码已重置，请返回登录。", password = "")
-                    onSuccess()
-                }
-                .onFailure { auth = auth.copy(submitting = false, message = userMessage(it, "密码重置失败。")) }
         }
     }
 
@@ -382,33 +322,6 @@ class CodevokeViewModel(application: Application) : AndroidViewModel(application
         chat = ChatUiState()
     }
 
-    fun changePassword(onLoggedOut: () -> Unit) {
-        val session = sessionStore.load()
-        if (session == null) {
-            auth = auth.copy(message = "登录状态已失效，请重新登录。")
-            logout()
-            onLoggedOut()
-            return
-        }
-        if (auth.currentPassword.isBlank() || auth.newPassword.isBlank()) {
-            auth = auth.copy(message = "请填写当前密码和新密码。")
-            return
-        }
-        if (auth.newPassword != auth.newPasswordConfirm) {
-            auth = auth.copy(message = "两次密码不一致。")
-            return
-        }
-        viewModelScope.launch {
-            auth = auth.copy(submitting = true, message = null)
-            runCatching { api.changePassword(auth.currentPassword, auth.newPassword, session.accessToken) }
-                .onSuccess {
-                    auth = auth.copy(submitting = false, message = "密码已修改，请重新登录。")
-                    logout()
-                    onLoggedOut()
-                }
-                .onFailure { auth = auth.copy(submitting = false, message = userMessage(it, "密码修改失败。")) }
-        }
-    }
 
     fun deleteAccount(onLoggedOut: () -> Unit) {
         val session = sessionStore.load()
@@ -1369,14 +1282,14 @@ class CodevokeViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun startPasswordResetCodeCooldown(seconds: Int = 60) {
-        passwordResetCodeCooldownJob?.cancel()
-        passwordResetCodeCooldownJob = viewModelScope.launch {
+    private fun startLoginCodeCooldown(seconds: Int = 60) {
+        loginCodeCooldownJob?.cancel()
+        loginCodeCooldownJob = viewModelScope.launch {
             for (remaining in seconds downTo 1) {
-                auth = auth.copy(passwordResetCodeCooldown = remaining)
+                auth = auth.copy(loginCodeCooldown = remaining)
                 delay(1_000)
             }
-            auth = auth.copy(passwordResetCodeCooldown = 0)
+            auth = auth.copy(loginCodeCooldown = 0)
         }
     }
 

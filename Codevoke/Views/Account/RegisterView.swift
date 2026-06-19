@@ -19,8 +19,6 @@ struct RegisterView: View {
                 trailingAction: { Task { await accountAuth.requestRegisterCode() } },
                 trailingDisabled: accountAuth.registerCodeSending || accountAuth.registerCooldown > 0
             )
-            AccountSecureField(title: "密码", systemImage: "lock", text: $accountAuth.registerPassword)
-            AccountSecureField(title: "确认密码", systemImage: "lock.rotation", text: $accountAuth.registerConfirmPassword)
             AccountAgreementRow(agreed: $accountAuth.registerAgreed) { type in
                 accountAuth.presentLegalDocument(type)
             }

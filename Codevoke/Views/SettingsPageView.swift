@@ -501,10 +501,7 @@ struct SettingsPageView: View {
 
                 Divider().opacity(0.28)
 
-                settingsGrid {
-                    changePasswordForm
-                    accountDangerPanel
-                }
+                accountDangerPanel
             }
         }
         .task {
@@ -520,7 +517,7 @@ struct SettingsPageView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(accountAuth.currentSession.map { accountRemoteDisplayAccount($0.user) } ?? "未登录")
                     .font(.system(size: 15, weight: .semibold))
-                Text(accountAuth.currentSession.map { "账号状态：\($0.user.status)" } ?? "登录后可以管理密码、退出登录和注销账号")
+                Text(accountAuth.currentSession.map { "账号状态：\($0.user.status)" } ?? "登录后可以退出登录和注销账号")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -535,30 +532,6 @@ struct SettingsPageView: View {
         .background(AppTheme.inputSurface)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.hairline, lineWidth: 1))
-    }
-
-    private var changePasswordForm: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            settingsFormHeader(title: "修改密码", subtitle: "修改成功后会清除本机登录状态，需要重新登录。")
-            SecureField("当前密码", text: $accountAuth.changePasswordCurrent)
-                .settingsTextFieldChrome()
-            SecureField("新密码", text: $accountAuth.changePasswordNew)
-                .settingsTextFieldChrome()
-            SecureField("确认新密码", text: $accountAuth.changePasswordConfirm)
-                .settingsTextFieldChrome()
-            if let message = accountAuth.changePasswordMessage {
-                settingsInlineMessage(message)
-            }
-            Button(accountAuth.changePasswordSubmitting ? "修改中…" : "确认修改") {
-                Task { await accountAuth.requestChangePassword() }
-            }
-            .buttonStyle(SettingsPrimaryButtonStyle())
-            .disabled(!accountAuth.canSubmitChangePassword)
-        }
-        .padding(14)
-        .background(AppTheme.secondaryCardSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AppTheme.weakHairline, lineWidth: 1))
     }
 
     private var accountDangerPanel: some View {

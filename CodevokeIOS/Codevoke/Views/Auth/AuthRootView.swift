@@ -14,16 +14,10 @@ struct AuthRootView: View {
                 case .login:
                     LoginView(
                         viewModel: viewModel,
-                        showRegister: { screen = .register },
-                        showForgot: { screen = .forgot }
+                        showRegister: { screen = .register }
                     )
                 case .register:
                     RegisterView(
-                        viewModel: viewModel,
-                        showLogin: { screen = .login }
-                    )
-                case .forgot:
-                    ForgotPasswordView(
                         viewModel: viewModel,
                         showLogin: { screen = .login }
                     )
@@ -54,5 +48,4 @@ struct AuthRootView: View {
 private enum AuthScreen {
     case login
     case register
-    case forgot
 }

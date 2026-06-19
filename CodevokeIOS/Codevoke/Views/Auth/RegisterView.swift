@@ -9,13 +9,13 @@ struct RegisterView: View {
             ScrollView {
                 VStack(spacing: 20) {
                     topBar
-                    AuthHeaderView(title: "创建账号", subtitle: "使用邮箱验证码完成账号创建")
+                    AuthHeaderView(title: "创建账号", subtitle: "QQ / 163 邮箱即可注册，免费试用一天")
 
                     AuthLiquidCard {
                         VStack(spacing: 14) {
                             AuthTextField(
                                 title: "邮箱",
-                                placeholder: "请输入邮箱",
+                                placeholder: "请输入 QQ 或 163 邮箱",
                                 systemImage: "envelope",
                                 text: $viewModel.registerEmail,
                                 keyboardType: .emailAddress,
@@ -29,8 +29,6 @@ struct RegisterView: View {
                             ) {
                                 Task { await viewModel.requestRegisterCode() }
                             }
-                            AuthSecureField(title: "密码", placeholder: "设置登录密码", text: $viewModel.registerPassword)
-                            AuthSecureField(title: "确认密码", placeholder: "再次输入密码", text: $viewModel.registerConfirmPassword)
                             AuthAgreementRow(agreed: $viewModel.registerAgreed) { type in
                                 viewModel.presentLegalDocument(type)
                             }

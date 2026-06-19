@@ -76,6 +76,7 @@ func Routers() *gin.Engine {
 		adminRouter.InitApiRouter(PrivateGroup, PublicGroup)      // 注册功能api路由
 		adminRouter.InitJwtRouter(PrivateGroup)                   // jwt相关路由
 		adminRouter.InitCaptchaConfigRouter(PrivateGroup)         // 验证码配置
+		adminRouter.InitEmailConfigRouter(PrivateGroup)           // 邮件发送配置
 		adminRouter.InitUserRouter(PrivateGroup)                  // 注册用户路由
 		adminRouter.InitMenuRouter(PrivateGroup)                  // 注册menu路由
 		adminRouter.InitCasbinRouter(PrivateGroup)                // 权限相关路由

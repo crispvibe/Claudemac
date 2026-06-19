@@ -2,14 +2,13 @@ import SwiftUI
 
 struct LoginView: View {
     var onRegister: () -> Void = {}
-    var onForgotPassword: () -> Void = {}
 
     @EnvironmentObject private var accountAuth: AccountAuthViewModel
     @FocusState private var focusedField: Field?
 
     private enum Field {
         case email
-        case password
+        case code
     }
 
     private var canSubmit: Bool {
@@ -29,16 +28,19 @@ struct LoginView: View {
             )
             .focused($focusedField, equals: .email)
             .onSubmit {
-                focusedField = .password
+                focusedField = .code
             }
 
-            AccountSecureField(
-                title: "密码",
-                systemImage: "lock",
-                text: $accountAuth.loginPassword,
-                isFocused: focusedField == .password
+            AccountTextField(
+                title: "邮箱验证码",
+                systemImage: "number",
+                text: $accountAuth.loginVerificationCode,
+                trailingTitle: accountAuth.loginCooldown > 0 ? "\(accountAuth.loginCooldown)s" : (accountAuth.loginCodeSending ? "发送中" : "获取"),
+                trailingAction: { Task { await accountAuth.requestLoginCode() } },
+                trailingDisabled: accountAuth.loginCodeSending || accountAuth.loginCooldown > 0,
+                isFocused: focusedField == .code
             )
-            .focused($focusedField, equals: .password)
+            .focused($focusedField, equals: .code)
             .onSubmit {
                 guard canSubmit else { return }
                 Task { await accountAuth.requestLogin() }
@@ -65,9 +67,6 @@ struct LoginView: View {
             .disabled(!canSubmit)
 
             HStack {
-                Button("忘记密码", action: onForgotPassword)
-                    .buttonStyle(AccountInlineButtonStyle())
-
                 Spacer()
 
                 Button("注册账号", action: onRegister)

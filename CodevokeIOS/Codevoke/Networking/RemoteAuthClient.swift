@@ -13,32 +13,20 @@ struct RemoteAuthClient {
         try await api.post("remote/auth/register-code", body: RemoteVerificationCodeRequest(email: email))
     }
 
-    func register(email: String, password: String, verificationCode: String) async throws -> RemoteAuthSession {
-        try await api.post("remote/auth/register", body: RemoteAuthRegisterRequest(email: email, password: password, verificationCode: verificationCode))
+    func register(email: String, verificationCode: String) async throws -> RemoteAuthSession {
+        try await api.post("remote/auth/register", body: RemoteAuthRegisterRequest(email: email, verificationCode: verificationCode))
     }
 
-    func login(email: String, password: String) async throws -> RemoteAuthSession {
-        try await api.post("remote/auth/login", body: RemoteAuthLoginRequest(email: email, password: password))
+    func requestLoginCode(email: String) async throws -> RemoteVerificationCodeResponse {
+        try await api.post("remote/auth/login-code", body: RemoteVerificationCodeRequest(email: email))
+    }
+
+    func login(email: String, verificationCode: String) async throws -> RemoteAuthSession {
+        try await api.post("remote/auth/login", body: RemoteAuthLoginRequest(email: email, verificationCode: verificationCode))
     }
 
     func refresh(refreshToken: String) async throws -> RemoteAuthSession {
         try await api.post("remote/auth/refresh", body: RemoteAuthRefreshRequest(refreshToken: refreshToken))
-    }
-
-    func requestPasswordResetCode(email: String) async throws -> RemoteVerificationCodeResponse {
-        try await api.post("remote/auth/password-reset-code", body: RemoteVerificationCodeRequest(email: email))
-    }
-
-    func resetPassword(email: String, password: String, verificationCode: String) async throws {
-        try await api.postIgnoringPayload("remote/auth/reset-password", body: RemotePasswordResetRequest(email: email, password: password, verificationCode: verificationCode))
-    }
-
-    func changePassword(currentPassword: String, newPassword: String, accessToken: String) async throws {
-        try await api.postIgnoringPayload(
-            "remote/auth/change-password",
-            body: RemoteChangePasswordRequest(currentPassword: currentPassword, newPassword: newPassword),
-            authorizedToken: accessToken
-        )
     }
 
     func deleteAccount(confirmAccount: String, confirmDestroy: String, confirmWaiveRights: String, reason: String, accessToken: String) async throws -> RemoteAccountDeletionResponse {

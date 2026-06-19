@@ -21,6 +21,22 @@ const (
 	remoteUsageStatusReserved   = "reserved"
 )
 
+// grantRegistrationTrial 在用户注册成功后写入一条 1 天有效期的试用订阅，
+// 让“免费注册即可免费使用一天”生效。须在注册事务中调用。
+func grantRegistrationTrial(tx *gorm.DB, userID uint) error {
+	now := time.Now()
+	expires := now.Add(remoteRegisterTrialDuration)
+	sub := modelBiz.RemoteSubscription{
+		UserID:    userID,
+		PlanCode:  remoteSubscriptionTrial,
+		Status:    remoteSubscriptionTrial,
+		StartedAt: &now,
+		ExpiresAt: &expires,
+		Provider:  "register_trial",
+	}
+	return tx.Create(&sub).Error
+}
+
 type RemoteEntitlementService struct{}
 
 type RemoteEntitlementSnapshot struct {

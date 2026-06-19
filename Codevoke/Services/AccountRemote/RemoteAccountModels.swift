@@ -158,22 +158,20 @@ struct RemoteAuthSession: Codable, Hashable {
 
 struct RemoteAuthLoginRequest: Codable {
     let email: String
-    let password: String
+    let verificationCode: String
 
-    init(email: String, password: String) {
+    init(email: String, verificationCode: String) {
         self.email = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        self.password = password
+        self.verificationCode = verificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
 struct RemoteAuthRegisterRequest: Codable {
     let email: String
-    let password: String
     let verificationCode: String
 
-    init(email: String, password: String, verificationCode: String) {
+    init(email: String, verificationCode: String) {
         self.email = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        self.password = password
         self.verificationCode = verificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
@@ -193,23 +191,6 @@ struct RemoteVerificationCodeRequest: Codable {
 struct RemoteVerificationCodeResponse: Codable, Hashable {
     let verificationCode: String
     let expiresAt: Int64
-}
-
-struct RemotePasswordResetRequest: Codable {
-    let email: String
-    let password: String
-    let verificationCode: String
-
-    init(email: String, password: String, verificationCode: String) {
-        self.email = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        self.password = password
-        self.verificationCode = verificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-}
-
-struct RemoteChangePasswordRequest: Codable {
-    let currentPassword: String
-    let newPassword: String
 }
 
 struct RemoteAccountDeletionRequest: Codable {

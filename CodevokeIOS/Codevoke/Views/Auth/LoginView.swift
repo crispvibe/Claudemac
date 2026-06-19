@@ -3,7 +3,6 @@ import SwiftUI
 struct LoginView: View {
     @ObservedObject var viewModel: AuthViewModel
     let showRegister: () -> Void
-    let showForgot: () -> Void
 
     var body: some View {
         GeometryReader { proxy in
@@ -22,7 +21,14 @@ struct LoginView: View {
                                 keyboardType: .emailAddress,
                                 textContentType: .emailAddress
                             )
-                            AuthSecureField(title: "密码", placeholder: "请输入密码", text: $viewModel.loginPassword)
+                            AuthCodeField(
+                                title: "邮箱验证码",
+                                code: $viewModel.loginVerificationCode,
+                                sending: viewModel.loginCodeSending,
+                                cooldown: viewModel.loginCooldown
+                            ) {
+                                Task { await viewModel.requestLoginCode() }
+                            }
                             AuthAgreementRow(agreed: $viewModel.loginAgreed) { type in
                                 viewModel.presentLegalDocument(type)
                             }
@@ -37,7 +43,6 @@ struct LoginView: View {
                             }
 
                             HStack {
-                                Button("忘记密码") { showForgot() }
                                 Spacer()
                                 Button("创建账号") { showRegister() }
                             }

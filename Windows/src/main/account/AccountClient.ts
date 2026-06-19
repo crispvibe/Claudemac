@@ -64,10 +64,17 @@ export class AccountClient {
     this.config = accountClientConfigSchema.parse(config);
   }
 
-  login(email: string, password: string): Promise<RemoteAuthSession> {
+  // 登录改为「邮箱 + 验证码」，不再使用密码。
+  requestLoginCode(email: string): Promise<AccountVerificationCodeResponse> {
+    return this.post("remote/auth/login-code", accountVerificationCodeResponseSchema, {
+      ...accountIdentifierPayload(email)
+    });
+  }
+
+  login(email: string, verificationCode: string): Promise<RemoteAuthSession> {
     return this.post("remote/auth/login", remoteAuthSessionSchema, {
       ...accountIdentifierPayload(email),
-      password
+      verificationCode: verificationCode.trim()
     });
   }
 
@@ -77,10 +84,9 @@ export class AccountClient {
     });
   }
 
-  register(email: string, password: string, verificationCode: string): Promise<RemoteAuthSession> {
+  register(email: string, verificationCode: string): Promise<RemoteAuthSession> {
     return this.post("remote/auth/register", remoteAuthSessionSchema, {
       ...accountIdentifierPayload(email),
-      password,
       verificationCode: verificationCode.trim()
     });
   }
@@ -91,27 +97,6 @@ export class AccountClient {
 
   async logout(accessToken: string): Promise<void> {
     await this.post("remote/auth/logout", emptyPayloadSchema, {}, accessToken);
-  }
-
-  requestPasswordResetCode(email: string): Promise<AccountVerificationCodeResponse> {
-    return this.post("remote/auth/password-reset-code", accountVerificationCodeResponseSchema, {
-      ...accountIdentifierPayload(email)
-    });
-  }
-
-  async resetPassword(email: string, password: string, verificationCode: string): Promise<void> {
-    await this.post("remote/auth/reset-password", emptyPayloadSchema, {
-      ...accountIdentifierPayload(email),
-      password,
-      verificationCode: verificationCode.trim()
-    });
-  }
-
-  async changePassword(currentPassword: string, newPassword: string, accessToken: string): Promise<void> {
-    await this.post("remote/auth/change-password", emptyPayloadSchema, {
-      currentPassword,
-      newPassword
-    }, accessToken);
   }
 
   async deleteAccount(input: {

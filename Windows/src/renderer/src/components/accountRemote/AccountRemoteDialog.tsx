@@ -1,9 +1,7 @@
 import {
-  Eye,
-  EyeOff,
   Loader2,
-  LockKeyhole,
   Mail,
+  ShieldCheck,
   X
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -15,7 +13,7 @@ import { formatConnectResult } from "./accountRemoteShared";
 import { LegalDocumentModal } from "./LegalDocumentModal";
 import { RemoteDeviceList } from "./RemoteDeviceList";
 
-type AuthMode = "login" | "register" | "forgot";
+type AuthMode = "login" | "register";
 type RemoteActionRunner = (label: string, action: () => Promise<unknown>, successMessage?: string) => Promise<boolean>;
 
 const legalDocumentLinks = [
@@ -194,11 +192,8 @@ function AccountAuthPanel() {
   const account = useAccountRemoteStore((state) => state.account);
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [verificationCode, setVerificationCode] = useState("");
   const [agreed, setAgreed] = useState(false);
-  const [passwordVisible, setPasswordVisible] = useState(false);
   const [legalDocuments, setLegalDocuments] = useState<Partial<Record<RemoteLegalDocumentType, RemoteLegalDocument>>>({});
   const [selectedLegalDocument, setSelectedLegalDocument] = useState<RemoteLegalDocument | null>(null);
   const [legalLoading, setLegalLoading] = useState(false);
@@ -271,36 +266,24 @@ function AccountAuthPanel() {
     }
   };
 
-  const canLogin = email.trim() && password && agreed && !remoteAction;
-  const canRegister = canLogin && confirmPassword === password && verificationCode.trim();
-  const canResetPassword = email.trim() && password && confirmPassword === password && verificationCode.trim() && !remoteAction;
+  const canSubmit = Boolean(email.trim() && verificationCode.trim() && agreed && !remoteAction);
   const canAgree = legalDocumentLinks.every((item) => legalDocuments[item.type]) && !legalLoading;
-  const title = mode === "login" ? "登录" : mode === "register" ? "注册账号" : "忘记密码";
+  const title = mode === "login" ? "登录" : "注册账号";
 
   async function requestCode() {
-    const label = mode === "register" ? "发送注册验证码" : "发送重置验证码";
+    const label = mode === "register" ? "发送注册验证码" : "发送登录验证码";
     const action = mode === "register"
       ? () => requireBridge().requestRegisterCode(email)
-      : () => requireBridge().requestPasswordResetCode(email);
+      : () => requireBridge().requestLoginCode(email);
     await runRemoteAction(label, action, "验证码已发送，请检查邮箱。");
   }
 
   async function submitAuth() {
     if (mode === "login") {
-      await runRemoteAction("登录", () => requireBridge().login(email, password));
+      await runRemoteAction("登录", () => requireBridge().login(email, verificationCode));
       return;
     }
-    if (mode === "register") {
-      await runRemoteAction("注册账号", () => requireBridge().register(email, password, verificationCode));
-      return;
-    }
-    const ok = await runRemoteAction("重置密码", () => requireBridge().resetPassword(email, password, verificationCode), "密码已重置，请使用新密码登录。");
-    if (ok) {
-      setPassword("");
-      setConfirmPassword("");
-      setVerificationCode("");
-      setMode("login");
-    }
+    await runRemoteAction("注册账号", () => requireBridge().register(email, verificationCode));
   }
 
   async function openLegalDocument(type: RemoteLegalDocumentType) {
@@ -332,77 +315,52 @@ function AccountAuthPanel() {
       {account.status === "expired" ? <p className="account-message error">登录状态已失效，请重新登录。</p> : null}
 
       <label className="account-field">
-        <span>手机号 / 邮箱</span>
+        <span>邮箱</span>
         <div className="account-input-shell">
           <Mail size={16} />
-          <input autoFocus value={email} placeholder="手机号 / 邮箱" onChange={(event) => setEmail(event.currentTarget.value)} />
+          <input autoFocus value={email} placeholder="QQ / 163 邮箱" onChange={(event) => setEmail(event.currentTarget.value)} />
         </div>
       </label>
       <label className="account-field">
-        <span>{mode === "forgot" ? "新密码" : "密码"}</span>
-        <div className="account-input-shell">
-          <LockKeyhole size={16} />
-          <input type={passwordVisible ? "text" : "password"} value={password} placeholder={mode === "forgot" ? "新密码" : "密码"} onChange={(event) => setPassword(event.currentTarget.value)} />
-          <button type="button" onClick={() => setPasswordVisible((value) => !value)} aria-label={passwordVisible ? "隐藏密码" : "显示密码"}>
-            {passwordVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+        <span>验证码</span>
+        <div className="account-code-row">
+          <div className="account-input-shell">
+            <ShieldCheck size={16} />
+            <input value={verificationCode} placeholder="邮箱验证码" onChange={(event) => setVerificationCode(event.currentTarget.value)} />
+          </div>
+          <button type="button" disabled={!email.trim() || Boolean(remoteAction)} onClick={() => void requestCode()}>
+            获取验证码
           </button>
         </div>
       </label>
-      {mode !== "login" ? (
-        <>
-          <label className="account-field">
-            <span>确认密码</span>
-            <div className="account-input-shell">
-              <LockKeyhole size={16} />
-              <input type={passwordVisible ? "text" : "password"} value={confirmPassword} placeholder="确认密码" onChange={(event) => setConfirmPassword(event.currentTarget.value)} />
-            </div>
-          </label>
-          <label className="account-field">
-            <span>验证码</span>
-            <div className="account-code-row">
-              <div className="account-input-shell">
-                <Mail size={16} />
-                <input value={verificationCode} placeholder="验证码" onChange={(event) => setVerificationCode(event.currentTarget.value)} />
-              </div>
-              <button type="button" disabled={!email.trim() || Boolean(remoteAction)} onClick={() => void requestCode()}>
-                获取验证码
-              </button>
-            </div>
-          </label>
-        </>
-      ) : null}
 
-      {mode !== "forgot" ? (
-        <label className="account-agreement">
-          <input checked={agreed} disabled={!canAgree} type="checkbox" onChange={(event) => setAgreed(event.currentTarget.checked)} />
-          <span>
-            我已阅读并同意
-            {legalDocumentLinks.map((item) => (
-              <button key={item.type} type="button" disabled={legalLoading} onClick={() => void openLegalDocument(item.type)}>
-                《{item.label}》
-              </button>
-            ))}
-          </span>
-        </label>
-      ) : null}
+      <label className="account-agreement">
+        <input checked={agreed} disabled={!canAgree} type="checkbox" onChange={(event) => setAgreed(event.currentTarget.checked)} />
+        <span>
+          我已阅读并同意
+          {legalDocumentLinks.map((item) => (
+            <button key={item.type} type="button" disabled={legalLoading} onClick={() => void openLegalDocument(item.type)}>
+              《{item.label}》
+            </button>
+          ))}
+        </span>
+      </label>
 
       {legalError ? <p className="account-message error">{legalError}</p> : null}
-      {password && confirmPassword && password !== confirmPassword ? <p className="account-message error">两次密码不一致。</p> : null}
       {message ? <p className={`account-message ${message.kind}`}>{message.text}</p> : null}
       {remoteAction ? <p className="account-action-status"><Loader2 size={14} /> 正在执行：{remoteAction}</p> : null}
 
       <button
         className="settings-primary-button account-submit-button"
         type="button"
-        disabled={mode === "login" ? !canLogin : mode === "register" ? !canRegister : !canResetPassword}
+        disabled={!canSubmit}
         onClick={() => void submitAuth()}
       >
-        {mode === "login" ? "登录" : mode === "register" ? "创建账号" : "重置密码"}
+        {mode === "login" ? "登录" : "创建账号"}
       </button>
 
       {mode === "login" ? (
-        <div className="account-auth-footer">
-          <button type="button" onClick={() => setMode("forgot")}>忘记密码</button>
+        <div className="account-auth-footer single">
           <button type="button" onClick={() => setMode("register")}>注册账号</button>
         </div>
       ) : (

@@ -88,11 +88,9 @@ const ipcChannels = {
   accountRemoteGetState: "account-remote:get-state",
   accountRemoteRegisterCode: "account-remote:register-code",
   accountRemoteRegister: "account-remote:register",
+  accountRemoteLoginCode: "account-remote:login-code",
   accountRemoteLogin: "account-remote:login",
-  accountRemotePasswordResetCode: "account-remote:password-reset-code",
-  accountRemotePasswordReset: "account-remote:password-reset",
   accountRemoteLogout: "account-remote:logout",
-  accountRemoteChangePassword: "account-remote:change-password",
   accountRemoteDeleteAccount: "account-remote:delete-account",
   accountRemoteRefreshDevices: "account-remote:refresh-devices",
   accountRemoteRegisterDevice: "account-remote:register-device",
@@ -340,23 +338,17 @@ const api = {
     async requestRegisterCode(email: string): Promise<AccountVerificationCodeResponse> {
       return toVerificationCodeResponse(await ipcRenderer.invoke(ipcChannels.accountRemoteRegisterCode, { email }));
     },
-    async register(email: string, password: string, verificationCode: string): Promise<AccountRemoteState> {
-      return toAccountRemoteState(await ipcRenderer.invoke(ipcChannels.accountRemoteRegister, { email, password, verificationCode }));
+    async register(email: string, verificationCode: string): Promise<AccountRemoteState> {
+      return toAccountRemoteState(await ipcRenderer.invoke(ipcChannels.accountRemoteRegister, { email, verificationCode }));
     },
-    async login(email: string, password: string): Promise<AccountRemoteState> {
-      return toAccountRemoteState(await ipcRenderer.invoke(ipcChannels.accountRemoteLogin, { email, password }));
+    async requestLoginCode(email: string): Promise<AccountVerificationCodeResponse> {
+      return toVerificationCodeResponse(await ipcRenderer.invoke(ipcChannels.accountRemoteLoginCode, { email }));
     },
-    async requestPasswordResetCode(email: string): Promise<AccountVerificationCodeResponse> {
-      return toVerificationCodeResponse(await ipcRenderer.invoke(ipcChannels.accountRemotePasswordResetCode, { email }));
-    },
-    async resetPassword(email: string, password: string, verificationCode: string): Promise<boolean> {
-      return ipcRenderer.invoke(ipcChannels.accountRemotePasswordReset, { email, password, verificationCode }) as Promise<boolean>;
+    async login(email: string, verificationCode: string): Promise<AccountRemoteState> {
+      return toAccountRemoteState(await ipcRenderer.invoke(ipcChannels.accountRemoteLogin, { email, verificationCode }));
     },
     async logout(): Promise<AccountRemoteState> {
       return toAccountRemoteState(await ipcRenderer.invoke(ipcChannels.accountRemoteLogout));
-    },
-    async changePassword(currentPassword: string, newPassword: string): Promise<AccountRemoteState> {
-      return toAccountRemoteState(await ipcRenderer.invoke(ipcChannels.accountRemoteChangePassword, { currentPassword, newPassword }));
     },
     async deleteAccount(confirmAccount: string, confirmDestroy: string, confirmWaiveRights: string, reason: string): Promise<AccountRemoteState> {
       return toAccountRemoteState(await ipcRenderer.invoke(ipcChannels.accountRemoteDeleteAccount, {

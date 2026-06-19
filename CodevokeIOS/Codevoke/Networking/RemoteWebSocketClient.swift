@@ -41,9 +41,9 @@ final class RemoteWebSocketClient: RemoteTransport {
     /// 与当前 epoch，不一致直接丢弃 —— 避免老 task 的 cancel 回调把新 task 干掉
     /// （iOS 上观察到的 "WS connect ... 然后立刻 disconnect → auto reconnect" 死循环）。
     private let stateLock = NSLock()
-    private var _intentionallyClosed = false
-    private var _taskEpoch: UInt64 = 0
-    private var intentionallyClosed: Bool {
+    private nonisolated(unsafe) var _intentionallyClosed = false
+    private nonisolated(unsafe) var _taskEpoch: UInt64 = 0
+    private nonisolated var intentionallyClosed: Bool {
         get {
             stateLock.lock(); defer { stateLock.unlock() }
             return _intentionallyClosed
@@ -53,11 +53,11 @@ final class RemoteWebSocketClient: RemoteTransport {
             _intentionallyClosed = newValue
         }
     }
-    private var currentEpoch: UInt64 {
+    private nonisolated var currentEpoch: UInt64 {
         stateLock.lock(); defer { stateLock.unlock() }
         return _taskEpoch
     }
-    private func bumpEpoch() -> UInt64 {
+    private nonisolated func bumpEpoch() -> UInt64 {
         stateLock.lock(); defer { stateLock.unlock() }
         _taskEpoch &+= 1
         return _taskEpoch
@@ -166,7 +166,9 @@ final class RemoteWebSocketClient: RemoteTransport {
         task.sendPing { [weak self] error in
             guard let self, !self.intentionallyClosed, self.currentEpoch == epoch else { return }
             if let error {
-                self.fail(error, epoch: epoch)
+                Task { @MainActor in
+                    self.fail(error, epoch: epoch)
+                }
             }
         }
     }
@@ -175,12 +177,15 @@ final class RemoteWebSocketClient: RemoteTransport {
         guard let task, currentEpoch == epoch else { return }
         task.receive { [weak self] result in
             guard let self, !self.intentionallyClosed, self.currentEpoch == epoch else { return }
-            switch result {
-            case .success(let message):
-                self.handle(message: message)
-                self.receiveNext(epoch: epoch)
-            case .failure(let error):
-                self.fail(error, epoch: epoch)
+            Task { @MainActor in
+                guard !self.intentionallyClosed, self.currentEpoch == epoch else { return }
+                switch result {
+                case .success(let message):
+                    self.handle(message: message)
+                    self.receiveNext(epoch: epoch)
+                case .failure(let error):
+                    self.fail(error, epoch: epoch)
+                }
             }
         }
     }
